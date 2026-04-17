@@ -1,0 +1,818 @@
+import { useEffect, useMemo, useRef, useState } from 'react';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
+import { useNavigate } from 'react-router-dom';
+import { useStore } from '../../store';
+import type { Folder, Note } from '../../store';
+import PageHeader from '../../components/PageHeader';
+import {
+  ChevronRight,
+  ChevronDown,
+  FileText,
+  FolderPlus,
+  FilePlus,
+  Trash2,
+  Eye,
+  Pencil,
+  Search,
+  HelpCircle,
+} from 'lucide-react';
+import { buildWikiIndex, searchWiki, kindLabel, type WikiEntry } from './wikiIndex';
+import { remarkNoteDecorators, preprocessDecorators } from './decorators';
+import { Secret } from './Secret';
+import { QuickDiceButton } from '../dice/QuickDice';
+
+type DragItem =
+  | { kind: 'note'; id: string }
+  | { kind: 'folder'; id: string };
+
+export default function Notes() {
+  const {
+    notes,
+    folders,
+    activeNoteId,
+    homebrewItems,
+    homebrewSpells,
+    createNote,
+    updateNote,
+    deleteNote,
+    setActiveNote,
+    createFolder,
+    renameFolder,
+    deleteFolder,
+    toggleFolder,
+    moveNote,
+    moveFolder,
+  } = useStore();
+
+  const navigate = useNavigate();
+  const [query, setQuery] = useState('');
+  const [preview, setPreview] = useState(false);
+  const [confirmingId, setConfirmingId] = useState<string | null>(null);
+  const [renamingFolderId, setRenamingFolderId] = useState<string | null>(null);
+  const [renameValue, setRenameValue] = useState('');
+  const [dragOverId, setDragOverId] = useState<string | 'root' | null>(null);
+  const [showLegend, setShowLegend] = useState(false);
+
+  const active = notes.find((n) => n.id === activeNoteId) ?? null;
+
+  const wikiIndex = useMemo(
+    () => buildWikiIndex(homebrewItems, homebrewSpells),
+    [homebrewItems, homebrewSpells]
+  );
+  const plugins = useMemo(
+    () => [remarkGfm, remarkNoteDecorators(wikiIndex)],
+    [wikiIndex]
+  );
+
+  const q = query.toLowerCase().trim();
+  const matchingNoteIds = useMemo(() => {
+    if (!q) return null;
+    return new Set(
+      notes
+        .filter(
+          (n) => n.title.toLowerCase().includes(q) || n.body.toLowerCase().includes(q)
+        )
+        .map((n) => n.id)
+    );
+  }, [q, notes]);
+
+  const onCreateNote = (folderId: string | null) => {
+    createNote(folderId);
+    setPreview(false);
+  };
+
+  const onDrop = (target: string | null) => {
+    const raw = dragData;
+    if (!raw) return;
+    if (raw.kind === 'note') moveNote(raw.id, target);
+    else moveFolder(raw.id, target);
+    setDragOverId(null);
+    setDragData(null);
+  };
+
+  const [dragData, setDragData] = useState<DragItem | null>(null);
+
+  const rootFolders = folders.filter((f) => f.parentId === null);
+  const rootNotes = notes.filter((n) => n.folderId === null);
+
+  const onWikiClick = (href: string) => {
+    const [path, hash] = href.split('#');
+    navigate(path + (hash ? `#${hash}` : ''));
+  };
+
+  return (
+    <div className="h-full flex flex-col">
+      <PageHeader title="Notebook">
+        <div className="relative flex items-center gap-2">
+          <QuickDiceButton compact />
+          <button
+            onClick={() => setShowLegend((s) => !s)}
+            className="px-2 py-1 text-xs bg-slate-800 hover:bg-slate-700 rounded flex items-center gap-1"
+            title="Decorator cheatsheet"
+          >
+            <HelpCircle size={12} /> Syntax
+          </button>
+          {active && (
+            <button
+              onClick={() => setPreview((p) => !p)}
+              className="px-2 py-1 text-xs bg-slate-800 hover:bg-slate-700 rounded flex items-center gap-1"
+            >
+              {preview ? <Pencil size={12} /> : <Eye size={12} />}
+              {preview ? 'Edit' : 'Preview'}
+            </button>
+          )}
+          {showLegend && (
+            <div className="absolute right-0 top-full mt-2 z-20 w-80 bg-slate-900 border border-slate-700 rounded shadow-lg p-3 text-xs space-y-1.5">
+              <div className="text-[10px] uppercase tracking-wider text-slate-500 mb-1">
+                Note decorators
+              </div>
+              <LegendRow syntax="@{Waterdeep}" label="location">
+                <span className="note-deco note-loc">Waterdeep</span>
+              </LegendRow>
+              <LegendRow syntax="?{retrieve key}" label="dependency">
+                <span className="note-deco note-dep">retrieve key</span>
+              </LegendRow>
+              <LegendRow syntax="!{reach level 5}" label="milestone">
+                <span className="note-deco note-milestone">reach level 5</span>
+              </LegendRow>
+              <LegendRow syntax="${crown of stars}" label="artifact">
+                <span className="note-deco note-artifact">crown of stars</span>
+              </LegendRow>
+              <LegendRow syntax="%%GM aside%%" label="comment">
+                <span className="note-comment">GM aside</span>
+              </LegendRow>
+              <LegendRow syntax="[[Longsword]]" label="wiki link">
+                <span className="note-link">Longsword</span>
+              </LegendRow>
+              <LegendRow syntax="{{spoiler}}" label="secret">
+                <span className="note-secret">spoiler</span>
+              </LegendRow>
+            </div>
+          )}
+        </div>
+      </PageHeader>
+
+      <div className="flex-1 min-h-0 flex">
+        <aside className="w-56 border-r border-slate-800 flex flex-col bg-slate-950">
+          <div className="px-2 py-1.5 border-b border-slate-800 flex items-center justify-between">
+            <div className="text-[10px] uppercase tracking-wider text-slate-500 font-mono">
+              Explorer
+            </div>
+            <div className="flex gap-0.5">
+              <button
+                onClick={() => onCreateNote(null)}
+                title="New note"
+                className="p-1 text-slate-400 hover:text-sky-300 hover:bg-slate-800 rounded"
+              >
+                <FilePlus size={12} />
+              </button>
+              <button
+                onClick={() => {
+                  const id = createFolder('New Folder', null);
+                  setRenamingFolderId(id);
+                  setRenameValue('New Folder');
+                }}
+                title="New folder"
+                className="p-1 text-slate-400 hover:text-sky-300 hover:bg-slate-800 rounded"
+              >
+                <FolderPlus size={12} />
+              </button>
+            </div>
+          </div>
+
+          <div className="px-2 py-1.5 border-b border-slate-800">
+            <div className="relative">
+              <Search
+                size={11}
+                className="absolute left-1.5 top-1/2 -translate-y-1/2 text-slate-500"
+              />
+              <input
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder="Search"
+                className="w-full bg-slate-900 border border-slate-800 rounded pl-5 pr-1.5 py-1 text-[11px] font-mono focus:outline-none focus:border-sky-700"
+              />
+            </div>
+          </div>
+
+          <div
+            className={`flex-1 overflow-y-auto py-1 font-mono text-[12px] ${
+              dragOverId === 'root' ? 'bg-sky-950/20' : ''
+            }`}
+            onDragOver={(e) => {
+              e.preventDefault();
+              setDragOverId('root');
+            }}
+            onDragLeave={() => setDragOverId(null)}
+            onDrop={(e) => {
+              e.preventDefault();
+              onDrop(null);
+            }}
+          >
+            {folders.length === 0 && notes.length === 0 && (
+              <div className="px-3 py-4 text-[11px] text-slate-600 italic font-sans">
+                No notes yet. Create one with the file icon above.
+              </div>
+            )}
+            {rootFolders.map((f) => (
+              <FolderNode
+                key={f.id}
+                folder={f}
+                depth={0}
+                folders={folders}
+                notes={notes}
+                activeNoteId={activeNoteId}
+                matching={matchingNoteIds}
+                renamingFolderId={renamingFolderId}
+                renameValue={renameValue}
+                confirmingId={confirmingId}
+                dragOverId={dragOverId}
+                onToggle={toggleFolder}
+                onSelectNote={(id) => {
+                  setActiveNote(id);
+                  setPreview(false);
+                }}
+                onCreateNote={onCreateNote}
+                onCreateFolder={(parentId) => {
+                  const id = createFolder('New Folder', parentId);
+                  setRenamingFolderId(id);
+                  setRenameValue('New Folder');
+                }}
+                onStartRename={(id, name) => {
+                  setRenamingFolderId(id);
+                  setRenameValue(name);
+                }}
+                onFinishRename={(id) => {
+                  if (renameValue.trim()) renameFolder(id, renameValue.trim());
+                  setRenamingFolderId(null);
+                }}
+                onCancelRename={() => setRenamingFolderId(null)}
+                onRenameChange={setRenameValue}
+                onStartDeleteNote={setConfirmingId}
+                onDeleteNote={(id) => {
+                  deleteNote(id);
+                  setConfirmingId(null);
+                }}
+                onCancelDelete={() => setConfirmingId(null)}
+                onStartDeleteFolder={setConfirmingId}
+                onDeleteFolder={(id) => {
+                  deleteFolder(id);
+                  setConfirmingId(null);
+                }}
+                onDragStart={setDragData}
+                onDragOverItem={setDragOverId}
+                onDrop={onDrop}
+              />
+            ))}
+            {rootNotes.map((n) => (
+              <NoteRow
+                key={n.id}
+                note={n}
+                depth={0}
+                active={n.id === activeNoteId}
+                dimmed={matchingNoteIds !== null && !matchingNoteIds.has(n.id)}
+                confirming={confirmingId === n.id}
+                onSelect={() => {
+                  setActiveNote(n.id);
+                  setPreview(false);
+                }}
+                onStartDelete={() => setConfirmingId(n.id)}
+                onDelete={() => {
+                  deleteNote(n.id);
+                  setConfirmingId(null);
+                }}
+                onCancelDelete={() => setConfirmingId(null)}
+                onDragStart={() => setDragData({ kind: 'note', id: n.id })}
+              />
+            ))}
+          </div>
+        </aside>
+
+        <section className="flex-1 min-w-0 flex flex-col">
+          {!active && (
+            <div className="flex-1 flex items-center justify-center text-slate-500 text-sm">
+              Select or create a note.
+            </div>
+          )}
+          {active && (
+            <>
+              <div className="px-6 py-3 border-b border-slate-800 flex items-center gap-3">
+                <input
+                  value={active.title}
+                  onChange={(e) => updateNote(active.id, { title: e.target.value })}
+                  className="flex-1 bg-transparent font-serif text-xl outline-none"
+                  placeholder="Title"
+                />
+                {confirmingId === active.id ? (
+                  <div className="flex items-center gap-1">
+                    <span className="text-xs text-slate-400 mr-1">Delete this note?</span>
+                    <button
+                      onClick={() => {
+                        deleteNote(active.id);
+                        setConfirmingId(null);
+                      }}
+                      className="px-2 py-1 text-xs bg-rose-700 hover:bg-rose-600 text-white rounded"
+                    >
+                      Delete
+                    </button>
+                    <button
+                      onClick={() => setConfirmingId(null)}
+                      className="px-2 py-1 text-xs bg-slate-700 hover:bg-slate-600 text-slate-200 rounded"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                ) : (
+                  <button
+                    onClick={() => setConfirmingId(active.id)}
+                    className="px-2 py-1 text-xs bg-slate-800 hover:bg-rose-900 text-slate-300 hover:text-rose-200 rounded flex items-center gap-1"
+                  >
+                    <Trash2 size={13} /> Delete
+                  </button>
+                )}
+              </div>
+              <div className="flex-1 min-h-0 overflow-hidden">
+                {preview ? (
+                  <div
+                    className="h-full overflow-y-auto px-8 py-6 markdown-body"
+                    onClick={(e) => {
+                      const target = e.target as HTMLElement;
+                      const link = target.closest<HTMLAnchorElement>('a[data-wiki="true"]');
+                      if (link) {
+                        e.preventDefault();
+                        onWikiClick(link.getAttribute('href') || '');
+                      }
+                    }}
+                  >
+                    <ReactMarkdown
+                      remarkPlugins={plugins}
+                      components={{
+                        span: ({ node, children, ...props }) => {
+                          const className =
+                            (props as { className?: string }).className ?? '';
+                          if (className.includes('note-secret')) {
+                            return <Secret>{children}</Secret>;
+                          }
+                          return <span {...props}>{children}</span>;
+                        },
+                      }}
+                    >
+                      {active.body
+                        ? preprocessDecorators(active.body)
+                        : '*Nothing yet. Switch to Edit to start writing.*'}
+                    </ReactMarkdown>
+                  </div>
+                ) : (
+                  <Editor
+                    key={active.id}
+                    body={active.body}
+                    onChange={(v) => updateNote(active.id, { body: v })}
+                    wikiIndex={wikiIndex}
+                  />
+                )}
+              </div>
+            </>
+          )}
+        </section>
+      </div>
+    </div>
+  );
+}
+
+function LegendRow({
+  syntax,
+  label,
+  children,
+}: {
+  syntax: string;
+  label: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="flex items-center gap-2">
+      <code className="text-[10px] text-slate-400 bg-slate-950 px-1 py-0.5 rounded font-mono w-28 shrink-0">
+        {syntax}
+      </code>
+      <span className="text-slate-500 text-[10px] w-16 shrink-0">{label}</span>
+      <span className="text-[11px]">{children}</span>
+    </div>
+  );
+}
+
+type EditorProps = {
+  body: string;
+  onChange: (v: string) => void;
+  wikiIndex: WikiEntry[];
+};
+
+function Editor({ body, onChange, wikiIndex }: EditorProps) {
+  const taRef = useRef<HTMLTextAreaElement>(null);
+  const [suggest, setSuggest] = useState<{
+    start: number;
+    query: string;
+    results: WikiEntry[];
+    cursor: number;
+  } | null>(null);
+
+  const updateSuggest = (value: string, caret: number) => {
+    const upto = value.slice(0, caret);
+    const open = upto.lastIndexOf('[[');
+    if (open === -1) {
+      setSuggest(null);
+      return;
+    }
+    const close = upto.indexOf(']]', open);
+    if (close !== -1) {
+      setSuggest(null);
+      return;
+    }
+    const between = upto.slice(open + 2);
+    if (/[\n\]]/.test(between)) {
+      setSuggest(null);
+      return;
+    }
+    const results = searchWiki(wikiIndex, between, 6);
+    if (results.length === 0) {
+      setSuggest(null);
+      return;
+    }
+    setSuggest({ start: open, query: between, results, cursor: 0 });
+  };
+
+  const accept = (entry: WikiEntry) => {
+    if (!suggest || !taRef.current) return;
+    const ta = taRef.current;
+    const before = body.slice(0, suggest.start);
+    let afterStart = suggest.start + 2 + suggest.query.length;
+    if (body.slice(afterStart, afterStart + 2) === ']]') afterStart += 2;
+    const after = body.slice(afterStart);
+    const inserted = `[[${entry.name}]]`;
+    const next = before + inserted + after;
+    onChange(next);
+    setSuggest(null);
+    const newCaret = before.length + inserted.length;
+    requestAnimationFrame(() => {
+      ta.focus();
+      ta.setSelectionRange(newCaret, newCaret);
+    });
+  };
+
+  function pairFor(key: string, prev: string): string | null {
+    if (key === '{' && prev.length === 1 && '@?!$'.includes(prev)) return '}';
+    if (key === '{' && prev === '{') return '}}';
+    if (key === '[' && prev === '[') return ']]';
+    if (key === '%' && prev === '%') return '%%';
+    return null;
+  }
+
+  useEffect(() => {
+    if (!suggest) return;
+    const onDocClick = () => setSuggest(null);
+    document.addEventListener('mousedown', onDocClick);
+    return () => document.removeEventListener('mousedown', onDocClick);
+  }, [suggest]);
+
+  return (
+    <div className="relative h-full">
+      <textarea
+        ref={taRef}
+        value={body}
+        onChange={(e) => {
+          onChange(e.target.value);
+          updateSuggest(e.target.value, e.target.selectionStart);
+        }}
+        onKeyDown={(e) => {
+          if (!suggest) {
+            const ta = e.currentTarget;
+            if (ta.selectionStart === ta.selectionEnd) {
+              const caret = ta.selectionStart;
+              const prev = caret > 0 ? body[caret - 1] : '';
+              const closer = pairFor(e.key, prev);
+              if (closer) {
+                e.preventDefault();
+                const before = body.slice(0, caret);
+                const after = body.slice(caret);
+                const next = before + e.key + closer + after;
+                onChange(next);
+                const newCaret = caret + 1;
+                requestAnimationFrame(() => {
+                  ta.focus();
+                  ta.setSelectionRange(newCaret, newCaret);
+                  updateSuggest(next, newCaret);
+                });
+                return;
+              }
+            }
+            return;
+          }
+          if (e.key === 'ArrowDown') {
+            e.preventDefault();
+            setSuggest({
+              ...suggest,
+              cursor: (suggest.cursor + 1) % suggest.results.length,
+            });
+          } else if (e.key === 'ArrowUp') {
+            e.preventDefault();
+            setSuggest({
+              ...suggest,
+              cursor:
+                (suggest.cursor - 1 + suggest.results.length) % suggest.results.length,
+            });
+          } else if (e.key === 'Enter' || e.key === 'Tab') {
+            e.preventDefault();
+            accept(suggest.results[suggest.cursor]);
+          } else if (e.key === 'Escape') {
+            e.preventDefault();
+            setSuggest(null);
+          }
+        }}
+        onKeyUp={(e) => {
+          const t = e.currentTarget;
+          if (
+            e.key === 'ArrowLeft' ||
+            e.key === 'ArrowRight' ||
+            e.key === 'Home' ||
+            e.key === 'End'
+          ) {
+            updateSuggest(t.value, t.selectionStart);
+          }
+        }}
+        onClick={(e) => {
+          const t = e.currentTarget;
+          updateSuggest(t.value, t.selectionStart);
+        }}
+        placeholder={
+          '# Heading\n\nWrite in markdown. Decorators:\n@{location}  ?{dependency}  !{milestone}  ${artifact}\n%%comment%%  [[wiki link]]  {{secret}}'
+        }
+        className="w-full h-full bg-slate-950 text-slate-100 font-mono text-sm p-6 resize-none outline-none leading-relaxed"
+      />
+      {suggest && (
+        <div
+          className="absolute left-8 bottom-8 z-10 w-64 bg-slate-900 border border-slate-700 rounded shadow-lg overflow-hidden"
+          onMouseDown={(e) => e.preventDefault()}
+        >
+          <div className="px-2 py-1 text-[10px] uppercase tracking-wider text-slate-500 border-b border-slate-800">
+            Wiki — {suggest.query || '(type to filter)'}
+          </div>
+          {suggest.results.map((r, i) => (
+            <div
+              key={`${r.kind}-${r.id}`}
+              onClick={() => accept(r)}
+              className={`px-2 py-1 flex items-center justify-between cursor-pointer text-xs ${
+                i === suggest.cursor ? 'bg-sky-900/50 text-sky-100' : 'hover:bg-slate-800'
+              }`}
+            >
+              <span className="truncate">{r.name}</span>
+              <span className="text-[10px] text-slate-500 ml-2 shrink-0">
+                {kindLabel(r.kind)}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+type FolderNodeProps = {
+  folder: Folder;
+  depth: number;
+  folders: Folder[];
+  notes: Note[];
+  activeNoteId: string | null;
+  matching: Set<string> | null;
+  renamingFolderId: string | null;
+  renameValue: string;
+  confirmingId: string | null;
+  dragOverId: string | 'root' | null;
+  onToggle: (id: string) => void;
+  onSelectNote: (id: string) => void;
+  onCreateNote: (folderId: string | null) => void;
+  onCreateFolder: (parentId: string | null) => void;
+  onStartRename: (id: string, name: string) => void;
+  onFinishRename: (id: string) => void;
+  onCancelRename: () => void;
+  onRenameChange: (v: string) => void;
+  onStartDeleteNote: (id: string) => void;
+  onDeleteNote: (id: string) => void;
+  onCancelDelete: () => void;
+  onStartDeleteFolder: (id: string) => void;
+  onDeleteFolder: (id: string) => void;
+  onDragStart: (d: DragItem) => void;
+  onDragOverItem: (id: string | null) => void;
+  onDrop: (target: string | null) => void;
+};
+
+function FolderNode(props: FolderNodeProps) {
+  const { folder, depth, folders, notes, matching } = props;
+  const children = folders.filter((f) => f.parentId === folder.id);
+  const folderNotes = notes.filter((n) => n.folderId === folder.id);
+  const renaming = props.renamingFolderId === folder.id;
+  const confirming = props.confirmingId === folder.id;
+  const isDragOver = props.dragOverId === folder.id;
+
+  return (
+    <div>
+      <div
+        draggable={!renaming}
+        onDragStart={(e) => {
+          e.stopPropagation();
+          props.onDragStart({ kind: 'folder', id: folder.id });
+        }}
+        onDragOver={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          props.onDragOverItem(folder.id);
+        }}
+        onDragLeave={() => props.onDragOverItem(null)}
+        onDrop={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          props.onDrop(folder.id);
+        }}
+        className={`group flex items-center gap-1 px-1 py-0.5 cursor-pointer hover:bg-slate-900 ${
+          isDragOver ? 'bg-sky-950/40 ring-1 ring-sky-700' : ''
+        }`}
+        style={{ paddingLeft: 4 + depth * 12 }}
+        onClick={() => props.onToggle(folder.id)}
+      >
+        {folder.expanded ? (
+          <ChevronDown size={12} className="text-slate-500 shrink-0" />
+        ) : (
+          <ChevronRight size={12} className="text-slate-500 shrink-0" />
+        )}
+        <span className="text-sky-400 shrink-0">📁</span>
+        {renaming ? (
+          <input
+            autoFocus
+            value={props.renameValue}
+            onClick={(e) => e.stopPropagation()}
+            onChange={(e) => props.onRenameChange(e.target.value)}
+            onBlur={() => props.onFinishRename(folder.id)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') props.onFinishRename(folder.id);
+              if (e.key === 'Escape') props.onCancelRename();
+            }}
+            className="flex-1 min-w-0 bg-slate-800 border border-sky-700 px-1 text-[12px] outline-none"
+          />
+        ) : (
+          <span
+            onDoubleClick={(e) => {
+              e.stopPropagation();
+              props.onStartRename(folder.id, folder.name);
+            }}
+            className="flex-1 min-w-0 truncate text-slate-200"
+          >
+            {folder.name}
+          </span>
+        )}
+        {!renaming && !confirming && (
+          <div className="flex gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                props.onCreateNote(folder.id);
+              }}
+              title="New note"
+              className="p-0.5 text-slate-500 hover:text-sky-300"
+            >
+              <FilePlus size={11} />
+            </button>
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                props.onCreateFolder(folder.id);
+              }}
+              title="New folder"
+              className="p-0.5 text-slate-500 hover:text-sky-300"
+            >
+              <FolderPlus size={11} />
+            </button>
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                props.onStartDeleteFolder(folder.id);
+              }}
+              title="Delete folder"
+              className="p-0.5 text-slate-500 hover:text-rose-400"
+            >
+              <Trash2 size={11} />
+            </button>
+          </div>
+        )}
+        {confirming && (
+          <div
+            className="flex gap-0.5 shrink-0"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <button
+              onClick={() => props.onDeleteFolder(folder.id)}
+              className="px-1 text-[10px] bg-rose-700 hover:bg-rose-600 text-white rounded"
+            >
+              Delete
+            </button>
+            <button
+              onClick={() => props.onCancelDelete()}
+              className="px-1 text-[10px] bg-slate-700 hover:bg-slate-600 text-slate-200 rounded"
+            >
+              Cancel
+            </button>
+          </div>
+        )}
+      </div>
+      {folder.expanded && (
+        <div>
+          {children.map((c) => (
+            <FolderNode {...props} key={c.id} folder={c} depth={depth + 1} />
+          ))}
+          {folderNotes.map((n) => (
+            <NoteRow
+              key={n.id}
+              note={n}
+              depth={depth + 1}
+              active={n.id === props.activeNoteId}
+              dimmed={matching !== null && !matching.has(n.id)}
+              confirming={props.confirmingId === n.id}
+              onSelect={() => props.onSelectNote(n.id)}
+              onStartDelete={() => props.onStartDeleteNote(n.id)}
+              onDelete={() => props.onDeleteNote(n.id)}
+              onCancelDelete={() => props.onCancelDelete()}
+              onDragStart={() => props.onDragStart({ kind: 'note', id: n.id })}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+type NoteRowProps = {
+  note: Note;
+  depth: number;
+  active: boolean;
+  dimmed: boolean;
+  confirming: boolean;
+  onSelect: () => void;
+  onStartDelete: () => void;
+  onDelete: () => void;
+  onCancelDelete: () => void;
+  onDragStart: () => void;
+};
+
+function NoteRow({
+  note,
+  depth,
+  active,
+  dimmed,
+  confirming,
+  onSelect,
+  onStartDelete,
+  onDelete,
+  onCancelDelete,
+  onDragStart,
+}: NoteRowProps) {
+  return (
+    <div
+      draggable
+      onDragStart={(e) => {
+        e.stopPropagation();
+        onDragStart();
+      }}
+      onClick={onSelect}
+      className={`group flex items-center gap-1 px-1 py-0.5 cursor-pointer ${
+        active ? 'bg-sky-900/40 text-sky-100' : 'hover:bg-slate-900 text-slate-300'
+      } ${dimmed ? 'opacity-30' : ''}`}
+      style={{ paddingLeft: 16 + depth * 12 }}
+    >
+      <FileText size={11} className="text-slate-500 shrink-0" />
+      <span className="flex-1 min-w-0 truncate">{note.title || 'Untitled'}</span>
+      {confirming ? (
+        <div className="flex gap-0.5 shrink-0" onClick={(e) => e.stopPropagation()}>
+          <button
+            onClick={onDelete}
+            className="px-1 text-[10px] bg-rose-700 hover:bg-rose-600 text-white rounded"
+          >
+            Del
+          </button>
+          <button
+            onClick={onCancelDelete}
+            className="px-1 text-[10px] bg-slate-700 hover:bg-slate-600 text-slate-200 rounded"
+          >
+            X
+          </button>
+        </div>
+      ) : (
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            onStartDelete();
+          }}
+          className="p-0.5 text-slate-600 hover:text-rose-400 opacity-0 group-hover:opacity-100 transition-opacity shrink-0"
+        >
+          <Trash2 size={11} />
+        </button>
+      )}
+    </div>
+  );
+}

@@ -1,0 +1,217 @@
+import { useEffect, useRef, useState } from 'react';
+import { Dices, X, Trash2 } from 'lucide-react';
+import { useQuickDice } from './quickDiceStore';
+
+type Die = 4 | 6 | 8 | 10 | 12 | 20 | 100;
+const DICE: Die[] = [4, 6, 8, 10, 12, 20, 100];
+
+type Roll = {
+  id: string;
+  label: string;
+  detail: string;
+  total: number;
+  crit?: 'hit' | 'miss';
+  dropped?: number;
+};
+
+const rollDie = (sides: Die) => Math.floor(Math.random() * sides) + 1;
+
+export function QuickDice() {
+  const { open, close } = useQuickDice();
+  const [mod, setMod] = useState(0);
+  const [history, setHistory] = useState<Roll[]>([]);
+  const panelRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') close();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [open, close]);
+
+  if (!open) return null;
+
+  const pushRoll = (r: Roll) => setHistory((h) => [r, ...h].slice(0, 10));
+
+  const quick = (d: Die) => {
+    const v = rollDie(d);
+    const withMod = v + mod;
+    const crit = d === 20 ? (v === 20 ? 'hit' : v === 1 ? 'miss' : undefined) : undefined;
+    pushRoll({
+      id: crypto.randomUUID(),
+      label: `d${d}${mod ? (mod > 0 ? ` + ${mod}` : ` − ${-mod}`) : ''}`,
+      detail: `[${v}]${mod ? ` ${mod >= 0 ? '+' : '−'} ${Math.abs(mod)}` : ''}`,
+      total: withMod,
+      crit,
+    });
+  };
+
+  const d20 = (mode: 'adv' | 'dis') => {
+    const a = rollDie(20);
+    const b = rollDie(20);
+    const pick = mode === 'adv' ? Math.max(a, b) : Math.min(a, b);
+    const dropped = pick === a ? b : a;
+    const crit = pick === 20 ? 'hit' : pick === 1 ? 'miss' : undefined;
+    pushRoll({
+      id: crypto.randomUUID(),
+      label: `d20 ${mode === 'adv' ? 'adv' : 'dis'}${mod ? (mod > 0 ? ` + ${mod}` : ` − ${-mod}`) : ''}`,
+      detail: `[${pick}, ~${dropped}]${mod ? ` ${mod >= 0 ? '+' : '−'} ${Math.abs(mod)}` : ''}`,
+      total: pick + mod,
+      crit,
+      dropped,
+    });
+  };
+
+  return (
+    <div
+      ref={panelRef}
+      className="fixed bottom-4 right-4 z-40 w-72 bg-slate-950 border border-slate-700 rounded-lg shadow-2xl overflow-hidden"
+    >
+      <div className="flex items-center justify-between px-3 py-2 border-b border-slate-800 bg-slate-900">
+        <div className="flex items-center gap-2 text-sm text-sky-200">
+          <Dices size={14} /> Quick dice
+        </div>
+        <div className="flex items-center gap-1">
+          {history.length > 0 && (
+            <button
+              onClick={() => setHistory([])}
+              title="Clear history"
+              className="p-1 text-slate-500 hover:text-slate-200"
+            >
+              <Trash2 size={12} />
+            </button>
+          )}
+          <button onClick={close} className="p-1 text-slate-500 hover:text-slate-200">
+            <X size={14} />
+          </button>
+        </div>
+      </div>
+
+      <div className="p-3 space-y-2">
+        <div className="grid grid-cols-4 gap-1">
+          {DICE.map((d) => (
+            <button
+              key={d}
+              onClick={() => quick(d)}
+              className="py-1.5 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded font-mono text-xs"
+            >
+              d{d}
+            </button>
+          ))}
+        </div>
+
+        <div className="grid grid-cols-2 gap-1">
+          <button
+            onClick={() => d20('adv')}
+            className="py-1.5 bg-emerald-900/40 hover:bg-emerald-800/60 border border-emerald-800 rounded text-xs text-emerald-200"
+          >
+            d20 Advantage
+          </button>
+          <button
+            onClick={() => d20('dis')}
+            className="py-1.5 bg-rose-900/40 hover:bg-rose-800/60 border border-rose-800 rounded text-xs text-rose-200"
+          >
+            d20 Disadvantage
+          </button>
+        </div>
+
+        <div className="flex items-center gap-2">
+          <span className="text-[11px] text-slate-500">Mod</span>
+          <button
+            onClick={() => setMod((m) => m - 1)}
+            className="w-6 h-6 bg-slate-800 hover:bg-slate-700 rounded text-slate-300"
+          >
+            −
+          </button>
+          <input
+            type="number"
+            value={mod}
+            onChange={(e) => setMod(parseInt(e.target.value || '0', 10))}
+            className="w-14 bg-slate-900 border border-slate-800 rounded px-2 py-0.5 text-center text-xs font-mono"
+          />
+          <button
+            onClick={() => setMod((m) => m + 1)}
+            className="w-6 h-6 bg-slate-800 hover:bg-slate-700 rounded text-slate-300"
+          >
+            +
+          </button>
+          {mod !== 0 && (
+            <button
+              onClick={() => setMod(0)}
+              className="ml-auto text-[10px] text-slate-500 hover:text-slate-300"
+            >
+              reset
+            </button>
+          )}
+        </div>
+      </div>
+
+      <div className="border-t border-slate-800 max-h-56 overflow-y-auto">
+        {history.length === 0 ? (
+          <div className="px-3 py-4 text-[11px] text-slate-600 italic text-center">
+            No rolls yet.
+          </div>
+        ) : (
+          history.map((r) => (
+            <div
+              key={r.id}
+              className="px-3 py-1.5 border-b border-slate-900 flex items-baseline justify-between gap-2"
+            >
+              <div className="min-w-0">
+                <div className="text-[11px] text-slate-400 truncate">{r.label}</div>
+                <div className="text-[10px] text-slate-600 font-mono truncate">
+                  {r.detail}
+                </div>
+              </div>
+              <div
+                className={`font-serif text-xl shrink-0 ${
+                  r.crit === 'hit'
+                    ? 'text-emerald-300'
+                    : r.crit === 'miss'
+                      ? 'text-rose-400'
+                      : 'text-sky-200'
+                }`}
+              >
+                {r.total}
+              </div>
+            </div>
+          ))
+        )}
+      </div>
+    </div>
+  );
+}
+
+export function QuickDiceButton({ compact = false }: { compact?: boolean }) {
+  const toggle = useQuickDice((s) => s.toggle);
+  const open = useQuickDice((s) => s.open);
+  if (compact) {
+    return (
+      <button
+        onClick={toggle}
+        title="Quick dice"
+        className={`p-1.5 rounded ${
+          open
+            ? 'bg-sky-900/50 text-sky-200'
+            : 'bg-slate-800 hover:bg-slate-700 text-slate-300'
+        }`}
+      >
+        <Dices size={14} />
+      </button>
+    );
+  }
+  return (
+    <button
+      onClick={toggle}
+      className={`px-2 py-1 text-xs rounded flex items-center gap-1 ${
+        open
+          ? 'bg-sky-900/50 text-sky-200'
+          : 'bg-slate-800 hover:bg-slate-700 text-slate-300'
+      }`}
+    >
+      <Dices size={12} /> Dice
+    </button>
+  );
+}
