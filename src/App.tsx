@@ -1,6 +1,6 @@
 import { useEffect } from 'react';
 import { NavLink, Route, Routes, Navigate } from 'react-router-dom';
-import { Dice6, Swords, NotebookPen, Map as MapIcon, BookOpen, Sparkles, Coins, Package, ScrollText, Users, FlaskConical, Dices, LogOut, Copy } from 'lucide-react';
+import { Dice6, Swords, NotebookPen, Map as MapIcon, BookOpen, Sparkles, Coins, Package, ScrollText, Users, FlaskConical, Dices, LogOut, Copy, Mic } from 'lucide-react';
 import DiceRoller from './features/dice/DiceRoller';
 import { QuickDice } from './features/dice/QuickDice';
 import { useQuickDice } from './features/dice/quickDiceStore';
@@ -14,6 +14,7 @@ import StatBlocks from './features/statblocks/StatBlocks';
 import Rules from './features/rules/Rules';
 import Party from './features/party/Party';
 import Homebrew from './features/homebrew/Homebrew';
+import Transcription from './features/transcription/Transcription';
 import CampaignPicker from './features/session/CampaignPicker';
 import { useSession } from './features/session/sessionStore';
 
@@ -35,6 +36,7 @@ const nav: NavItem[] = [
   { to: '/shop', label: 'Shop', icon: Coins },
   { to: '/statblocks', label: 'Stat Blocks', icon: ScrollText, gmOnly: true },
   { to: '/homebrew', label: 'Homebrew', icon: FlaskConical, gmOnly: true },
+  { to: '/record', label: 'Record', icon: Mic, gmOnly: true },
   { to: '/rules', label: 'Rules', icon: BookOpen },
 ];
 
@@ -155,6 +157,7 @@ function AppShell() {
           <Route path="/shop" element={<Shop />} />
           {role === 'gm' && <Route path="/statblocks" element={<StatBlocks />} />}
           {role === 'gm' && <Route path="/homebrew" element={<Homebrew />} />}
+          {role === 'gm' && <Route path="/record" element={<Transcription />} />}
           <Route path="/rules" element={<Rules />} />
           <Route path="*" element={<Navigate to="/dice" replace />} />
         </Routes>
