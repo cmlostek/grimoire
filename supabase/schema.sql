@@ -229,7 +229,7 @@ drop policy if exists party_insert on party_members;
 create policy party_insert on party_members for insert to authenticated with check (is_gm(campaign_id));
 
 drop policy if exists party_update on party_members;
-create policy party_update on party_members for update to authenticated using (is_gm(campaign_id) or (is_member(campaign_id) and owner_user_id = auth.uid())) with check (is_gm(campaign_id) or (is_member(campaign_id) and owner_user_id = auth.uid()));
+create policy party_update on party_members for update to authenticated using (is_gm(campaign_id) or (is_member(campaign_id) and (owner_user_id is null or owner_user_id = auth.uid()))) with check (is_gm(campaign_id) or (is_member(campaign_id) and owner_user_id = auth.uid()));
 
 drop policy if exists party_delete on party_members;
 create policy party_delete on party_members for delete to authenticated using (is_gm(campaign_id));

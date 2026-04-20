@@ -1,61 +1,91 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import PageHeader from '../../components/PageHeader';
-import { useStore, PartyMember } from '../../store';
+import { useParty, type PartyMember } from './partyStore';
+import { useSession } from '../session/sessionStore';
 import { parseDdb, parseGenericJson, isLikelyDdb, isDdbWrapper } from './ddb';
 import { modifier } from '../../data/srd';
-import { Plus, Trash2, UserPlus, FileJson, ExternalLink, X, Shield, Heart, Eye, Search, Brain } from 'lucide-react';
+import {
+  Plus, Trash2, UserPlus, FileJson, ExternalLink, X, Shield, Heart,
+  Eye, Search, Brain, UserCheck, User as UserIcon,
+} from 'lucide-react';
 
 type AddMode = null | 'manual' | 'json';
 
 const ABILITIES = ['str', 'dex', 'con', 'int', 'wis', 'cha'] as const;
 
+const blankMember = (): Omit<PartyMember, 'id' | 'owner_user_id'> => ({
+  name: 'New Character',
+  race: 'Human',
+  classSummary: 'Fighter 1',
+  level: 1,
+  ac: 15,
+  hp: 10,
+  maxHp: 10,
+  tempHp: 0,
+  speed: '30 ft.',
+  initiativeBonus: 0,
+  passivePerception: 10,
+  passiveInvestigation: 10,
+  passiveInsight: 10,
+  str: 10,
+  dex: 10,
+  con: 10,
+  int: 10,
+  wis: 10,
+  cha: 10,
+  saves: '',
+  skills: '',
+  languages: 'Common',
+  source: 'manual',
+});
+
 export default function Party() {
-  const { party, addPartyMember, updatePartyMember, removePartyMember } = useStore();
+  const campaignId = useSession((s) => s.campaignId);
+  const userId = useSession((s) => s.userId);
+  const role = useSession((s) => s.role);
+  const isGM = role === 'gm';
+
+  const party = useParty((s) => s.party);
+  const loadForCampaign = useParty((s) => s.loadForCampaign);
+  const subscribe = useParty((s) => s.subscribe);
+  const addPartyMember = useParty((s) => s.addPartyMember);
+  const updatePartyMember = useParty((s) => s.updatePartyMember);
+  const removePartyMember = useParty((s) => s.removePartyMember);
+  const claim = useParty((s) => s.claim);
+  const unclaim = useParty((s) => s.unclaim);
+
   const [addMode, setAddMode] = useState<AddMode>(null);
 
-  const blankMember = (): Omit<PartyMember, 'id'> => ({
-    name: 'New Character',
-    race: 'Human',
-    classSummary: 'Fighter 1',
-    level: 1,
-    ac: 15,
-    hp: 10,
-    maxHp: 10,
-    tempHp: 0,
-    speed: '30 ft.',
-    initiativeBonus: 0,
-    passivePerception: 10,
-    passiveInvestigation: 10,
-    passiveInsight: 10,
-    str: 10,
-    dex: 10,
-    con: 10,
-    int: 10,
-    wis: 10,
-    cha: 10,
-    saves: '',
-    skills: '',
-    languages: 'Common',
-    source: 'manual',
-  });
+  useEffect(() => {
+    if (!campaignId) return;
+    loadForCampaign(campaignId);
+    const unsub = subscribe(campaignId);
+    return unsub;
+  }, [campaignId, loadForCampaign, subscribe]);
+
+  const canEdit = (m: PartyMember) => isGM || m.owner_user_id === userId;
 
   return (
     <div className="h-full flex flex-col">
       <PageHeader title="Party">
-        <button
-          onClick={() => setAddMode('json')}
-          className="px-3 py-1.5 text-xs bg-slate-800 hover:bg-slate-700 rounded flex items-center gap-1"
-        >
-          <FileJson size={14} /> Import JSON
-        </button>
-        <button
-          onClick={() => {
-            addPartyMember(blankMember());
-          }}
-          className="px-3 py-1.5 text-xs bg-sky-700 hover:bg-sky-600 text-slate-950 font-semibold rounded flex items-center gap-1"
-        >
-          <UserPlus size={14} /> Add manual
-        </button>
+        {isGM && (
+          <>
+            <button
+              onClick={() => setAddMode('json')}
+              className="px-3 py-1.5 text-xs bg-slate-800 hover:bg-slate-700 rounded flex items-center gap-1"
+            >
+              <FileJson size={14} /> Import JSON
+            </button>
+            <button
+              onClick={() => {
+                if (campaignId) addPartyMember(campaignId, blankMember());
+              }}
+              className="px-3 py-1.5 text-xs bg-sky-700 hover:bg-sky-600 text-slate-950 font-semibold rounded flex items-center gap-1"
+            >
+              <UserPlus size={14} /> Add manual
+            </button>
+          </>
+        )}
       </PageHeader>
 
       <div className="flex-1 min-h-0 overflow-y-auto p-6">
@@ -63,25 +93,35 @@ export default function Party() {
           <div className="text-center max-w-xl mx-auto mt-12">
             <div className="font-serif text-2xl text-sky-200 mb-2">No party yet</div>
             <div className="text-sm text-slate-400 leading-relaxed">
-              Add a character manually, or paste JSON exported from D&amp;D Beyond or the generic
-              schema. The party shows at-a-glance stats you'll want during play: AC, HP, passives,
-              and initiative.
+              {isGM
+                ? 'Add a character manually, or paste JSON exported from D&D Beyond or the generic schema. The party shows at-a-glance stats you\'ll want during play: AC, HP, passives, and initiative.'
+                : 'Your GM hasn\'t added any characters yet.'}
             </div>
           </div>
         )}
 
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
           {party.map((m) => (
-            <CharCard key={m.id} m={m} onUpdate={(p) => updatePartyMember(m.id, p)} onRemove={() => removePartyMember(m.id)} />
+            <CharCard
+              key={m.id}
+              m={m}
+              userId={userId}
+              isGM={isGM}
+              editable={canEdit(m)}
+              onUpdate={(p) => updatePartyMember(m.id, p)}
+              onRemove={() => removePartyMember(m.id)}
+              onClaim={() => claim(m.id)}
+              onUnclaim={() => unclaim(m.id)}
+            />
           ))}
         </div>
       </div>
 
-      {addMode === 'json' && (
+      {isGM && addMode === 'json' && (
         <JsonImportModal
           onClose={() => setAddMode(null)}
           onImport={(p) => {
-            addPartyMember(p);
+            if (campaignId) addPartyMember(campaignId, p);
             setAddMode(null);
           }}
         />
@@ -92,16 +132,29 @@ export default function Party() {
 
 function CharCard({
   m,
+  userId,
+  isGM,
+  editable,
   onUpdate,
   onRemove,
+  onClaim,
+  onUnclaim,
 }: {
   m: PartyMember;
+  userId: string | null;
+  isGM: boolean;
+  editable: boolean;
   onUpdate: (p: Partial<PartyMember>) => void;
   onRemove: () => void;
+  onClaim: () => void;
+  onUnclaim: () => void;
 }) {
   const [expanded, setExpanded] = useState(false);
   const [confirming, setConfirming] = useState(false);
   const hpPct = m.maxHp > 0 ? (m.hp / m.maxHp) * 100 : 0;
+
+  const ownedByMe = m.owner_user_id === userId && userId !== null;
+  const owned = m.owner_user_id !== null;
 
   return (
     <div className="bg-slate-900 border border-slate-800 rounded-lg p-4 flex flex-col gap-3">
@@ -110,20 +163,23 @@ function CharCard({
           <input
             value={m.name}
             onChange={(e) => onUpdate({ name: e.target.value })}
+            readOnly={!editable}
             className="w-full bg-transparent font-serif text-xl text-sky-200 outline-none truncate"
           />
           <input
             value={m.classSummary}
             onChange={(e) => onUpdate({ classSummary: e.target.value })}
+            readOnly={!editable}
             className="w-full bg-transparent text-xs text-slate-400 outline-none truncate"
           />
           <input
             value={m.race}
             onChange={(e) => onUpdate({ race: e.target.value })}
+            readOnly={!editable}
             className="w-full bg-transparent text-[11px] text-slate-500 outline-none truncate"
           />
         </div>
-        <div className="flex gap-1">
+        <div className="flex gap-1 items-start">
           {m.ddbUrl && (
             <a
               href={m.ddbUrl}
@@ -135,7 +191,7 @@ function CharCard({
               <ExternalLink size={14} />
             </a>
           )}
-          {confirming ? (
+          {isGM && (confirming ? (
             <div className="flex items-center gap-1">
               <button
                 onClick={onRemove}
@@ -158,14 +214,46 @@ function CharCard({
             >
               <Trash2 size={14} />
             </button>
-          )}
+          ))}
         </div>
       </div>
 
+      <div className="flex items-center justify-between text-[10px] -mt-1">
+        {ownedByMe ? (
+          <span className="flex items-center gap-1 text-emerald-400">
+            <UserCheck size={11} /> Yours
+          </span>
+        ) : owned ? (
+          <span className="flex items-center gap-1 text-slate-500">
+            <UserIcon size={11} /> Claimed
+          </span>
+        ) : (
+          <span className="flex items-center gap-1 text-slate-600 italic">
+            Unclaimed
+          </span>
+        )}
+        {!isGM && !owned && (
+          <button
+            onClick={onClaim}
+            className="px-2 py-0.5 text-[10px] bg-sky-700 hover:bg-sky-600 text-slate-950 font-semibold rounded"
+          >
+            Claim
+          </button>
+        )}
+        {ownedByMe && !isGM && (
+          <button
+            onClick={onUnclaim}
+            className="px-2 py-0.5 text-[10px] bg-slate-800 hover:bg-slate-700 text-slate-400 rounded"
+          >
+            Release
+          </button>
+        )}
+      </div>
+
       <div className="grid grid-cols-3 gap-2 text-center">
-        <Stat icon={<Shield size={12} />} label="AC" value={m.ac} onChange={(v) => onUpdate({ ac: v })} />
-        <Stat icon={null} label="Init" value={m.initiativeBonus} onChange={(v) => onUpdate({ initiativeBonus: v })} signed />
-        <Stat icon={null} label="Lvl" value={m.level} onChange={(v) => onUpdate({ level: v })} />
+        <Stat icon={<Shield size={12} />} label="AC" value={m.ac} onChange={(v) => onUpdate({ ac: v })} readOnly={!editable} />
+        <Stat icon={null} label="Init" value={m.initiativeBonus} onChange={(v) => onUpdate({ initiativeBonus: v })} signed readOnly={!editable} />
+        <Stat icon={null} label="Lvl" value={m.level} onChange={(v) => onUpdate({ level: v })} readOnly={!editable} />
       </div>
 
       <div>
@@ -175,6 +263,7 @@ function CharCard({
             type="number"
             value={m.hp}
             onChange={(e) => onUpdate({ hp: Math.max(0, parseInt(e.target.value) || 0) })}
+            readOnly={!editable}
             className="w-14 bg-slate-800 rounded px-1 text-right font-mono"
           />
           <span className="text-slate-500">/</span>
@@ -182,6 +271,7 @@ function CharCard({
             type="number"
             value={m.maxHp}
             onChange={(e) => onUpdate({ maxHp: Math.max(0, parseInt(e.target.value) || 0) })}
+            readOnly={!editable}
             className="w-14 bg-slate-800 rounded px-1 font-mono"
           />
           {m.tempHp > 0 && (
@@ -191,6 +281,7 @@ function CharCard({
                 type="number"
                 value={m.tempHp}
                 onChange={(e) => onUpdate({ tempHp: Math.max(0, parseInt(e.target.value) || 0) })}
+                readOnly={!editable}
                 className="w-10 bg-slate-800 rounded px-1 text-right font-mono"
               />
             </span>
@@ -207,9 +298,9 @@ function CharCard({
       </div>
 
       <div className="grid grid-cols-3 gap-2 text-center text-xs">
-        <Passive icon={<Eye size={11} />} label="Perception" value={m.passivePerception} onChange={(v) => onUpdate({ passivePerception: v })} />
-        <Passive icon={<Search size={11} />} label="Investigation" value={m.passiveInvestigation} onChange={(v) => onUpdate({ passiveInvestigation: v })} />
-        <Passive icon={<Brain size={11} />} label="Insight" value={m.passiveInsight} onChange={(v) => onUpdate({ passiveInsight: v })} />
+        <Passive icon={<Eye size={11} />} label="Perception" value={m.passivePerception} onChange={(v) => onUpdate({ passivePerception: v })} readOnly={!editable} />
+        <Passive icon={<Search size={11} />} label="Investigation" value={m.passiveInvestigation} onChange={(v) => onUpdate({ passiveInvestigation: v })} readOnly={!editable} />
+        <Passive icon={<Brain size={11} />} label="Insight" value={m.passiveInsight} onChange={(v) => onUpdate({ passiveInsight: v })} readOnly={!editable} />
       </div>
 
       <button
@@ -229,22 +320,24 @@ function CharCard({
                   type="number"
                   value={m[a]}
                   onChange={(e) => onUpdate({ [a]: parseInt(e.target.value) || 0 } as Partial<PartyMember>)}
+                  readOnly={!editable}
                   className="w-full bg-transparent text-center font-mono outline-none"
                 />
                 <div className="text-center text-[10px] text-sky-300">{modifier(m[a])}</div>
               </div>
             ))}
           </div>
-          <Detail label="Speed" value={m.speed} onChange={(v) => onUpdate({ speed: v })} />
-          <Detail label="Saves" value={m.saves} onChange={(v) => onUpdate({ saves: v })} />
-          <Detail label="Skills" value={m.skills} onChange={(v) => onUpdate({ skills: v })} />
-          <Detail label="Languages" value={m.languages} onChange={(v) => onUpdate({ languages: v })} />
-          {m.player && <Detail label="Player" value={m.player} onChange={(v) => onUpdate({ player: v })} />}
+          <Detail label="Speed" value={m.speed} onChange={(v) => onUpdate({ speed: v })} readOnly={!editable} />
+          <Detail label="Saves" value={m.saves} onChange={(v) => onUpdate({ saves: v })} readOnly={!editable} />
+          <Detail label="Skills" value={m.skills} onChange={(v) => onUpdate({ skills: v })} readOnly={!editable} />
+          <Detail label="Languages" value={m.languages} onChange={(v) => onUpdate({ languages: v })} readOnly={!editable} />
+          {m.player && <Detail label="Player" value={m.player} onChange={(v) => onUpdate({ player: v })} readOnly={!editable} />}
           <div>
             <div className="text-[10px] uppercase tracking-wider text-slate-500">Notes</div>
             <textarea
               value={m.notes ?? ''}
               onChange={(e) => onUpdate({ notes: e.target.value })}
+              readOnly={!editable}
               rows={2}
               className="w-full mt-0.5 bg-slate-800 border border-slate-700 rounded px-2 py-1 resize-none"
             />
@@ -252,6 +345,7 @@ function CharCard({
           <input
             value={m.ddbUrl ?? ''}
             onChange={(e) => onUpdate({ ddbUrl: e.target.value })}
+            readOnly={!editable}
             placeholder="D&D Beyond URL (optional)"
             className="w-full bg-slate-800 border border-slate-700 rounded px-2 py-1 text-[11px]"
           />
@@ -262,17 +356,14 @@ function CharCard({
 }
 
 function Stat({
-  icon,
-  label,
-  value,
-  onChange,
-  signed,
+  icon, label, value, onChange, signed, readOnly,
 }: {
   icon: React.ReactNode;
   label: string;
   value: number;
   onChange: (v: number) => void;
   signed?: boolean;
+  readOnly?: boolean;
 }) {
   return (
     <div className="bg-slate-950 border border-slate-800 rounded-md py-1.5">
@@ -284,6 +375,7 @@ function Stat({
         type="number"
         value={value}
         onChange={(e) => onChange(parseInt(e.target.value) || 0)}
+        readOnly={readOnly}
         className="w-full bg-transparent text-center font-serif text-xl text-sky-200 outline-none"
       />
       {signed && (
@@ -297,15 +389,13 @@ function Stat({
 }
 
 function Passive({
-  icon,
-  label,
-  value,
-  onChange,
+  icon, label, value, onChange, readOnly,
 }: {
   icon: React.ReactNode;
   label: string;
   value: number;
   onChange: (v: number) => void;
+  readOnly?: boolean;
 }) {
   return (
     <div className="bg-slate-950 border border-slate-800 rounded-md py-1">
@@ -317,19 +407,28 @@ function Passive({
         type="number"
         value={value}
         onChange={(e) => onChange(parseInt(e.target.value) || 0)}
+        readOnly={readOnly}
         className="w-full bg-transparent text-center font-mono text-sm text-slate-200 outline-none"
       />
     </div>
   );
 }
 
-function Detail({ label, value, onChange }: { label: string; value: string; onChange: (v: string) => void }) {
+function Detail({
+  label, value, onChange, readOnly,
+}: {
+  label: string;
+  value: string;
+  onChange: (v: string) => void;
+  readOnly?: boolean;
+}) {
   return (
     <div>
       <div className="text-[10px] uppercase tracking-wider text-slate-500">{label}</div>
       <input
         value={value}
         onChange={(e) => onChange(e.target.value)}
+        readOnly={readOnly}
         className="w-full mt-0.5 bg-slate-800 border border-slate-700 rounded px-2 py-1 text-[11px]"
       />
     </div>
@@ -341,7 +440,7 @@ function JsonImportModal({
   onImport,
 }: {
   onClose: () => void;
-  onImport: (p: Omit<PartyMember, 'id'>) => void;
+  onImport: (p: Omit<PartyMember, 'id' | 'owner_user_id'>) => void;
 }) {
   const [text, setText] = useState('');
   const [error, setError] = useState<string | null>(null);

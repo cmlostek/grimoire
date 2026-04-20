@@ -1,4 +1,4 @@
-import type { PartyMember } from '../../store';
+import type { PartyMember } from './partyStore';
 
 type Raw = any;
 
@@ -157,7 +157,7 @@ export function isDdbWrapper(raw: any): boolean {
   return raw && typeof raw === 'object' && raw.success === true && raw.data && isLikelyDdb(raw.data);
 }
 
-export function parseDdb(input: any): Omit<PartyMember, 'id'> {
+export function parseDdb(input: any): Omit<PartyMember, 'id' | 'owner_user_id'> {
   const raw: Raw = isDdbWrapper(input) ? input.data : input;
   const { label: classLabel, totalLevel } = classSummary(raw);
   const hp = hpFromRaw(raw);
@@ -234,7 +234,7 @@ export function parseDdb(input: any): Omit<PartyMember, 'id'> {
   };
 }
 
-export function parseGenericJson(input: any): Omit<PartyMember, 'id'> {
+export function parseGenericJson(input: any): Omit<PartyMember, 'id' | 'owner_user_id'> {
   return {
     name: input.name ?? 'Unnamed',
     player: input.player,
