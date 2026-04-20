@@ -316,6 +316,39 @@ create trigger stat_blocks_touch   before update on stat_blocks   for each row e
 
 
 -- =============================================
+-- SECTION 7b — note_folders (hierarchical folder tree per campaign)
+-- Run this section once.
+-- =============================================
+
+create table if not exists note_folders (
+  id           uuid primary key default gen_random_uuid(),
+  campaign_id  uuid not null references campaigns(id) on delete cascade,
+  parent_id    uuid references note_folders(id) on delete cascade,
+  name         text not null default 'New Folder',
+  sort_order   int not null default 0,
+  created_at   timestamptz not null default now(),
+  updated_at   timestamptz not null default now()
+);
+create index if not exists note_folders_campaign_idx on note_folders(campaign_id);
+create index if not exists note_folders_parent_idx on note_folders(parent_id);
+
+alter table note_folders enable row level security;
+
+drop policy if exists note_folders_select on note_folders;
+create policy note_folders_select on note_folders for select to authenticated using (is_member(campaign_id));
+
+drop policy if exists note_folders_write on note_folders;
+create policy note_folders_write on note_folders for all to authenticated using (is_gm(campaign_id)) with check (is_gm(campaign_id));
+
+drop trigger if exists note_folders_touch on note_folders;
+create trigger note_folders_touch before update on note_folders for each row execute function touch_updated_at();
+
+-- Add folder_id to notes if missing
+alter table notes add column if not exists folder_id uuid references note_folders(id) on delete set null;
+create index if not exists notes_folder_idx on notes(folder_id);
+
+
+-- =============================================
 -- SECTION 8 — Realtime publication (OPTIONAL)
 -- Ignore "relation is already member of publication" errors — that just means
 -- that table is already subscribed.
@@ -331,3 +364,4 @@ alter publication supabase_realtime add table homebrew;
 alter publication supabase_realtime add table shop_items;
 alter publication supabase_realtime add table stat_blocks;
 alter publication supabase_realtime add table transcripts;
+alter publication supabase_realtime add table note_folders;

@@ -1,6 +1,6 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useSession, rememberedDisplayName } from './sessionStore';
-import { Swords, LogIn, Plus } from 'lucide-react';
+import { Swords, LogIn, Plus, ChevronRight } from 'lucide-react';
 
 type Mode = 'choose' | 'create' | 'join';
 
@@ -8,6 +8,11 @@ export default function CampaignPicker() {
   const [mode, setMode] = useState<Mode>('choose');
   const error = useSession((s) => s.error);
   const loading = useSession((s) => s.loading);
+  const refreshMyCampaigns = useSession((s) => s.refreshMyCampaigns);
+
+  useEffect(() => {
+    refreshMyCampaigns();
+  }, [refreshMyCampaigns]);
 
   return (
     <div className="h-full w-full flex items-center justify-center bg-slate-950 text-slate-100 p-6">
@@ -20,20 +25,23 @@ export default function CampaignPicker() {
         </div>
 
         {mode === 'choose' && (
-          <div className="space-y-3">
-            <button
-              onClick={() => setMode('create')}
-              className="w-full px-4 py-3 rounded-lg bg-sky-700 hover:bg-sky-600 text-slate-950 font-semibold flex items-center justify-center gap-2"
-            >
-              <Plus size={16} /> Create a new campaign
-            </button>
-            <button
-              onClick={() => setMode('join')}
-              className="w-full px-4 py-3 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 flex items-center justify-center gap-2"
-            >
-              <LogIn size={16} /> Join an existing campaign
-            </button>
-          </div>
+          <>
+            <MyCampaignsList />
+            <div className="space-y-3">
+              <button
+                onClick={() => setMode('create')}
+                className="w-full px-4 py-3 rounded-lg bg-sky-700 hover:bg-sky-600 text-slate-950 font-semibold flex items-center justify-center gap-2"
+              >
+                <Plus size={16} /> Create a new campaign
+              </button>
+              <button
+                onClick={() => setMode('join')}
+                className="w-full px-4 py-3 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 flex items-center justify-center gap-2"
+              >
+                <LogIn size={16} /> Join with a code
+              </button>
+            </div>
+          </>
         )}
 
         {mode === 'create' && <CreateForm onBack={() => setMode('choose')} />}
@@ -45,6 +53,40 @@ export default function CampaignPicker() {
           </div>
         )}
         {loading && <div className="text-xs text-slate-500 text-center">Working…</div>}
+      </div>
+    </div>
+  );
+}
+
+function MyCampaignsList() {
+  const myCampaigns = useSession((s) => s.myCampaigns);
+  const switchToCampaign = useSession((s) => s.switchToCampaign);
+  if (myCampaigns.length === 0) return null;
+  return (
+    <div className="space-y-2">
+      <div className="text-xs uppercase tracking-wider text-slate-500">Your campaigns</div>
+      <div className="space-y-2">
+        {myCampaigns.map((c) => (
+          <button
+            key={c.id}
+            onClick={() => switchToCampaign(c.id)}
+            className="w-full px-3 py-2.5 rounded-lg bg-slate-900 hover:bg-slate-800 border border-slate-800 flex items-center justify-between text-left"
+          >
+            <div className="min-w-0">
+              <div className="text-sm text-slate-100 truncate">{c.name}</div>
+              <div className="text-[11px] text-slate-500 flex items-center gap-1">
+                <span className={c.role === 'gm' ? 'text-emerald-400' : 'text-sky-400'}>
+                  {c.role === 'gm' ? 'GM' : 'Player'}
+                </span>
+                <span className="opacity-50">·</span>
+                <span className="truncate">{c.display_name}</span>
+                <span className="opacity-50">·</span>
+                <span className="font-mono tracking-widest">{c.join_code}</span>
+              </div>
+            </div>
+            <ChevronRight size={16} className="text-slate-600 shrink-0" />
+          </button>
+        ))}
       </div>
     </div>
   );

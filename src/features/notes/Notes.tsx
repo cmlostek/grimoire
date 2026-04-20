@@ -3,7 +3,8 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { useNavigate } from 'react-router-dom';
 import { useStore } from '../../store';
-import type { Folder, Note } from '../../store';
+import { useNotes, type Folder, type Note } from './notesStore';
+import { useSession } from '../session/sessionStore';
 import PageHeader from '../../components/PageHeader';
 import {
   ChevronRight,
@@ -13,6 +14,7 @@ import {
   FilePlus,
   Trash2,
   Eye,
+  EyeOff,
   Pencil,
   Search,
   HelpCircle,
@@ -27,23 +29,36 @@ type DragItem =
   | { kind: 'folder'; id: string };
 
 export default function Notes() {
-  const {
-    notes,
-    folders,
-    activeNoteId,
-    homebrewItems,
-    homebrewSpells,
-    createNote,
-    updateNote,
-    deleteNote,
-    setActiveNote,
-    createFolder,
-    renameFolder,
-    deleteFolder,
-    toggleFolder,
-    moveNote,
-    moveFolder,
-  } = useStore();
+  const campaignId = useSession((s) => s.campaignId);
+  const role = useSession((s) => s.role);
+  const isGM = role === 'gm';
+
+  const notes = useNotes((s) => s.notes);
+  const folders = useNotes((s) => s.folders);
+  const activeNoteId = useNotes((s) => s.activeNoteId);
+  const loadForCampaign = useNotes((s) => s.loadForCampaign);
+  const subscribe = useNotes((s) => s.subscribe);
+  const setActiveNote = useNotes((s) => s.setActiveNote);
+  const createNote = useNotes((s) => s.createNote);
+  const updateNote = useNotes((s) => s.updateNote);
+  const deleteNote = useNotes((s) => s.deleteNote);
+  const createFolder = useNotes((s) => s.createFolder);
+  const renameFolder = useNotes((s) => s.renameFolder);
+  const deleteFolder = useNotes((s) => s.deleteFolder);
+  const moveNote = useNotes((s) => s.moveNote);
+  const moveFolder = useNotes((s) => s.moveFolder);
+  const toggleFolderExpanded = useNotes((s) => s.toggleFolderExpanded);
+  const isFolderExpanded = useNotes((s) => s.isFolderExpanded);
+
+  const homebrewItems = useStore((s) => s.homebrewItems);
+  const homebrewSpells = useStore((s) => s.homebrewSpells);
+
+  useEffect(() => {
+    if (!campaignId) return;
+    loadForCampaign(campaignId);
+    const unsub = subscribe(campaignId);
+    return unsub;
+  }, [campaignId, loadForCampaign, subscribe]);
 
   const navigate = useNavigate();
   const [query, setQuery] = useState('');
@@ -54,7 +69,12 @@ export default function Notes() {
   const [dragOverId, setDragOverId] = useState<string | 'root' | null>(null);
   const [showLegend, setShowLegend] = useState(false);
 
-  const active = notes.find((n) => n.id === activeNoteId) ?? null;
+  const visibleNotes = useMemo(
+    () => (isGM ? notes : notes.filter((n) => n.visible_to_players)),
+    [isGM, notes]
+  );
+
+  const active = visibleNotes.find((n) => n.id === activeNoteId) ?? null;
 
   const wikiIndex = useMemo(
     () => buildWikiIndex(homebrewItems, homebrewSpells),
@@ -69,20 +89,22 @@ export default function Notes() {
   const matchingNoteIds = useMemo(() => {
     if (!q) return null;
     return new Set(
-      notes
+      visibleNotes
         .filter(
           (n) => n.title.toLowerCase().includes(q) || n.body.toLowerCase().includes(q)
         )
         .map((n) => n.id)
     );
-  }, [q, notes]);
+  }, [q, visibleNotes]);
 
-  const onCreateNote = (folderId: string | null) => {
-    createNote(folderId);
+  const onCreateNote = async (folderId: string | null) => {
+    if (!campaignId || !isGM) return;
+    await createNote(campaignId, folderId);
     setPreview(false);
   };
 
   const onDrop = (target: string | null) => {
+    if (!isGM) return;
     const raw = dragData;
     if (!raw) return;
     if (raw.kind === 'note') moveNote(raw.id, target);
@@ -93,8 +115,8 @@ export default function Notes() {
 
   const [dragData, setDragData] = useState<DragItem | null>(null);
 
-  const rootFolders = folders.filter((f) => f.parentId === null);
-  const rootNotes = notes.filter((n) => n.folderId === null);
+  const rootFolders = folders.filter((f) => f.parent_id === null);
+  const rootNotes = visibleNotes.filter((n) => n.folder_id === null);
 
   const onWikiClick = (href: string) => {
     const [path, hash] = href.split('#');
@@ -159,26 +181,31 @@ export default function Notes() {
             <div className="text-[10px] uppercase tracking-wider text-slate-500 font-mono">
               Explorer
             </div>
-            <div className="flex gap-0.5">
-              <button
-                onClick={() => onCreateNote(null)}
-                title="New note"
-                className="p-1 text-slate-400 hover:text-sky-300 hover:bg-slate-800 rounded"
-              >
-                <FilePlus size={12} />
-              </button>
-              <button
-                onClick={() => {
-                  const id = createFolder('New Folder', null);
-                  setRenamingFolderId(id);
-                  setRenameValue('New Folder');
-                }}
-                title="New folder"
-                className="p-1 text-slate-400 hover:text-sky-300 hover:bg-slate-800 rounded"
-              >
-                <FolderPlus size={12} />
-              </button>
-            </div>
+            {isGM && (
+              <div className="flex gap-0.5">
+                <button
+                  onClick={() => onCreateNote(null)}
+                  title="New note"
+                  className="p-1 text-slate-400 hover:text-sky-300 hover:bg-slate-800 rounded"
+                >
+                  <FilePlus size={12} />
+                </button>
+                <button
+                  onClick={async () => {
+                    if (!campaignId) return;
+                    const id = await createFolder(campaignId, 'New Folder', null);
+                    if (id) {
+                      setRenamingFolderId(id);
+                      setRenameValue('New Folder');
+                    }
+                  }}
+                  title="New folder"
+                  className="p-1 text-slate-400 hover:text-sky-300 hover:bg-slate-800 rounded"
+                >
+                  <FolderPlus size={12} />
+                </button>
+              </div>
+            )}
           </div>
 
           <div className="px-2 py-1.5 border-b border-slate-800">
@@ -201,18 +228,22 @@ export default function Notes() {
               dragOverId === 'root' ? 'bg-sky-950/20' : ''
             }`}
             onDragOver={(e) => {
+              if (!isGM) return;
               e.preventDefault();
               setDragOverId('root');
             }}
             onDragLeave={() => setDragOverId(null)}
             onDrop={(e) => {
+              if (!isGM) return;
               e.preventDefault();
               onDrop(null);
             }}
           >
-            {folders.length === 0 && notes.length === 0 && (
+            {folders.length === 0 && visibleNotes.length === 0 && (
               <div className="px-3 py-4 text-[11px] text-slate-600 italic font-sans">
-                No notes yet. Create one with the file icon above.
+                {isGM
+                  ? 'No notes yet. Create one with the file icon above.'
+                  : 'No notes shared with players yet.'}
               </div>
             )}
             {rootFolders.map((f) => (
@@ -221,23 +252,28 @@ export default function Notes() {
                 folder={f}
                 depth={0}
                 folders={folders}
-                notes={notes}
+                notes={visibleNotes}
                 activeNoteId={activeNoteId}
                 matching={matchingNoteIds}
                 renamingFolderId={renamingFolderId}
                 renameValue={renameValue}
                 confirmingId={confirmingId}
                 dragOverId={dragOverId}
-                onToggle={toggleFolder}
+                isGM={isGM}
+                isExpanded={isFolderExpanded}
+                onToggle={toggleFolderExpanded}
                 onSelectNote={(id) => {
                   setActiveNote(id);
                   setPreview(false);
                 }}
                 onCreateNote={onCreateNote}
-                onCreateFolder={(parentId) => {
-                  const id = createFolder('New Folder', parentId);
-                  setRenamingFolderId(id);
-                  setRenameValue('New Folder');
+                onCreateFolder={async (parentId) => {
+                  if (!campaignId) return;
+                  const id = await createFolder(campaignId, 'New Folder', parentId);
+                  if (id) {
+                    setRenamingFolderId(id);
+                    setRenameValue('New Folder');
+                  }
                 }}
                 onStartRename={(id, name) => {
                   setRenamingFolderId(id);
@@ -273,6 +309,7 @@ export default function Notes() {
                 active={n.id === activeNoteId}
                 dimmed={matchingNoteIds !== null && !matchingNoteIds.has(n.id)}
                 confirming={confirmingId === n.id}
+                isGM={isGM}
                 onSelect={() => {
                   setActiveNote(n.id);
                   setPreview(false);
@@ -292,7 +329,7 @@ export default function Notes() {
         <section className="flex-1 min-w-0 flex flex-col">
           {!active && (
             <div className="flex-1 flex items-center justify-center text-slate-500 text-sm">
-              Select or create a note.
+              {isGM ? 'Select or create a note.' : 'Select a note.'}
             </div>
           )}
           {active && (
@@ -301,10 +338,33 @@ export default function Notes() {
                 <input
                   value={active.title}
                   onChange={(e) => updateNote(active.id, { title: e.target.value })}
+                  readOnly={!isGM}
                   className="flex-1 bg-transparent font-serif text-xl outline-none"
                   placeholder="Title"
                 />
-                {confirmingId === active.id ? (
+                {isGM && (
+                  <button
+                    onClick={() =>
+                      updateNote(active.id, {
+                        visible_to_players: !active.visible_to_players,
+                      })
+                    }
+                    title={
+                      active.visible_to_players
+                        ? 'Visible to players — click to hide'
+                        : 'Hidden from players — click to share'
+                    }
+                    className={`px-2 py-1 text-xs rounded flex items-center gap-1 ${
+                      active.visible_to_players
+                        ? 'bg-emerald-900/40 border border-emerald-800 text-emerald-200 hover:bg-emerald-900/60'
+                        : 'bg-slate-800 border border-slate-700 text-slate-400 hover:bg-slate-700'
+                    }`}
+                  >
+                    {active.visible_to_players ? <Eye size={13} /> : <EyeOff size={13} />}
+                    {active.visible_to_players ? 'Shared' : 'Private'}
+                  </button>
+                )}
+                {isGM && (confirmingId === active.id ? (
                   <div className="flex items-center gap-1">
                     <span className="text-xs text-slate-400 mr-1">Delete this note?</span>
                     <button
@@ -330,10 +390,10 @@ export default function Notes() {
                   >
                     <Trash2 size={13} /> Delete
                   </button>
-                )}
+                ))}
               </div>
               <div className="flex-1 min-h-0 overflow-hidden">
-                {preview ? (
+                {preview || !isGM ? (
                   <div
                     className="h-full overflow-y-auto px-8 py-6 markdown-body"
                     onClick={(e) => {
@@ -360,7 +420,9 @@ export default function Notes() {
                     >
                       {active.body
                         ? preprocessDecorators(active.body)
-                        : '*Nothing yet. Switch to Edit to start writing.*'}
+                        : isGM
+                          ? '*Nothing yet. Switch to Edit to start writing.*'
+                          : '*Empty note.*'}
                     </ReactMarkdown>
                   </div>
                 ) : (
@@ -586,6 +648,8 @@ type FolderNodeProps = {
   renameValue: string;
   confirmingId: string | null;
   dragOverId: string | 'root' | null;
+  isGM: boolean;
+  isExpanded: (id: string) => boolean;
   onToggle: (id: string) => void;
   onSelectNote: (id: string) => void;
   onCreateNote: (folderId: string | null) => void;
@@ -605,28 +669,32 @@ type FolderNodeProps = {
 };
 
 function FolderNode(props: FolderNodeProps) {
-  const { folder, depth, folders, notes, matching } = props;
-  const children = folders.filter((f) => f.parentId === folder.id);
-  const folderNotes = notes.filter((n) => n.folderId === folder.id);
+  const { folder, depth, folders, notes, matching, isGM, isExpanded } = props;
+  const children = folders.filter((f) => f.parent_id === folder.id);
+  const folderNotes = notes.filter((n) => n.folder_id === folder.id);
   const renaming = props.renamingFolderId === folder.id;
   const confirming = props.confirmingId === folder.id;
   const isDragOver = props.dragOverId === folder.id;
+  const expanded = isExpanded(folder.id);
 
   return (
     <div>
       <div
-        draggable={!renaming}
+        draggable={isGM && !renaming}
         onDragStart={(e) => {
+          if (!isGM) return;
           e.stopPropagation();
           props.onDragStart({ kind: 'folder', id: folder.id });
         }}
         onDragOver={(e) => {
+          if (!isGM) return;
           e.preventDefault();
           e.stopPropagation();
           props.onDragOverItem(folder.id);
         }}
         onDragLeave={() => props.onDragOverItem(null)}
         onDrop={(e) => {
+          if (!isGM) return;
           e.preventDefault();
           e.stopPropagation();
           props.onDrop(folder.id);
@@ -637,7 +705,7 @@ function FolderNode(props: FolderNodeProps) {
         style={{ paddingLeft: 4 + depth * 12 }}
         onClick={() => props.onToggle(folder.id)}
       >
-        {folder.expanded ? (
+        {expanded ? (
           <ChevronDown size={12} className="text-slate-500 shrink-0" />
         ) : (
           <ChevronRight size={12} className="text-slate-500 shrink-0" />
@@ -659,6 +727,7 @@ function FolderNode(props: FolderNodeProps) {
         ) : (
           <span
             onDoubleClick={(e) => {
+              if (!isGM) return;
               e.stopPropagation();
               props.onStartRename(folder.id, folder.name);
             }}
@@ -667,7 +736,7 @@ function FolderNode(props: FolderNodeProps) {
             {folder.name}
           </span>
         )}
-        {!renaming && !confirming && (
+        {isGM && !renaming && !confirming && (
           <div className="flex gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
             <button
               onClick={(e) => {
@@ -701,7 +770,7 @@ function FolderNode(props: FolderNodeProps) {
             </button>
           </div>
         )}
-        {confirming && (
+        {isGM && confirming && (
           <div
             className="flex gap-0.5 shrink-0"
             onClick={(e) => e.stopPropagation()}
@@ -721,7 +790,7 @@ function FolderNode(props: FolderNodeProps) {
           </div>
         )}
       </div>
-      {folder.expanded && (
+      {expanded && (
         <div>
           {children.map((c) => (
             <FolderNode {...props} key={c.id} folder={c} depth={depth + 1} />
@@ -734,6 +803,7 @@ function FolderNode(props: FolderNodeProps) {
               active={n.id === props.activeNoteId}
               dimmed={matching !== null && !matching.has(n.id)}
               confirming={props.confirmingId === n.id}
+              isGM={isGM}
               onSelect={() => props.onSelectNote(n.id)}
               onStartDelete={() => props.onStartDeleteNote(n.id)}
               onDelete={() => props.onDeleteNote(n.id)}
@@ -753,6 +823,7 @@ type NoteRowProps = {
   active: boolean;
   dimmed: boolean;
   confirming: boolean;
+  isGM: boolean;
   onSelect: () => void;
   onStartDelete: () => void;
   onDelete: () => void;
@@ -766,6 +837,7 @@ function NoteRow({
   active,
   dimmed,
   confirming,
+  isGM,
   onSelect,
   onStartDelete,
   onDelete,
@@ -774,8 +846,9 @@ function NoteRow({
 }: NoteRowProps) {
   return (
     <div
-      draggable
+      draggable={isGM}
       onDragStart={(e) => {
+        if (!isGM) return;
         e.stopPropagation();
         onDragStart();
       }}
@@ -787,7 +860,10 @@ function NoteRow({
     >
       <FileText size={11} className="text-slate-500 shrink-0" />
       <span className="flex-1 min-w-0 truncate">{note.title || 'Untitled'}</span>
-      {confirming ? (
+      {isGM && note.visible_to_players && !active && (
+        <Eye size={10} className="text-emerald-500 shrink-0" />
+      )}
+      {isGM && (confirming ? (
         <div className="flex gap-0.5 shrink-0" onClick={(e) => e.stopPropagation()}>
           <button
             onClick={onDelete}
@@ -812,7 +888,7 @@ function NoteRow({
         >
           <Trash2 size={11} />
         </button>
-      )}
+      ))}
     </div>
   );
 }

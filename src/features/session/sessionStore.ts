@@ -6,6 +6,14 @@ const NAME_KEY = 'dnd-gm:displayName';
 
 export type Role = 'gm' | 'player';
 
+export type CampaignSummary = {
+  id: string;
+  name: string;
+  join_code: string;
+  role: Role;
+  display_name: string;
+};
+
 type SessionState = {
   userId: string | null;
   campaignId: string | null;
@@ -15,10 +23,13 @@ type SessionState = {
   displayName: string | null;
   loading: boolean;
   error: string | null;
+  myCampaigns: CampaignSummary[];
 
   bootstrap: () => Promise<void>;
+  refreshMyCampaigns: () => Promise<void>;
   createCampaign: (name: string, displayName: string) => Promise<void>;
   joinCampaign: (code: string, displayName: string) => Promise<void>;
+  switchToCampaign: (campaignId: string) => Promise<void>;
   leaveCurrent: () => void;
 };
 
@@ -48,6 +59,66 @@ export const useSession = create<SessionState>((set, get) => ({
   displayName: null,
   loading: true,
   error: null,
+  myCampaigns: [],
+
+  refreshMyCampaigns: async () => {
+    const { data: { session } } = await supabase.auth.getSession();
+    const uid = session?.user?.id;
+    if (!uid) {
+      set({ myCampaigns: [] });
+      return;
+    }
+    const { data, error } = await supabase
+      .from('campaign_members')
+      .select('role, display_name, campaigns!inner(id, name, join_code, updated_at)')
+      .eq('user_id', uid)
+      .order('updated_at', { referencedTable: 'campaigns', ascending: false });
+    if (error) {
+      set({ error: error.message });
+      return;
+    }
+    const rows = (data ?? []).map((row) => {
+      const c = row.campaigns as unknown as { id: string; name: string; join_code: string };
+      return {
+        id: c.id,
+        name: c.name,
+        join_code: c.join_code,
+        role: row.role as Role,
+        display_name: row.display_name as string,
+      };
+    });
+    set({ myCampaigns: rows });
+  },
+
+  switchToCampaign: async (campaignId) => {
+    const uid = get().userId ?? (await ensureAuth());
+    const { data: mem, error } = await supabase
+      .from('campaign_members')
+      .select('role, display_name, campaigns!inner(id, name, join_code)')
+      .eq('campaign_id', campaignId)
+      .eq('user_id', uid)
+      .maybeSingle();
+    if (error) {
+      set({ error: error.message });
+      return;
+    }
+    if (!mem) {
+      set({ error: 'You are not a member of that campaign.' });
+      return;
+    }
+    const campaign = mem.campaigns as unknown as { id: string; name: string; join_code: string };
+    localStorage.setItem(STORAGE_KEY, campaign.id);
+    localStorage.setItem(NAME_KEY, mem.display_name as string);
+    set({
+      userId: uid,
+      campaignId: campaign.id,
+      campaignName: campaign.name,
+      joinCode: campaign.join_code,
+      role: mem.role as Role,
+      displayName: mem.display_name as string,
+      error: null,
+    });
+  },
 
   bootstrap: async () => {
     set({ loading: true, error: null });
@@ -80,6 +151,7 @@ export const useSession = create<SessionState>((set, get) => ({
         displayName: mem.display_name,
         loading: false,
       });
+      get().refreshMyCampaigns();
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       set({ error: msg, loading: false });
@@ -115,6 +187,7 @@ export const useSession = create<SessionState>((set, get) => ({
         displayName,
         loading: false,
       });
+      get().refreshMyCampaigns();
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       set({ error: msg, loading: false });
@@ -162,6 +235,7 @@ export const useSession = create<SessionState>((set, get) => ({
         displayName,
         loading: false,
       });
+      get().refreshMyCampaigns();
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       set({ error: msg, loading: false });
