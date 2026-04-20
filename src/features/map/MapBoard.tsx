@@ -1,5 +1,7 @@
 import { useRef, useState, useEffect } from 'react';
-import { useStore, MapShape } from '../../store';
+import { useMap, type MapShape, type MapToken } from './mapStore';
+import { useSession } from '../session/sessionStore';
+import { supabase } from '../../lib/supabase';
 import PageHeader from '../../components/PageHeader';
 import {
   MousePointer2,
@@ -12,6 +14,8 @@ import {
   Grid3x3,
   ImagePlus,
   Eraser,
+  Eye,
+  EyeOff,
 } from 'lucide-react';
 
 type Tool = 'select' | 'ruler' | 'circle' | 'square' | 'cone' | 'token';
@@ -22,23 +26,29 @@ const EMOJI_PRESETS = ['🧙', '🗡️', '🏹', '🛡️', '🐉', '👹', '�
 
 const uid = () => crypto.randomUUID();
 
+type Member = { user_id: string; display_name: string; role: string };
+
 export default function MapBoard() {
-  const {
-    mapBgUrl,
-    mapGridSize,
-    mapShowGrid,
-    tokens,
-    shapes,
-    setMapBg,
-    setMapGridSize,
-    setShowGrid,
-    addToken,
-    updateToken,
-    removeToken,
-    addShape,
-    removeShape,
-    clearShapes,
-  } = useStore();
+  const campaignId = useSession((s) => s.campaignId);
+  const userId = useSession((s) => s.userId);
+  const role = useSession((s) => s.role);
+  const isGM = role === 'gm';
+
+  const state = useMap((s) => s.state);
+  const tokens = useMap((s) => s.tokens);
+  const loadForCampaign = useMap((s) => s.loadForCampaign);
+  const subscribe = useMap((s) => s.subscribe);
+  const setBackground = useMap((s) => s.setBackground);
+  const setGridSize = useMap((s) => s.setGridSize);
+  const setShowGrid = useMap((s) => s.setShowGrid);
+  const addShape = useMap((s) => s.addShape);
+  const removeShape = useMap((s) => s.removeShape);
+  const clearShapes = useMap((s) => s.clearShapes);
+  const addToken = useMap((s) => s.addToken);
+  const updateToken = useMap((s) => s.updateToken);
+  const removeToken = useMap((s) => s.removeToken);
+
+  const { background_url: mapBgUrl, grid_size: mapGridSize, show_grid: mapShowGrid, shapes } = state;
 
   const svgRef = useRef<SVGSVGElement>(null);
   const [tool, setTool] = useState<Tool>('select');
@@ -49,7 +59,31 @@ export default function MapBoard() {
   const [tokenName, setTokenName] = useState('');
   const [tokenEmoji, setTokenEmoji] = useState('');
   const [draggingTokenId, setDraggingTokenId] = useState<string | null>(null);
+  const [localDrag, setLocalDrag] = useState<{ id: string; x: number; y: number } | null>(null);
   const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 });
+
+  const [members, setMembers] = useState<Member[]>([]);
+
+  useEffect(() => {
+    if (!campaignId) return;
+    loadForCampaign(campaignId);
+    const unsub = subscribe(campaignId);
+    return unsub;
+  }, [campaignId, loadForCampaign, subscribe]);
+
+  useEffect(() => {
+    if (!campaignId || !isGM) return;
+    (async () => {
+      const { data } = await supabase
+        .from('campaign_members')
+        .select('user_id, display_name, role')
+        .eq('campaign_id', campaignId);
+      setMembers((data ?? []) as Member[]);
+    })();
+  }, [campaignId, isGM]);
+
+  const canDragToken = (t: MapToken) =>
+    isGM || (t.owner_user_id === userId && !t.hidden_from_players);
 
   const getPoint = (e: React.MouseEvent | MouseEvent): { x: number; y: number } => {
     const svg = svgRef.current;
@@ -68,6 +102,8 @@ export default function MapBoard() {
 
   const onMouseDown = (e: React.MouseEvent) => {
     if (draggingTokenId) return;
+    if (!isGM) return;
+    if (!campaignId) return;
     const p = getPoint(e);
     if (tool === 'ruler') {
       setRuler({ x1: p.x, y1: p.y, x2: p.x, y2: p.y });
@@ -79,13 +115,15 @@ export default function MapBoard() {
     }
     if (tool === 'token') {
       const sp = snap(p);
-      addToken({
+      addToken(campaignId, {
         name: tokenName || 'Token',
         x: sp.x,
         y: sp.y,
         color: selectedColor,
         emoji: tokenEmoji || undefined,
         size: mapGridSize * 0.9,
+        owner_user_id: null,
+        hidden_from_players: false,
       });
     }
   };
@@ -94,20 +132,28 @@ export default function MapBoard() {
     const p = getPoint(e);
     if (draggingTokenId) {
       const sp = snap({ x: p.x - dragOffset.x, y: p.y - dragOffset.y });
-      updateToken(draggingTokenId, { x: sp.x, y: sp.y });
+      setLocalDrag({ id: draggingTokenId, x: sp.x, y: sp.y });
       return;
     }
-    if (ruler && tool === 'ruler') {
+    if (isGM && ruler && tool === 'ruler') {
       setRuler({ ...ruler, x2: p.x, y2: p.y });
     }
   };
 
+  const commitDrag = () => {
+    if (draggingTokenId && localDrag) {
+      updateToken(draggingTokenId, { x: localDrag.x, y: localDrag.y });
+    }
+    setDraggingTokenId(null);
+    setLocalDrag(null);
+  };
+
   const onMouseUp = (e: React.MouseEvent) => {
     if (draggingTokenId) {
-      setDraggingTokenId(null);
+      commitDrag();
       return;
     }
-    if (drafting) {
+    if (drafting && isGM && campaignId) {
       const p = getPoint(e);
       const dx = p.x - drafting.x;
       const dy = p.y - drafting.y;
@@ -132,25 +178,27 @@ export default function MapBoard() {
           shape = { id: uid(), kind: 'cone', x: drafting.x, y: drafting.y, dx, dy, color: selectedShapeColor };
         }
       }
-      if (shape) addShape(shape);
+      if (shape) addShape(campaignId, shape);
       setDrafting(null);
     }
   };
 
   useEffect(() => {
     const up = () => {
-      setDraggingTokenId(null);
+      if (draggingTokenId) commitDrag();
       setDrafting(null);
     };
     window.addEventListener('mouseup', up);
     return () => window.removeEventListener('mouseup', up);
-  }, []);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [draggingTokenId, localDrag]);
 
   const onLoadBg = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (!isGM || !campaignId) return;
     const f = e.target.files?.[0];
     if (!f) return;
     const reader = new FileReader();
-    reader.onload = () => setMapBg(reader.result as string);
+    reader.onload = () => setBackground(campaignId, reader.result as string);
     reader.readAsDataURL(f);
   };
 
@@ -158,56 +206,70 @@ export default function MapBoard() {
     ? ((Math.hypot(ruler.x2 - ruler.x1, ruler.y2 - ruler.y1) / mapGridSize) * 5).toFixed(1)
     : '0';
 
-  const toolButton = (t: Tool, Icon: any, label: string) => (
-    <button
-      onClick={() => {
-        setTool(t);
-        setRuler(null);
-      }}
-      title={label}
-      className={`p-2 rounded border ${
-        tool === t
-          ? 'bg-sky-900/40 border-sky-700 text-sky-200'
-          : 'bg-slate-900 border-slate-800 text-slate-400 hover:bg-slate-800 hover:text-slate-200'
-      }`}
-    >
-      <Icon size={16} />
-    </button>
-  );
+  const toolButton = (t: Tool, Icon: any, label: string, gmOnly = false) => {
+    if (gmOnly && !isGM) return null;
+    return (
+      <button
+        onClick={() => {
+          setTool(t);
+          setRuler(null);
+        }}
+        title={label}
+        className={`p-2 rounded border ${
+          tool === t
+            ? 'bg-sky-900/40 border-sky-700 text-sky-200'
+            : 'bg-slate-900 border-slate-800 text-slate-400 hover:bg-slate-800 hover:text-slate-200'
+        }`}
+      >
+        <Icon size={16} />
+      </button>
+    );
+  };
+
+  const visibleTokens = tokens.map((t) => {
+    if (localDrag && localDrag.id === t.id) {
+      return { ...t, x: localDrag.x, y: localDrag.y };
+    }
+    return t;
+  });
 
   return (
     <div className="h-full flex flex-col">
       <PageHeader title="Map">
-        <label className="px-3 py-1.5 text-xs bg-slate-800 hover:bg-slate-700 rounded cursor-pointer flex items-center gap-1">
-          <ImagePlus size={14} /> Load background
-          <input type="file" accept="image/*" onChange={onLoadBg} className="hidden" />
-        </label>
-        {mapBgUrl && (
-          <button
-            onClick={() => setMapBg(null)}
-            className="px-3 py-1.5 text-xs bg-slate-800 hover:bg-slate-700 rounded"
-          >
-            Remove bg
-          </button>
+        {isGM && (
+          <>
+            <label className="px-3 py-1.5 text-xs bg-slate-800 hover:bg-slate-700 rounded cursor-pointer flex items-center gap-1">
+              <ImagePlus size={14} /> Load background
+              <input type="file" accept="image/*" onChange={onLoadBg} className="hidden" />
+            </label>
+            {mapBgUrl && (
+              <button
+                onClick={() => campaignId && setBackground(campaignId, null)}
+                className="px-3 py-1.5 text-xs bg-slate-800 hover:bg-slate-700 rounded"
+              >
+                Remove bg
+              </button>
+            )}
+            <button
+              onClick={() => campaignId && setShowGrid(campaignId, !mapShowGrid)}
+              className={`px-3 py-1.5 text-xs rounded flex items-center gap-1 ${
+                mapShowGrid ? 'bg-sky-900/40 text-sky-200' : 'bg-slate-800 text-slate-300'
+              }`}
+            >
+              <Grid3x3 size={14} /> Grid
+            </button>
+            <label className="text-xs text-slate-400 flex items-center gap-1">
+              Cell
+              <input
+                type="number"
+                value={mapGridSize}
+                onChange={(e) => campaignId && setGridSize(campaignId, parseInt(e.target.value || '50', 10))}
+                className="w-14 bg-slate-900 border border-slate-800 rounded px-1 py-1 font-mono"
+              />
+              px
+            </label>
+          </>
         )}
-        <button
-          onClick={() => setShowGrid(!mapShowGrid)}
-          className={`px-3 py-1.5 text-xs rounded flex items-center gap-1 ${
-            mapShowGrid ? 'bg-sky-900/40 text-sky-200' : 'bg-slate-800 text-slate-300'
-          }`}
-        >
-          <Grid3x3 size={14} /> Grid
-        </button>
-        <label className="text-xs text-slate-400 flex items-center gap-1">
-          Cell
-          <input
-            type="number"
-            value={mapGridSize}
-            onChange={(e) => setMapGridSize(parseInt(e.target.value || '50', 10))}
-            className="w-14 bg-slate-900 border border-slate-800 rounded px-1 py-1 font-mono"
-          />
-          px
-        </label>
       </PageHeader>
 
       <div className="flex-1 min-h-0 flex">
@@ -216,15 +278,15 @@ export default function MapBoard() {
             <div className="text-xs uppercase tracking-wider text-slate-500 mb-2">Tools</div>
             <div className="grid grid-cols-3 gap-1">
               {toolButton('select', MousePointer2, 'Select / drag')}
-              {toolButton('ruler', Ruler, 'Ruler')}
-              {toolButton('token', User, 'Place token')}
-              {toolButton('circle', CircleIcon, 'Circle')}
-              {toolButton('square', SquareIcon, 'Square')}
-              {toolButton('cone', Triangle, 'Cone')}
+              {toolButton('ruler', Ruler, 'Ruler', true)}
+              {toolButton('token', User, 'Place token', true)}
+              {toolButton('circle', CircleIcon, 'Circle', true)}
+              {toolButton('square', SquareIcon, 'Square', true)}
+              {toolButton('cone', Triangle, 'Cone', true)}
             </div>
           </div>
 
-          {tool === 'token' && (
+          {isGM && tool === 'token' && (
             <div className="space-y-2">
               <div className="text-xs uppercase tracking-wider text-slate-500">Token</div>
               <input
@@ -281,7 +343,7 @@ export default function MapBoard() {
             </div>
           )}
 
-          {(tool === 'circle' || tool === 'square' || tool === 'cone') && (
+          {isGM && (tool === 'circle' || tool === 'square' || tool === 'cone') && (
             <div>
               <div className="text-xs uppercase tracking-wider text-slate-500 mb-1">Shape color</div>
               <div className="flex flex-wrap gap-1">
@@ -300,38 +362,76 @@ export default function MapBoard() {
           )}
 
           <div>
-            <div className="text-xs uppercase tracking-wider text-slate-500 mb-1">Tokens ({tokens.length})</div>
-            <div className="space-y-1 max-h-48 overflow-y-auto">
-              {tokens.map((t) => (
+            <div className="text-xs uppercase tracking-wider text-slate-500 mb-1">
+              Tokens ({visibleTokens.length})
+            </div>
+            <div className="space-y-1 max-h-64 overflow-y-auto">
+              {visibleTokens.map((t) => (
                 <div
                   key={t.id}
-                  className="flex items-center gap-2 text-xs bg-slate-900 border border-slate-800 rounded px-2 py-1"
+                  className={`flex flex-col gap-1 text-xs bg-slate-900 border rounded px-2 py-1 ${
+                    t.owner_user_id === userId && userId
+                      ? 'border-emerald-700'
+                      : 'border-slate-800'
+                  }`}
                 >
-                  <div
-                    style={{ background: t.color }}
-                    className="w-4 h-4 rounded-full flex items-center justify-center text-[10px]"
-                  >
-                    {t.emoji}
+                  <div className="flex items-center gap-2">
+                    <div
+                      style={{ background: t.color }}
+                      className="w-4 h-4 rounded-full flex items-center justify-center text-[10px] shrink-0"
+                    >
+                      {t.emoji}
+                    </div>
+                    <input
+                      value={t.name}
+                      onChange={(e) => updateToken(t.id, { name: e.target.value })}
+                      readOnly={!isGM}
+                      className="flex-1 bg-transparent outline-none min-w-0"
+                    />
+                    {isGM && (
+                      <>
+                        <button
+                          onClick={() =>
+                            updateToken(t.id, { hidden_from_players: !t.hidden_from_players })
+                          }
+                          title={t.hidden_from_players ? 'Hidden from players' : 'Visible to players'}
+                          className={t.hidden_from_players ? 'text-slate-600' : 'text-emerald-500'}
+                        >
+                          {t.hidden_from_players ? <EyeOff size={12} /> : <Eye size={12} />}
+                        </button>
+                        <button
+                          onClick={() => removeToken(t.id)}
+                          className="text-slate-600 hover:text-rose-400"
+                        >
+                          <Trash2 size={12} />
+                        </button>
+                      </>
+                    )}
                   </div>
-                  <input
-                    value={t.name}
-                    onChange={(e) => updateToken(t.id, { name: e.target.value })}
-                    className="flex-1 bg-transparent outline-none min-w-0"
-                  />
-                  <button
-                    onClick={() => removeToken(t.id)}
-                    className="text-slate-600 hover:text-rose-400"
-                  >
-                    <Trash2 size={12} />
-                  </button>
+                  {isGM && (
+                    <select
+                      value={t.owner_user_id ?? ''}
+                      onChange={(e) =>
+                        updateToken(t.id, { owner_user_id: e.target.value || null })
+                      }
+                      className="bg-slate-950 border border-slate-800 rounded px-1 py-0.5 text-[10px] text-slate-400"
+                    >
+                      <option value="">Unassigned (GM only)</option>
+                      {members.map((m) => (
+                        <option key={m.user_id} value={m.user_id}>
+                          {m.display_name} {m.role === 'gm' ? '(GM)' : ''}
+                        </option>
+                      ))}
+                    </select>
+                  )}
                 </div>
               ))}
             </div>
           </div>
 
-          {shapes.length > 0 && (
+          {isGM && shapes.length > 0 && (
             <button
-              onClick={clearShapes}
+              onClick={() => campaignId && clearShapes(campaignId)}
               className="w-full px-2 py-1.5 text-xs bg-slate-800 hover:bg-rose-900 rounded flex items-center justify-center gap-1"
             >
               <Eraser size={12} /> Clear {shapes.length} shape{shapes.length === 1 ? '' : 's'}
@@ -348,7 +448,7 @@ export default function MapBoard() {
           <svg
             ref={svgRef}
             className="block w-full h-full select-none"
-            style={{ cursor: tool === 'select' ? 'default' : 'crosshair' }}
+            style={{ cursor: tool === 'select' || !isGM ? 'default' : 'crosshair' }}
             onMouseDown={onMouseDown}
             onMouseMove={onMouseMove}
             onMouseUp={onMouseUp}
@@ -372,6 +472,7 @@ export default function MapBoard() {
             )}
 
             {shapes.map((s) => {
+              const onDbl = isGM && campaignId ? () => removeShape(campaignId, s.id) : undefined;
               if (s.kind === 'circle') {
                 return (
                   <circle
@@ -382,7 +483,7 @@ export default function MapBoard() {
                     fill={s.color}
                     stroke={s.color.slice(0, 7)}
                     strokeWidth="2"
-                    onDoubleClick={() => removeShape(s.id)}
+                    onDoubleClick={onDbl}
                   />
                 );
               }
@@ -397,7 +498,7 @@ export default function MapBoard() {
                     fill={s.color}
                     stroke={s.color.slice(0, 7)}
                     strokeWidth="2"
-                    onDoubleClick={() => removeShape(s.id)}
+                    onDoubleClick={onDbl}
                   />
                 );
               }
@@ -421,7 +522,7 @@ export default function MapBoard() {
                     fill={s.color}
                     stroke={s.color.slice(0, 7)}
                     strokeWidth="2"
-                    onDoubleClick={() => removeShape(s.id)}
+                    onDoubleClick={onDbl}
                   />
                 );
               }
@@ -444,56 +545,63 @@ export default function MapBoard() {
               </g>
             )}
 
-            {tokens.map((t) => (
-              <g
-                key={t.id}
-                style={{ cursor: 'grab' }}
-                onMouseDown={(e) => {
-                  if (tool !== 'select') return;
-                  e.stopPropagation();
-                  const p = getPoint(e);
-                  setDraggingTokenId(t.id);
-                  setDragOffset({ x: p.x - t.x, y: p.y - t.y });
-                }}
-                onDoubleClick={() => removeToken(t.id)}
-              >
-                <circle
-                  cx={t.x}
-                  cy={t.y}
-                  r={t.size / 2}
-                  fill={t.color}
-                  stroke="#1c1917"
-                  strokeWidth="2"
-                />
-                {t.emoji && (
+            {visibleTokens.map((t) => {
+              const draggable = canDragToken(t) && tool === 'select';
+              return (
+                <g
+                  key={t.id}
+                  style={{ cursor: draggable ? 'grab' : 'default' }}
+                  onMouseDown={(e) => {
+                    if (!draggable) return;
+                    e.stopPropagation();
+                    const p = getPoint(e);
+                    setDraggingTokenId(t.id);
+                    setLocalDrag({ id: t.id, x: t.x, y: t.y });
+                    setDragOffset({ x: p.x - t.x, y: p.y - t.y });
+                  }}
+                  onDoubleClick={isGM ? () => removeToken(t.id) : undefined}
+                >
+                  <circle
+                    cx={t.x}
+                    cy={t.y}
+                    r={t.size / 2}
+                    fill={t.color}
+                    stroke={t.hidden_from_players ? '#fbbf24' : '#1c1917'}
+                    strokeWidth="2"
+                    strokeDasharray={t.hidden_from_players ? '4 3' : undefined}
+                  />
+                  {t.emoji && (
+                    <text
+                      x={t.x}
+                      y={t.y + t.size * 0.15}
+                      textAnchor="middle"
+                      fontSize={t.size * 0.55}
+                      pointerEvents="none"
+                    >
+                      {t.emoji}
+                    </text>
+                  )}
                   <text
                     x={t.x}
-                    y={t.y + t.size * 0.15}
+                    y={t.y + t.size / 2 + 14}
                     textAnchor="middle"
-                    fontSize={t.size * 0.55}
+                    fontSize="11"
+                    fill="#fafaf9"
+                    stroke="#1c1917"
+                    strokeWidth="3"
+                    paintOrder="stroke"
                     pointerEvents="none"
                   >
-                    {t.emoji}
+                    {t.name}
                   </text>
-                )}
-                <text
-                  x={t.x}
-                  y={t.y + t.size / 2 + 14}
-                  textAnchor="middle"
-                  fontSize="11"
-                  fill="#fafaf9"
-                  stroke="#1c1917"
-                  strokeWidth="3"
-                  paintOrder="stroke"
-                  pointerEvents="none"
-                >
-                  {t.name}
-                </text>
-              </g>
-            ))}
+                </g>
+              );
+            })}
           </svg>
           <div className="absolute bottom-3 left-3 text-[10px] text-slate-500 bg-slate-950/70 px-2 py-1 rounded">
-            Double-click a token or shape to remove it · Grid cell = 5 ft
+            {isGM
+              ? 'Double-click a token or shape to remove · Grid cell = 5 ft · Dashed outline = hidden from players'
+              : 'Drag your own token · Grid cell = 5 ft'}
           </div>
         </div>
       </div>
