@@ -1,9 +1,12 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useStore } from '../../store';
 import type { HomebrewItem, HomebrewSpell, StatBlock } from '../../store';
 import PageHeader from '../../components/PageHeader';
-import { Plus, Trash2, Search, ExternalLink, X, Pencil, Save } from 'lucide-react';
+import { Plus, Trash2, Search, ExternalLink, X, Pencil, Save, Share2, Eye, EyeOff } from 'lucide-react';
+import { useSession } from '../session/sessionStore';
+import { useSharedHomebrew } from './sharedHomebrewStore';
+import type { SharedHomebrew } from './sharedHomebrewStore';
 
 type Tab = 'monsters' | 'items' | 'spells';
 
@@ -15,6 +18,19 @@ export default function Homebrew() {
   const statBlocks = useStore((s) => s.statBlocks);
   const homebrewItems = useStore((s) => s.homebrewItems);
   const homebrewSpells = useStore((s) => s.homebrewSpells);
+
+  const campaignId = useSession((s) => s.campaignId);
+  const loadShared = useSharedHomebrew((s) => s.loadForCampaign);
+  const subscribeShared = useSharedHomebrew((s) => s.subscribe);
+  const sharedItems = useSharedHomebrew((s) => s.items);
+  const sharedSpells = useSharedHomebrew((s) => s.spells);
+
+  useEffect(() => {
+    if (!campaignId) return;
+    loadShared(campaignId);
+    const unsub = subscribeShared(campaignId);
+    return unsub;
+  }, [campaignId, loadShared, subscribeShared]);
 
   const campaigns = useMemo(() => {
     const set = new Set<string>();
@@ -83,10 +99,24 @@ export default function Homebrew() {
           <MonstersPane statBlocks={statBlocks} campaign={campaign} query={query} />
         )}
         {tab === 'items' && (
-          <ItemsPane items={homebrewItems} campaign={campaign} query={query} campaigns={campaigns} />
+          <ItemsPane
+            items={homebrewItems}
+            campaign={campaign}
+            query={query}
+            campaigns={campaigns}
+            shared={sharedItems}
+            campaignId={campaignId}
+          />
         )}
         {tab === 'spells' && (
-          <SpellsPane spells={homebrewSpells} campaign={campaign} query={query} campaigns={campaigns} />
+          <SpellsPane
+            spells={homebrewSpells}
+            campaign={campaign}
+            query={query}
+            campaigns={campaigns}
+            shared={sharedSpells}
+            campaignId={campaignId}
+          />
         )}
       </div>
     </div>
@@ -240,17 +270,29 @@ function ItemsPane({
   campaign,
   query,
   campaigns,
+  shared,
+  campaignId,
 }: {
   items: HomebrewItem[];
   campaign: string;
   query: string;
   campaigns: string[];
+  shared: SharedHomebrew[];
+  campaignId: string | null;
 }) {
   const addHomebrewItem = useStore((s) => s.addHomebrewItem);
   const updateHomebrewItem = useStore((s) => s.updateHomebrewItem);
   const removeHomebrewItem = useStore((s) => s.removeHomebrewItem);
+  const shareItem = useSharedHomebrew((s) => s.shareItem);
+  const unshareBySource = useSharedHomebrew((s) => s.unshareBySource);
+  const setVisible = useSharedHomebrew((s) => s.setVisible);
   const [editing, setEditing] = useState<HomebrewItem | null>(null);
   const [confirmingId, setConfirmingId] = useState<string | null>(null);
+  const sharedBySource = useMemo(() => {
+    const map = new Map<string, SharedHomebrew>();
+    for (const s of shared) if (s.source_id) map.set(s.source_id, s);
+    return map;
+  }, [shared]);
 
   const filtered = useMemo(() => {
     const q = query.toLowerCase().trim();
@@ -314,6 +356,16 @@ function ItemsPane({
                     )}
                   </div>
                   <div className="flex gap-1 shrink-0">
+                    <ShareControls
+                      sharedRow={sharedBySource.get(i.id)}
+                      onShare={() => {
+                        if (!campaignId) return;
+                        const { id: _id, updatedAt: _u, ...snapshot } = i;
+                        shareItem(campaignId, i.id, i.name || 'Unnamed', snapshot as unknown as Record<string, unknown>);
+                      }}
+                      onUnshare={() => unshareBySource(i.id)}
+                      onToggleVisible={(row) => setVisible(row.id, !row.visible_to_players)}
+                    />
                     <button
                       onClick={() => setEditing(i)}
                       className="p-1 text-slate-400 hover:text-sky-300"
@@ -325,6 +377,7 @@ function ItemsPane({
                         <button
                           onClick={() => {
                             removeHomebrewItem(i.id);
+                            unshareBySource(i.id);
                             setConfirmingId(null);
                           }}
                           className="px-1.5 py-0.5 text-[10px] bg-rose-700 hover:bg-rose-600 text-white rounded"
@@ -359,8 +412,14 @@ function ItemsPane({
           campaigns={campaigns}
           onClose={() => setEditing(null)}
           onSave={(data) => {
-            if (editing.id) updateHomebrewItem(editing.id, data);
-            else addHomebrewItem(data);
+            if (editing.id) {
+              updateHomebrewItem(editing.id, data);
+              if (campaignId && sharedBySource.has(editing.id)) {
+                shareItem(campaignId, editing.id, data.name || 'Unnamed', data as unknown as Record<string, unknown>);
+              }
+            } else {
+              addHomebrewItem(data);
+            }
             setEditing(null);
           }}
         />
@@ -485,17 +544,29 @@ function SpellsPane({
   campaign,
   query,
   campaigns,
+  shared,
+  campaignId,
 }: {
   spells: HomebrewSpell[];
   campaign: string;
   query: string;
   campaigns: string[];
+  shared: SharedHomebrew[];
+  campaignId: string | null;
 }) {
   const addHomebrewSpell = useStore((s) => s.addHomebrewSpell);
   const updateHomebrewSpell = useStore((s) => s.updateHomebrewSpell);
   const removeHomebrewSpell = useStore((s) => s.removeHomebrewSpell);
+  const shareSpell = useSharedHomebrew((s) => s.shareSpell);
+  const unshareBySource = useSharedHomebrew((s) => s.unshareBySource);
+  const setVisible = useSharedHomebrew((s) => s.setVisible);
   const [editing, setEditing] = useState<HomebrewSpell | null>(null);
   const [confirmingId, setConfirmingId] = useState<string | null>(null);
+  const sharedBySource = useMemo(() => {
+    const map = new Map<string, SharedHomebrew>();
+    for (const s of shared) if (s.source_id) map.set(s.source_id, s);
+    return map;
+  }, [shared]);
 
   const filtered = useMemo(() => {
     const q = query.toLowerCase().trim();
@@ -566,6 +637,16 @@ function SpellsPane({
                     )}
                   </div>
                   <div className="flex gap-1 shrink-0">
+                    <ShareControls
+                      sharedRow={sharedBySource.get(sp.id)}
+                      onShare={() => {
+                        if (!campaignId) return;
+                        const { id: _id, updatedAt: _u, ...snapshot } = sp;
+                        shareSpell(campaignId, sp.id, sp.name || 'Unnamed', snapshot as unknown as Record<string, unknown>);
+                      }}
+                      onUnshare={() => unshareBySource(sp.id)}
+                      onToggleVisible={(row) => setVisible(row.id, !row.visible_to_players)}
+                    />
                     <button
                       onClick={() => setEditing(sp)}
                       className="p-1 text-slate-400 hover:text-sky-300"
@@ -577,6 +658,7 @@ function SpellsPane({
                         <button
                           onClick={() => {
                             removeHomebrewSpell(sp.id);
+                            unshareBySource(sp.id);
                             setConfirmingId(null);
                           }}
                           className="px-1.5 py-0.5 text-[10px] bg-rose-700 hover:bg-rose-600 text-white rounded"
@@ -611,8 +693,14 @@ function SpellsPane({
           campaigns={campaigns}
           onClose={() => setEditing(null)}
           onSave={(data) => {
-            if (editing.id) updateHomebrewSpell(editing.id, data);
-            else addHomebrewSpell(data);
+            if (editing.id) {
+              updateHomebrewSpell(editing.id, data);
+              if (campaignId && sharedBySource.has(editing.id)) {
+                shareSpell(campaignId, editing.id, data.name || 'Unnamed', data as unknown as Record<string, unknown>);
+              }
+            } else {
+              addHomebrewSpell(data);
+            }
             setEditing(null);
           }}
         />
@@ -814,5 +902,47 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
       <div className="text-[10px] uppercase tracking-wider text-slate-500 mb-1">{label}</div>
       {children}
     </label>
+  );
+}
+
+function ShareControls({
+  sharedRow,
+  onShare,
+  onUnshare,
+  onToggleVisible,
+}: {
+  sharedRow: SharedHomebrew | undefined;
+  onShare: () => void;
+  onUnshare: () => void;
+  onToggleVisible: (row: SharedHomebrew) => void;
+}) {
+  if (!sharedRow) {
+    return (
+      <button
+        onClick={onShare}
+        title="Share with players"
+        className="p-1 text-slate-400 hover:text-emerald-300"
+      >
+        <Share2 size={13} />
+      </button>
+    );
+  }
+  return (
+    <div className="flex gap-1">
+      <button
+        onClick={() => onToggleVisible(sharedRow)}
+        title={sharedRow.visible_to_players ? 'Visible to players (click to hide)' : 'Hidden from players (click to show)'}
+        className={`p-1 ${sharedRow.visible_to_players ? 'text-emerald-400 hover:text-emerald-300' : 'text-slate-500 hover:text-slate-300'}`}
+      >
+        {sharedRow.visible_to_players ? <Eye size={13} /> : <EyeOff size={13} />}
+      </button>
+      <button
+        onClick={onUnshare}
+        title="Unshare"
+        className="p-1 text-emerald-400 hover:text-rose-400"
+      >
+        <Share2 size={13} />
+      </button>
+    </div>
   );
 }

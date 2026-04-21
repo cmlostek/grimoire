@@ -6,6 +6,8 @@ import { Link, useLocation } from 'react-router-dom';
 import type { EquipmentItem, MagicItem } from '../../data/types';
 import { useStore } from '../../store';
 import type { HomebrewItem } from '../../store';
+import { useSession } from '../session/sessionStore';
+import { useSharedHomebrew } from '../homebrew/sharedHomebrewStore';
 
 type Tab = 'gear' | 'magic' | 'custom';
 
@@ -15,8 +17,40 @@ export default function Items() {
   const [category, setCategory] = useState<string | 'all'>('all');
   const [rarity, setRarity] = useState<string | 'all'>('all');
   const [selected, setSelected] = useState<EquipmentItem | MagicItem | HomebrewItem | null>(null);
-  const homebrewItems = useStore((s) => s.homebrewItems);
+  const localHomebrewItems = useStore((s) => s.homebrewItems);
+  const role = useSession((s) => s.role);
+  const campaignId = useSession((s) => s.campaignId);
+  const sharedItems = useSharedHomebrew((s) => s.items);
+  const loadShared = useSharedHomebrew((s) => s.loadForCampaign);
+  const subscribeShared = useSharedHomebrew((s) => s.subscribe);
   const location = useLocation();
+
+  useEffect(() => {
+    if (!campaignId) return;
+    loadShared(campaignId);
+    const unsub = subscribeShared(campaignId);
+    return unsub;
+  }, [campaignId, loadShared, subscribeShared]);
+
+  const homebrewItems = useMemo<HomebrewItem[]>(() => {
+    if (role === 'gm') return localHomebrewItems;
+    return sharedItems.map((r) => {
+      const d = r.data as Record<string, unknown>;
+      const now = Date.now();
+      return {
+        id: `shared-${r.id}`,
+        campaign: (d.campaign as string) ?? '',
+        name: r.name,
+        category: (d.category as string) ?? 'Wondrous item',
+        rarity: d.rarity as string | undefined,
+        priceGp: d.priceGp as number | undefined,
+        weight: d.weight as number | undefined,
+        properties: d.properties as string | undefined,
+        desc: (d.desc as string) ?? '',
+        updatedAt: now,
+      };
+    });
+  }, [role, localHomebrewItems, sharedItems]);
 
   useEffect(() => {
     const hash = location.hash.replace(/^#/, '');
@@ -145,7 +179,7 @@ export default function Items() {
                 ))}
               </select>
             )}
-            {tab === 'custom' && (
+            {tab === 'custom' && role === 'gm' && (
               <Link
                 to="/homebrew"
                 className="block text-center px-2 py-1 text-[11px] bg-slate-900 hover:bg-slate-800 border border-slate-800 rounded text-slate-300"
@@ -220,12 +254,16 @@ export default function Items() {
               (tab === 'custom' && filteredCustom.length === 0)) && (
               <div className="p-4 text-xs text-slate-600 italic">
                 {tab === 'custom' ? (
-                  <>
-                    No custom items.{' '}
-                    <Link to="/homebrew" className="text-sky-400 hover:underline">
-                      Create one →
-                    </Link>
-                  </>
+                  role === 'gm' ? (
+                    <>
+                      No custom items.{' '}
+                      <Link to="/homebrew" className="text-sky-400 hover:underline">
+                        Create one →
+                      </Link>
+                    </>
+                  ) : (
+                    <>No custom items shared yet.</>
+                  )
                 ) : (
                   'No matches.'
                 )}
@@ -238,7 +276,7 @@ export default function Items() {
           {!selected ? (
             <div className="h-full flex items-center justify-center text-slate-500">Select an item.</div>
           ) : isHomebrew(selected) ? (
-            <CustomDetail item={selected} onClose={() => setSelected(null)} />
+            <CustomDetail item={selected} onClose={() => setSelected(null)} canEdit={role === 'gm'} />
           ) : 'rarity' in selected ? (
             <MagicDetail item={selected} onClose={() => setSelected(null)} />
           ) : (
@@ -372,7 +410,7 @@ function isHomebrew(x: EquipmentItem | MagicItem | HomebrewItem): x is HomebrewI
   return (x as HomebrewItem).updatedAt !== undefined;
 }
 
-function CustomDetail({ item, onClose }: { item: HomebrewItem; onClose: () => void }) {
+function CustomDetail({ item, onClose, canEdit }: { item: HomebrewItem; onClose: () => void; canEdit: boolean }) {
   return (
     <div className="max-w-2xl px-8 py-6">
       <div className="flex items-start justify-between">
@@ -401,11 +439,13 @@ function CustomDetail({ item, onClose }: { item: HomebrewItem; onClose: () => vo
       {item.desc && (
         <div className="mt-6 text-slate-200 leading-relaxed whitespace-pre-wrap">{item.desc}</div>
       )}
-      <div className="mt-6 pt-4 border-t border-slate-800 text-xs">
-        <Link to="/homebrew" className="text-sky-400 hover:underline">
-          Edit in Homebrew →
-        </Link>
-      </div>
+      {canEdit && (
+        <div className="mt-6 pt-4 border-t border-slate-800 text-xs">
+          <Link to="/homebrew" className="text-sky-400 hover:underline">
+            Edit in Homebrew →
+          </Link>
+        </div>
+      )}
     </div>
   );
 }

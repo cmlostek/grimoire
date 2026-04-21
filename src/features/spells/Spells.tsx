@@ -6,6 +6,8 @@ import { Search, X, FlaskConical } from 'lucide-react';
 import type { Spell } from '../../data/types';
 import { useStore } from '../../store';
 import type { HomebrewSpell } from '../../store';
+import { useSession } from '../session/sessionStore';
+import { useSharedHomebrew } from '../homebrew/sharedHomebrewStore';
 
 type Source = 'all' | 'srd' | 'custom';
 
@@ -38,8 +40,44 @@ export default function Spells() {
   const [source, setSource] = useState<Source>('all');
   const [selected, setSelected] = useState<UnifiedSpell | null>(null);
 
-  const homebrewSpells = useStore((s) => s.homebrewSpells);
+  const localHomebrewSpells = useStore((s) => s.homebrewSpells);
+  const role = useSession((s) => s.role);
+  const campaignId = useSession((s) => s.campaignId);
+  const sharedSpells = useSharedHomebrew((s) => s.spells);
+  const loadShared = useSharedHomebrew((s) => s.loadForCampaign);
+  const subscribeShared = useSharedHomebrew((s) => s.subscribe);
   const location = useLocation();
+
+  useEffect(() => {
+    if (!campaignId) return;
+    loadShared(campaignId);
+    const unsub = subscribeShared(campaignId);
+    return unsub;
+  }, [campaignId, loadShared, subscribeShared]);
+
+  const homebrewSpells = useMemo<HomebrewSpell[]>(() => {
+    if (role === 'gm') return localHomebrewSpells;
+    return sharedSpells.map((r) => {
+      const d = r.data as Record<string, unknown>;
+      return {
+        id: `shared-${r.id}`,
+        campaign: (d.campaign as string) ?? '',
+        name: r.name,
+        level: (d.level as number) ?? 0,
+        school: (d.school as string) ?? 'Evocation',
+        castingTime: (d.castingTime as string) ?? '1 action',
+        range: (d.range as string) ?? '',
+        components: (d.components as string) ?? '',
+        duration: (d.duration as string) ?? '',
+        ritual: Boolean(d.ritual),
+        concentration: Boolean(d.concentration),
+        classes: (d.classes as string) ?? '',
+        desc: (d.desc as string) ?? '',
+        higherLevel: d.higherLevel as string | undefined,
+        updatedAt: Date.now(),
+      };
+    });
+  }, [role, localHomebrewSpells, sharedSpells]);
 
   useEffect(() => {
     const hash = location.hash.replace(/^#/, '');
@@ -231,12 +269,16 @@ export default function Spells() {
             {filtered.length === 0 && (
               <div className="p-4 text-xs text-slate-600 italic">
                 {source === 'custom' ? (
-                  <>
-                    No custom spells.{' '}
-                    <Link to="/homebrew" className="text-sky-400 hover:underline">
-                      Create one →
-                    </Link>
-                  </>
+                  role === 'gm' ? (
+                    <>
+                      No custom spells.{' '}
+                      <Link to="/homebrew" className="text-sky-400 hover:underline">
+                        Create one →
+                      </Link>
+                    </>
+                  ) : (
+                    <>No custom spells shared yet.</>
+                  )
                 ) : (
                   'No matches.'
                 )}
@@ -253,7 +295,7 @@ export default function Spells() {
           ) : selected.kind === 'srd' ? (
             <SrdDetail spell={selected.srd!} onClose={() => setSelected(null)} />
           ) : (
-            <CustomDetail spell={selected.custom!} onClose={() => setSelected(null)} />
+            <CustomDetail spell={selected.custom!} onClose={() => setSelected(null)} canEdit={role === 'gm'} />
           )}
         </section>
       </div>
@@ -335,7 +377,7 @@ function SrdDetail({ spell, onClose }: { spell: Spell; onClose: () => void }) {
   );
 }
 
-function CustomDetail({ spell, onClose }: { spell: HomebrewSpell; onClose: () => void }) {
+function CustomDetail({ spell, onClose, canEdit }: { spell: HomebrewSpell; onClose: () => void; canEdit: boolean }) {
   return (
     <div className="max-w-3xl px-8 py-6">
       <div className="flex items-start justify-between gap-4">
@@ -387,11 +429,13 @@ function CustomDetail({ spell, onClose }: { spell: HomebrewSpell; onClose: () =>
         </div>
       )}
 
-      <div className="mt-6 pt-4 border-t border-slate-800 text-xs">
-        <Link to="/homebrew" className="text-sky-400 hover:underline">
-          Edit in Homebrew →
-        </Link>
-      </div>
+      {canEdit && (
+        <div className="mt-6 pt-4 border-t border-slate-800 text-xs">
+          <Link to="/homebrew" className="text-sky-400 hover:underline">
+            Edit in Homebrew →
+          </Link>
+        </div>
+      )}
     </div>
   );
 }
