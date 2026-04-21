@@ -100,7 +100,7 @@ export const useSession = create<SessionState>((set, get) => ({
       });
       get().refreshMyCampaigns();
     } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
+      const msg = e instanceof Error ? e.message : (e as { message?: string })?.message ?? String(e);
       set({ error: msg, loading: false });
     }
   },
@@ -123,7 +123,13 @@ export const useSession = create<SessionState>((set, get) => ({
       set({ loading: false, error: error?.message ?? 'Sign up failed' });
       return;
     }
+    // If email confirmation is required, data.session is null — prompt to confirm
+    if (!data.session) {
+      set({ loading: false, error: 'Check your email and click the confirmation link, then sign in.' });
+      return;
+    }
     set({ userId: data.user.id, email: data.user.email ?? null, loading: false });
+    get().refreshMyCampaigns();
   },
 
   signOut: async () => {
@@ -232,7 +238,7 @@ export const useSession = create<SessionState>((set, get) => ({
       });
       get().refreshMyCampaigns();
     } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
+      const msg = e instanceof Error ? e.message : (e as { message?: string })?.message ?? String(e);
       set({ error: msg, loading: false });
     }
   },
@@ -280,7 +286,7 @@ export const useSession = create<SessionState>((set, get) => ({
       });
       get().refreshMyCampaigns();
     } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
+      const msg = e instanceof Error ? e.message : (e as { message?: string })?.message ?? String(e);
       set({ error: msg, loading: false });
     }
   },
