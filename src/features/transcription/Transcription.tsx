@@ -66,6 +66,7 @@ export default function Transcription() {
 
   const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
   const finalTextRef = useRef('');
+  const recordingRef = useRef(false);
 
   useEffect(() => {
     if (campaignId) loadTranscripts(campaignId);
@@ -95,19 +96,29 @@ export default function Transcription() {
       setInterim(latestInterim);
     };
     rec.onerror = (e: any) => {
-      setRecError(e?.error ?? 'Speech recognition error');
+      const code: string = e?.error ?? 'error';
+      if (code === 'network') return; // transient — onend will restart
+      if (code === 'not-allowed' || code === 'service-not-allowed') {
+        setRecError('Microphone access denied. Allow microphone in your browser settings and try again.');
+        recordingRef.current = false;
+        setRecording(false);
+        return;
+      }
+      setRecError(`Speech error: ${code}`);
     };
     rec.onend = () => {
-      if (recognitionRef.current === rec && recording) {
+      if (recognitionRef.current === rec && recordingRef.current) {
         try {
           rec.start();
         } catch {
+          recordingRef.current = false;
           setRecording(false);
         }
       }
     };
     recognitionRef.current = rec;
     rec.start();
+    recordingRef.current = true;
     setRecording(true);
     setStartedAt(new Date().toISOString());
   };
@@ -115,6 +126,7 @@ export default function Transcription() {
   const stop = () => {
     const rec = recognitionRef.current;
     recognitionRef.current = null;
+    recordingRef.current = false;
     setRecording(false);
     setInterim('');
     if (rec) {
@@ -126,6 +138,7 @@ export default function Transcription() {
     return () => {
       const rec = recognitionRef.current;
       recognitionRef.current = null;
+      recordingRef.current = false;
       if (rec) {
         try { rec.stop(); } catch { /* ignore */ }
       }
