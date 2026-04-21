@@ -8,6 +8,7 @@ export type Note = {
   body: string;
   folder_id: string | null;
   visible_to_players: boolean;
+  owner_user_id: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -48,7 +49,7 @@ type NotesState = {
 
   setActiveNote: (id: string | null) => void;
 
-  createNote: (campaignId: string, folderId: string | null) => Promise<string | null>;
+  createNote: (campaignId: string, folderId: string | null, ownerId?: string | null) => Promise<string | null>;
   updateNote: (id: string, patch: Partial<Pick<Note, 'title' | 'body' | 'folder_id' | 'visible_to_players'>>) => Promise<void>;
   deleteNote: (id: string) => Promise<void>;
   moveNote: (id: string, folderId: string | null) => Promise<void>;
@@ -148,10 +149,17 @@ export const useNotes = create<NotesState>((set, get) => ({
     set({ activeNoteId: id });
   },
 
-  createNote: async (campaignId, folderId) => {
+  createNote: async (campaignId, folderId, ownerId) => {
+    const insert: Record<string, unknown> = {
+      campaign_id: campaignId,
+      folder_id: folderId,
+      title: 'Untitled',
+      body: '',
+    };
+    if (ownerId != null) insert.owner_user_id = ownerId;
     const { data, error } = await supabase
       .from('notes')
-      .insert({ campaign_id: campaignId, folder_id: folderId, title: 'Untitled', body: '' })
+      .insert(insert)
       .select()
       .single();
     if (error || !data) {

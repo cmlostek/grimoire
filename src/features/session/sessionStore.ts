@@ -16,6 +16,7 @@ export type CampaignSummary = {
 
 type SessionState = {
   userId: string | null;
+  email: string | null;
   campaignId: string | null;
   campaignName: string | null;
   joinCode: string | null;
@@ -26,6 +27,9 @@ type SessionState = {
   myCampaigns: CampaignSummary[];
 
   bootstrap: () => Promise<void>;
+  signIn: (email: string, password: string) => Promise<void>;
+  signUp: (email: string, password: string) => Promise<void>;
+  signOut: () => Promise<void>;
   refreshMyCampaigns: () => Promise<void>;
   createCampaign: (name: string, displayName: string) => Promise<void>;
   joinCampaign: (code: string, displayName: string) => Promise<void>;
@@ -42,16 +46,9 @@ function randomJoinCode(n = 6) {
   return out;
 }
 
-async function ensureAuth(): Promise<string> {
-  const { data: { session } } = await supabase.auth.getSession();
-  if (session?.user) return session.user.id;
-  const { data, error } = await supabase.auth.signInAnonymously();
-  if (error || !data.user) throw error ?? new Error('Anonymous sign-in failed');
-  return data.user.id;
-}
-
 export const useSession = create<SessionState>((set, get) => ({
   userId: null,
+  email: null,
   campaignId: null,
   campaignName: null,
   joinCode: null,
@@ -60,6 +57,90 @@ export const useSession = create<SessionState>((set, get) => ({
   loading: true,
   error: null,
   myCampaigns: [],
+
+  bootstrap: async () => {
+    set({ loading: true, error: null });
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session?.user) {
+        set({ loading: false });
+        return;
+      }
+      const uid = session.user.id;
+      const email = session.user.email ?? null;
+      const stored = localStorage.getItem(STORAGE_KEY);
+      if (!stored) {
+        set({ userId: uid, email, loading: false });
+        get().refreshMyCampaigns();
+        return;
+      }
+      const { data: mem, error } = await supabase
+        .from('campaign_members')
+        .select('role, display_name, campaigns!inner(id, name, join_code)')
+        .eq('campaign_id', stored)
+        .eq('user_id', uid)
+        .maybeSingle();
+      if (error) throw error;
+      if (!mem) {
+        localStorage.removeItem(STORAGE_KEY);
+        set({ userId: uid, email, loading: false });
+        get().refreshMyCampaigns();
+        return;
+      }
+      const campaign = mem.campaigns as unknown as { id: string; name: string; join_code: string };
+      set({
+        userId: uid,
+        email,
+        campaignId: campaign.id,
+        campaignName: campaign.name,
+        joinCode: campaign.join_code,
+        role: mem.role as Role,
+        displayName: mem.display_name,
+        loading: false,
+      });
+      get().refreshMyCampaigns();
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      set({ error: msg, loading: false });
+    }
+  },
+
+  signIn: async (email, password) => {
+    set({ loading: true, error: null });
+    const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+    if (error || !data.user) {
+      set({ loading: false, error: error?.message ?? 'Sign in failed' });
+      return;
+    }
+    set({ userId: data.user.id, email: data.user.email ?? null, loading: false });
+    get().refreshMyCampaigns();
+  },
+
+  signUp: async (email, password) => {
+    set({ loading: true, error: null });
+    const { data, error } = await supabase.auth.signUp({ email, password });
+    if (error || !data.user) {
+      set({ loading: false, error: error?.message ?? 'Sign up failed' });
+      return;
+    }
+    set({ userId: data.user.id, email: data.user.email ?? null, loading: false });
+  },
+
+  signOut: async () => {
+    await supabase.auth.signOut();
+    localStorage.removeItem(STORAGE_KEY);
+    set({
+      userId: null,
+      email: null,
+      campaignId: null,
+      campaignName: null,
+      joinCode: null,
+      role: null,
+      displayName: null,
+      error: null,
+      myCampaigns: [],
+    });
+  },
 
   refreshMyCampaigns: async () => {
     const { data: { session } } = await supabase.auth.getSession();
@@ -91,7 +172,8 @@ export const useSession = create<SessionState>((set, get) => ({
   },
 
   switchToCampaign: async (campaignId) => {
-    const uid = get().userId ?? (await ensureAuth());
+    const uid = get().userId;
+    if (!uid) return;
     const { data: mem, error } = await supabase
       .from('campaign_members')
       .select('role, display_name, campaigns!inner(id, name, join_code)')
@@ -110,7 +192,6 @@ export const useSession = create<SessionState>((set, get) => ({
     localStorage.setItem(STORAGE_KEY, campaign.id);
     localStorage.setItem(NAME_KEY, mem.display_name as string);
     set({
-      userId: uid,
       campaignId: campaign.id,
       campaignName: campaign.name,
       joinCode: campaign.join_code,
@@ -120,48 +201,11 @@ export const useSession = create<SessionState>((set, get) => ({
     });
   },
 
-  bootstrap: async () => {
-    set({ loading: true, error: null });
-    try {
-      const uid = await ensureAuth();
-      const stored = localStorage.getItem(STORAGE_KEY);
-      if (!stored) {
-        set({ userId: uid, loading: false });
-        return;
-      }
-      const { data: mem, error } = await supabase
-        .from('campaign_members')
-        .select('role, display_name, campaigns!inner(id, name, join_code)')
-        .eq('campaign_id', stored)
-        .eq('user_id', uid)
-        .maybeSingle();
-      if (error) throw error;
-      if (!mem) {
-        localStorage.removeItem(STORAGE_KEY);
-        set({ userId: uid, loading: false });
-        return;
-      }
-      const campaign = mem.campaigns as unknown as { id: string; name: string; join_code: string };
-      set({
-        userId: uid,
-        campaignId: campaign.id,
-        campaignName: campaign.name,
-        joinCode: campaign.join_code,
-        role: mem.role as Role,
-        displayName: mem.display_name,
-        loading: false,
-      });
-      get().refreshMyCampaigns();
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      set({ error: msg, loading: false });
-    }
-  },
-
   createCampaign: async (name, displayName) => {
     set({ loading: true, error: null });
     try {
-      const uid = get().userId ?? (await ensureAuth());
+      const uid = get().userId;
+      if (!uid) throw new Error('Not signed in');
       const code = randomJoinCode();
       const { data: campaign, error: cErr } = await supabase
         .from('campaigns')
@@ -179,7 +223,6 @@ export const useSession = create<SessionState>((set, get) => ({
       localStorage.setItem(STORAGE_KEY, campaign.id);
       localStorage.setItem(NAME_KEY, displayName);
       set({
-        userId: uid,
         campaignId: campaign.id,
         campaignName: campaign.name,
         joinCode: campaign.join_code,
@@ -197,7 +240,8 @@ export const useSession = create<SessionState>((set, get) => ({
   joinCampaign: async (code, displayName) => {
     set({ loading: true, error: null });
     try {
-      const uid = get().userId ?? (await ensureAuth());
+      const uid = get().userId;
+      if (!uid) throw new Error('Not signed in');
       const upper = code.trim().toUpperCase();
       const { data: campaign, error: cErr } = await supabase
         .from('campaigns')
@@ -227,7 +271,6 @@ export const useSession = create<SessionState>((set, get) => ({
       localStorage.setItem(STORAGE_KEY, campaign.id);
       localStorage.setItem(NAME_KEY, displayName);
       set({
-        userId: uid,
         campaignId: campaign.id,
         campaignName: campaign.name,
         joinCode: campaign.join_code,

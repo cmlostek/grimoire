@@ -30,8 +30,10 @@ type DragItem =
 
 export default function Notes() {
   const campaignId = useSession((s) => s.campaignId);
+  const userId = useSession((s) => s.userId);
   const role = useSession((s) => s.role);
   const isGM = role === 'gm';
+  const canEditNote = (n: Note) => isGM || n.owner_user_id === userId;
 
   const notes = useNotes((s) => s.notes);
   const folders = useNotes((s) => s.folders);
@@ -70,8 +72,11 @@ export default function Notes() {
   const [showLegend, setShowLegend] = useState(false);
 
   const visibleNotes = useMemo(
-    () => (isGM ? notes : notes.filter((n) => n.visible_to_players)),
-    [isGM, notes]
+    () =>
+      isGM
+        ? notes
+        : notes.filter((n) => n.visible_to_players || n.owner_user_id === userId),
+    [isGM, notes, userId]
   );
 
   const active = visibleNotes.find((n) => n.id === activeNoteId) ?? null;
@@ -98,8 +103,9 @@ export default function Notes() {
   }, [q, visibleNotes]);
 
   const onCreateNote = async (folderId: string | null) => {
-    if (!campaignId || !isGM) return;
-    await createNote(campaignId, folderId);
+    if (!campaignId) return;
+    const ownerId = isGM ? null : userId;
+    await createNote(campaignId, folderId, ownerId);
     setPreview(false);
   };
 
@@ -181,15 +187,15 @@ export default function Notes() {
             <div className="text-[10px] uppercase tracking-wider text-slate-500 font-mono">
               Explorer
             </div>
-            {isGM && (
-              <div className="flex gap-0.5">
-                <button
-                  onClick={() => onCreateNote(null)}
-                  title="New note"
-                  className="p-1 text-slate-400 hover:text-sky-300 hover:bg-slate-800 rounded"
-                >
-                  <FilePlus size={12} />
-                </button>
+            <div className="flex gap-0.5">
+              <button
+                onClick={() => onCreateNote(null)}
+                title="New note"
+                className="p-1 text-slate-400 hover:text-sky-300 hover:bg-slate-800 rounded"
+              >
+                <FilePlus size={12} />
+              </button>
+              {isGM && (
                 <button
                   onClick={async () => {
                     if (!campaignId) return;
@@ -204,8 +210,8 @@ export default function Notes() {
                 >
                   <FolderPlus size={12} />
                 </button>
-              </div>
-            )}
+              )}
+            </div>
           </div>
 
           <div className="px-2 py-1.5 border-b border-slate-800">
@@ -239,7 +245,7 @@ export default function Notes() {
               onDrop(null);
             }}
           >
-            {folders.length === 0 && visibleNotes.length === 0 && (
+            {isGM && folders.length === 0 && visibleNotes.length === 0 && (
               <div className="px-3 py-4 text-[11px] text-slate-600 italic font-sans">
                 {isGM
                   ? 'No notes yet. Create one with the file icon above.'
@@ -329,7 +335,7 @@ export default function Notes() {
         <section className="flex-1 min-w-0 flex flex-col">
           {!active && (
             <div className="flex-1 flex items-center justify-center text-slate-500 text-sm">
-              {isGM ? 'Select or create a note.' : 'Select a note.'}
+              Select or create a note.
             </div>
           )}
           {active && (
@@ -338,11 +344,11 @@ export default function Notes() {
                 <input
                   value={active.title}
                   onChange={(e) => updateNote(active.id, { title: e.target.value })}
-                  readOnly={!isGM}
+                  readOnly={!canEditNote(active)}
                   className="flex-1 bg-transparent font-serif text-xl outline-none"
                   placeholder="Title"
                 />
-                {isGM && (
+                {canEditNote(active) && isGM && (
                   <button
                     onClick={() =>
                       updateNote(active.id, {
@@ -364,7 +370,7 @@ export default function Notes() {
                     {active.visible_to_players ? 'Shared' : 'Private'}
                   </button>
                 )}
-                {isGM && (confirmingId === active.id ? (
+                {canEditNote(active) && (confirmingId === active.id ? (
                   <div className="flex items-center gap-1">
                     <span className="text-xs text-slate-400 mr-1">Delete this note?</span>
                     <button
@@ -393,7 +399,7 @@ export default function Notes() {
                 ))}
               </div>
               <div className="flex-1 min-h-0 overflow-hidden">
-                {preview || !isGM ? (
+                {preview || !canEditNote(active) ? (
                   <div
                     className="h-full overflow-y-auto px-8 py-6 markdown-body"
                     onClick={(e) => {
@@ -420,7 +426,7 @@ export default function Notes() {
                     >
                       {active.body
                         ? preprocessDecorators(active.body)
-                        : isGM
+                        : canEditNote(active)
                           ? '*Nothing yet. Switch to Edit to start writing.*'
                           : '*Empty note.*'}
                     </ReactMarkdown>

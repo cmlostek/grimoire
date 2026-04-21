@@ -9,3 +9,4 @@ dist
 .vite
 tsconfig.tsbuildinfo
 .claude
+.vercel

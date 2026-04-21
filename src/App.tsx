@@ -1,6 +1,6 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { NavLink, Route, Routes, Navigate } from 'react-router-dom';
-import { Dice6, Swords, NotebookPen, Map as MapIcon, BookOpen, Sparkles, Coins, Package, ScrollText, Users, FlaskConical, Dices, LogOut, Copy, Mic } from 'lucide-react';
+import { Dice6, Swords, NotebookPen, Map as MapIcon, BookOpen, Sparkles, Coins, Package, ScrollText, Users, FlaskConical, Dices, LogOut, Copy, Mic, Palette } from 'lucide-react';
 import DiceRoller from './features/dice/DiceRoller';
 import { QuickDice } from './features/dice/QuickDice';
 import { useQuickDice } from './features/dice/quickDiceStore';
@@ -43,13 +43,14 @@ const nav: NavItem[] = [
 export default function App() {
   const bootstrap = useSession((s) => s.bootstrap);
   const loading = useSession((s) => s.loading);
+  const userId = useSession((s) => s.userId);
   const campaignId = useSession((s) => s.campaignId);
 
   useEffect(() => {
     bootstrap();
   }, [bootstrap]);
 
-  if (loading && !campaignId) {
+  if (loading) {
     return (
       <div className="h-full w-full flex items-center justify-center bg-slate-950 text-slate-500 text-sm">
         Loading…
@@ -57,9 +58,29 @@ export default function App() {
     );
   }
 
+  if (!userId) return <CampaignPicker />;
   if (!campaignId) return <CampaignPicker />;
 
   return <AppShell />;
+}
+
+const BG_KEY = 'dnd-gm:bgColor';
+const BG_PRESETS = [
+  { label: 'Slate',  value: '#020617' },
+  { label: 'Stone',  value: '#0c0a09' },
+  { label: 'Zinc',   value: '#09090b' },
+  { label: 'Forest', value: '#071a0f' },
+  { label: 'Deep',   value: '#06071a' },
+  { label: 'Maroon', value: '#150509' },
+];
+
+function useBgColor() {
+  const [color, setColor] = useState(() => localStorage.getItem(BG_KEY) ?? BG_PRESETS[0].value);
+  const update = (c: string) => {
+    localStorage.setItem(BG_KEY, c);
+    setColor(c);
+  };
+  return [color, update] as const;
 }
 
 function AppShell() {
@@ -70,6 +91,9 @@ function AppShell() {
   const joinCode = useSession((s) => s.joinCode);
   const displayName = useSession((s) => s.displayName);
   const leaveCurrent = useSession((s) => s.leaveCurrent);
+  const signOut = useSession((s) => s.signOut);
+  const [bgColor, setBgColor] = useBgColor();
+  const [showBgPicker, setShowBgPicker] = useState(false);
 
   const visibleNav = nav.filter((n) => !n.gmOnly || role === 'gm');
 
@@ -78,7 +102,7 @@ function AppShell() {
   };
 
   return (
-    <div className="h-full flex bg-slate-950 text-slate-100">
+    <div className="h-full flex text-slate-100" style={{ backgroundColor: bgColor }}>
       <aside className="w-56 shrink-0 border-r border-slate-800 flex flex-col">
         <div className="px-4 py-3 border-b border-slate-800 flex items-start justify-between gap-2">
           <div className="min-w-0">
@@ -136,13 +160,50 @@ function AppShell() {
             </NavLink>
           ))}
         </nav>
-        <button
-          onClick={leaveCurrent}
-          className="px-4 py-2 text-xs text-slate-500 hover:text-rose-300 hover:bg-slate-900 border-t border-slate-800 flex items-center gap-2"
-          title="Leave campaign on this device (doesn't delete it)"
-        >
-          <LogOut size={12} /> Switch campaign
-        </button>
+        <div className="border-t border-slate-800">
+          {showBgPicker && (
+            <div className="px-4 py-2 border-b border-slate-800">
+              <div className="text-[10px] uppercase tracking-wider text-slate-500 mb-2">Background</div>
+              <div className="flex gap-1.5 flex-wrap">
+                {BG_PRESETS.map((p) => (
+                  <button
+                    key={p.value}
+                    onClick={() => setBgColor(p.value)}
+                    title={p.label}
+                    className={`w-6 h-6 rounded-full border-2 ${bgColor === p.value ? 'border-sky-400' : 'border-slate-700 hover:border-slate-500'}`}
+                    style={{ backgroundColor: p.value }}
+                  />
+                ))}
+                <input
+                  type="color"
+                  value={bgColor}
+                  onChange={(e) => setBgColor(e.target.value)}
+                  title="Custom color"
+                  className="w-6 h-6 rounded cursor-pointer border border-slate-700 bg-transparent p-0"
+                />
+              </div>
+            </div>
+          )}
+          <button
+            onClick={() => setShowBgPicker((v) => !v)}
+            className="w-full px-4 py-2 text-xs text-slate-500 hover:text-slate-300 hover:bg-slate-900 flex items-center gap-2"
+          >
+            <Palette size={12} /> Background color
+          </button>
+          <button
+            onClick={leaveCurrent}
+            className="w-full px-4 py-2 text-xs text-slate-500 hover:text-rose-300 hover:bg-slate-900 flex items-center gap-2"
+            title="Switch campaign (stays signed in)"
+          >
+            <LogOut size={12} /> Switch campaign
+          </button>
+          <button
+            onClick={signOut}
+            className="w-full px-4 py-2 text-xs text-slate-500 hover:text-rose-300 hover:bg-slate-900 flex items-center gap-2"
+          >
+            <LogOut size={12} /> Sign out
+          </button>
+        </div>
       </aside>
       <main className="flex-1 min-w-0 overflow-hidden">
         <Routes>

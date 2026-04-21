@@ -37,6 +37,7 @@ create table if not exists notes (
   title              text not null default 'Untitled',
   body               text not null default '',
   visible_to_players boolean not null default false,
+  owner_user_id      uuid,
   created_by         uuid not null default auth.uid(),
   created_at         timestamptz not null default now(),
   updated_at         timestamptz not null default now()
@@ -211,16 +212,21 @@ create policy members_delete on campaign_members for delete to authenticated usi
 -- =============================================
 
 drop policy if exists notes_select on notes;
-create policy notes_select on notes for select to authenticated using (is_gm(campaign_id) or (is_member(campaign_id) and visible_to_players));
+create policy notes_select on notes for select to authenticated
+  using (is_gm(campaign_id) or (is_member(campaign_id) and (visible_to_players or owner_user_id = auth.uid())));
 
 drop policy if exists notes_insert on notes;
-create policy notes_insert on notes for insert to authenticated with check (is_gm(campaign_id));
+create policy notes_insert on notes for insert to authenticated
+  with check (is_gm(campaign_id) or (is_member(campaign_id) and owner_user_id = auth.uid()));
 
 drop policy if exists notes_update on notes;
-create policy notes_update on notes for update to authenticated using (is_gm(campaign_id)) with check (is_gm(campaign_id));
+create policy notes_update on notes for update to authenticated
+  using (is_gm(campaign_id) or (is_member(campaign_id) and owner_user_id = auth.uid()))
+  with check (is_gm(campaign_id) or (is_member(campaign_id) and owner_user_id = auth.uid()));
 
 drop policy if exists notes_delete on notes;
-create policy notes_delete on notes for delete to authenticated using (is_gm(campaign_id));
+create policy notes_delete on notes for delete to authenticated
+  using (is_gm(campaign_id) or (is_member(campaign_id) and owner_user_id = auth.uid()));
 
 drop policy if exists party_select on party_members;
 create policy party_select on party_members for select to authenticated using (is_member(campaign_id));
