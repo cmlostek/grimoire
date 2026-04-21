@@ -52,14 +52,68 @@ input[type="number"] { -moz-appearance: textfield; appearance: textfield; }
 }
 .note-link:hover { background: rgba(14, 165, 233, 0.28); color: #bae6fd; }
 .note-link-broken { color: #94a3b8; background: rgba(148, 163, 184, 0.08); border-bottom-color: #475569; }
-.note-secret {
-  display: inline-block; background: #334155; color: #334155;
-  padding: 0.05em 0.35em; border-radius: 0.3em; cursor: pointer;
-  user-select: none; transition: color 0.15s, background 0.15s;
-  white-space: pre-wrap;
+.note-secret-block {
+  display: block;
+  border: 1.5px dashed rgba(167, 139, 250, 0.45);
+  border-radius: 0.4em;
+  padding: 0.45em 0.7em;
+  margin: 0.5em 0;
+  background: rgba(139, 92, 246, 0.06);
+  color: #e2e8f0;
 }
-.note-secret:hover { background: #475569; color: #475569; }
-.note-secret.note-secret-open {
-  background: rgba(100, 116, 139, 0.2); color: #e2e8f0;
-  user-select: text;
+.note-secret-block.note-secret-locked {
+  background: rgba(100, 116, 139, 0.06);
+  border-color: rgba(100, 116, 139, 0.28);
+  color: #94a3b8;
+}
+.note-secret-block.note-secret-revealed {
+  border-color: rgba(52, 211, 153, 0.38);
+  background: rgba(52, 211, 153, 0.04);
+}
+.note-secret-row {
+  display: flex;
+  align-items: center;
+  gap: 0.35em;
+  font-size: 0.72em;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  margin-bottom: 0.45em;
+  color: #a78bfa;
+}
+.note-secret-locked .note-secret-row {
+  color: #64748b;
+  margin-bottom: 0;
+}
+.note-secret-revealed .note-secret-row {
+  color: #34d399;
+}
+.note-secret-icon { flex-shrink: 0; }
+.note-secret-label { flex: 1; }
+.note-secret-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25em;
+  background: rgba(139, 92, 246, 0.18);
+  border: 1px solid rgba(167, 139, 250, 0.28);
+  color: #c4b5fd;
+  padding: 0.1em 0.45em;
+  border-radius: 0.25em;
+  cursor: pointer;
+  font-size: 1em;
+  font-weight: 500;
+  text-transform: none;
+  letter-spacing: normal;
+  transition: background 0.15s, color 0.15s;
+}
+.note-secret-toggle:hover {
+  background: rgba(139, 92, 246, 0.32);
+  color: #e9d5ff;
+}
+.note-secret-content {
+  display: block;
+  font-size: 0.93em;
+  line-height: 1.55;
+  color: #e2e8f0;
+  white-space: pre-wrap;
 }

@@ -22,6 +22,31 @@ import {
 import { buildWikiIndex, searchWiki, kindLabel, type WikiEntry } from './wikiIndex';
 import { remarkNoteDecorators, preprocessDecorators } from './decorators';
 import { Secret } from './Secret';
+
+function toggleSecret(body: string, index: number): string {
+  const fence = /```[\s\S]*?```/g;
+  const segments: Array<{ code: boolean; text: string }> = [];
+  let last = 0;
+  let m: RegExpExecArray | null;
+  while ((m = fence.exec(body)) !== null) {
+    if (m.index > last) segments.push({ code: false, text: body.slice(last, m.index) });
+    segments.push({ code: true, text: m[0] });
+    last = m.index + m[0].length;
+  }
+  if (last < body.length) segments.push({ code: false, text: body.slice(last) });
+  let count = 0;
+  return segments
+    .map((seg) => {
+      if (seg.code) return seg.text;
+      return seg.text.replace(/\{\{([\s\S]*?)\}\}/g, (match, inner: string) => {
+        if (count++ === index) {
+          return inner.startsWith('!') ? `{{${inner.slice(1)}}}` : `{{!${inner}}}`;
+        }
+        return match;
+      });
+    })
+    .join('');
+}
 import { QuickDiceButton } from '../dice/QuickDice';
 
 type DragItem =
@@ -195,22 +220,22 @@ export default function Notes() {
               >
                 <FilePlus size={12} />
               </button>
-              {isGM && (
-                <button
-                  onClick={async () => {
-                    if (!campaignId) return;
-                    const id = await createFolder(campaignId, 'New Folder', null);
-                    if (id) {
+              <button
+                onClick={async () => {
+                  if (!campaignId) return;
+                  const id = await createFolder(campaignId, 'New Folder', null);
+                  if (id) {
+                    if (isGM) {
                       setRenamingFolderId(id);
                       setRenameValue('New Folder');
                     }
-                  }}
-                  title="New folder"
-                  className="p-1 text-slate-400 hover:text-sky-300 hover:bg-slate-800 rounded"
-                >
-                  <FolderPlus size={12} />
-                </button>
-              )}
+                  }
+                }}
+                title="New folder"
+                className="p-1 text-slate-400 hover:text-sky-300 hover:bg-slate-800 rounded"
+              >
+                <FolderPlus size={12} />
+              </button>
             </div>
           </div>
 
@@ -348,7 +373,7 @@ export default function Notes() {
                   className="flex-1 bg-transparent font-serif text-xl outline-none"
                   placeholder="Title"
                 />
-                {canEditNote(active) && isGM && (
+                {canEditNote(active) && (
                   <button
                     onClick={() =>
                       updateNote(active.id, {
@@ -357,8 +382,10 @@ export default function Notes() {
                     }
                     title={
                       active.visible_to_players
-                        ? 'Visible to players — click to hide'
-                        : 'Hidden from players — click to share'
+                        ? 'Shared with players — click to hide'
+                        : isGM
+                          ? 'Hidden from players — click to share'
+                          : 'Private — click to share with party'
                     }
                     className={`px-2 py-1 text-xs rounded flex items-center gap-1 ${
                       active.visible_to_players
@@ -415,10 +442,22 @@ export default function Notes() {
                       remarkPlugins={plugins}
                       components={{
                         span: ({ node, children, ...props }) => {
-                          const className =
-                            (props as { className?: string }).className ?? '';
+                          const p = props as Record<string, unknown>;
+                          const className = (p.className as string) ?? '';
                           if (className.includes('note-secret')) {
-                            return <Secret>{children}</Secret>;
+                            const revealed = p['data-secret-revealed'] === 'true';
+                            const idx = parseInt((p['data-secret-index'] as string) ?? '0', 10);
+                            return (
+                              <Secret
+                                isGM={isGM}
+                                revealed={revealed}
+                                onToggle={() => {
+                                  if (active) updateNote(active.id, { body: toggleSecret(active.body, idx) });
+                                }}
+                              >
+                                {children}
+                              </Secret>
+                            );
                           }
                           return <span {...props}>{children}</span>;
                         },
@@ -742,7 +781,7 @@ function FolderNode(props: FolderNodeProps) {
             {folder.name}
           </span>
         )}
-        {isGM && !renaming && !confirming && (
+        {!renaming && !confirming && (
           <div className="flex gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
             <button
               onClick={(e) => {
@@ -759,21 +798,23 @@ function FolderNode(props: FolderNodeProps) {
                 e.stopPropagation();
                 props.onCreateFolder(folder.id);
               }}
-              title="New folder"
+              title="New subfolder"
               className="p-0.5 text-slate-500 hover:text-sky-300"
             >
               <FolderPlus size={11} />
             </button>
-            <button
-              onClick={(e) => {
-                e.stopPropagation();
-                props.onStartDeleteFolder(folder.id);
-              }}
-              title="Delete folder"
-              className="p-0.5 text-slate-500 hover:text-rose-400"
-            >
-              <Trash2 size={11} />
-            </button>
+            {isGM && (
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  props.onStartDeleteFolder(folder.id);
+                }}
+                title="Delete folder"
+                className="p-0.5 text-slate-500 hover:text-rose-400"
+              >
+                <Trash2 size={11} />
+              </button>
+            )}
           </div>
         )}
         {isGM && confirming && (

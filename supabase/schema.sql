@@ -343,8 +343,17 @@ alter table note_folders enable row level security;
 drop policy if exists note_folders_select on note_folders;
 create policy note_folders_select on note_folders for select to authenticated using (is_member(campaign_id));
 
+-- Members can create folders; only GMs can update or delete them
 drop policy if exists note_folders_write on note_folders;
-create policy note_folders_write on note_folders for all to authenticated using (is_gm(campaign_id)) with check (is_gm(campaign_id));
+drop policy if exists note_folders_insert on note_folders;
+drop policy if exists note_folders_update on note_folders;
+drop policy if exists note_folders_delete on note_folders;
+create policy note_folders_insert on note_folders for insert to authenticated
+  with check (is_member(campaign_id));
+create policy note_folders_update on note_folders for update to authenticated
+  using (is_gm(campaign_id)) with check (is_gm(campaign_id));
+create policy note_folders_delete on note_folders for delete to authenticated
+  using (is_gm(campaign_id));
 
 drop trigger if exists note_folders_touch on note_folders;
 create trigger note_folders_touch before update on note_folders for each row execute function touch_updated_at();
