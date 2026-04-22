@@ -117,3 +117,85 @@ input[type="number"] { -moz-appearance: textfield; appearance: textfield; }
   color: #e2e8f0;
   white-space: pre-wrap;
 }
+
+/* Party member hover tooltip */
+.party-tooltip {
+  background: #0f172a;
+  border: 1px solid #334155;
+  border-radius: 0.5em;
+  padding: 0.65em 0.8em;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.6);
+  font-family: ui-sans-serif, system-ui, sans-serif;
+  pointer-events: auto;
+}
+.party-tooltip-name {
+  font-family: "Iowan Old Style", Georgia, serif;
+  font-size: 1rem;
+  color: #bae6fd;
+  font-weight: 600;
+  line-height: 1.2;
+}
+.party-tooltip-sub {
+  font-size: 0.7em;
+  color: #64748b;
+  margin-bottom: 0.45em;
+}
+.party-tooltip-owned { color: #475569; }
+.party-tooltip-stats {
+  display: flex;
+  gap: 0.75em;
+  font-size: 0.72em;
+  color: #94a3b8;
+  align-items: center;
+  margin-bottom: 0.3em;
+}
+.party-tooltip-stats span {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25em;
+}
+.party-tooltip-hp-bar {
+  height: 4px;
+  background: #1e293b;
+  border-radius: 2px;
+  overflow: hidden;
+  margin-bottom: 0.5em;
+}
+.party-tooltip-hp-bar > div { height: 100%; border-radius: 2px; }
+.party-tooltip-abilities {
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
+  gap: 0.2em;
+  margin-bottom: 0.35em;
+}
+.party-tooltip-ability {
+  text-align: center;
+  background: #1e293b;
+  border-radius: 0.2em;
+  padding: 0.2em 0.1em;
+}
+.party-tooltip-ability-label {
+  font-size: 0.58em;
+  color: #475569;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.party-tooltip-ability-score {
+  font-size: 0.8em;
+  font-family: ui-monospace, monospace;
+  color: #e2e8f0;
+  line-height: 1.2;
+}
+.party-tooltip-ability-mod {
+  font-size: 0.65em;
+  color: #7dd3fc;
+  font-family: ui-monospace, monospace;
+}
+.party-tooltip-passives {
+  display: flex;
+  gap: 0.6em;
+  font-size: 0.65em;
+  color: #475569;
+  padding-top: 0.2em;
+  border-top: 1px solid #1e293b;
+}

@@ -22,6 +22,18 @@ import {
 import { buildWikiIndex, searchWiki, kindLabel, type WikiEntry } from './wikiIndex';
 import { remarkNoteDecorators, preprocessDecorators } from './decorators';
 import { Secret } from './Secret';
+import { PartyRefSpan } from './PartyTooltip';
+import { useParty } from '../party/partyStore';
+
+function extractText(children: React.ReactNode): string {
+  if (typeof children === 'string') return children;
+  if (Array.isArray(children)) return (children as React.ReactNode[]).map(extractText).join('');
+  if (children !== null && typeof children === 'object' && 'props' in (children as object)) {
+    const el = children as { props: { children?: React.ReactNode } };
+    return extractText(el.props.children);
+  }
+  return '';
+}
 
 function toggleSecret(body: string, index: number): string {
   const fence = /```[\s\S]*?```/g;
@@ -79,6 +91,7 @@ export default function Notes() {
 
   const homebrewItems = useStore((s) => s.homebrewItems);
   const homebrewSpells = useStore((s) => s.homebrewSpells);
+  const party = useParty((s) => s.party);
 
   useEffect(() => {
     if (!campaignId) return;
@@ -458,6 +471,19 @@ export default function Notes() {
                                 {children}
                               </Secret>
                             );
+                          }
+                          if (className.includes('note-loc')) {
+                            const text = extractText(children);
+                            const member = party.find(
+                              (m) => m.name.trim().toLowerCase() === text.trim().toLowerCase()
+                            );
+                            if (member) {
+                              return (
+                                <PartyRefSpan member={member} className={className}>
+                                  {children}
+                                </PartyRefSpan>
+                              );
+                            }
                           }
                           return <span {...props}>{children}</span>;
                         },
