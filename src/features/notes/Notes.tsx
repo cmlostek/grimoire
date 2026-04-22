@@ -115,9 +115,9 @@ const PERM_META: Record<PermLevel, { label: string; title: string; cls: string }
   },
 };
 function permIcon(level: PermLevel) {
-  if (level === 'private') return <EyeOff size={13} />;
-  if (level === 'edit') return <PencilLine size={13} />;
-  return <Eye size={13} />;
+  if (level === 'private') return <EyeOff size={13} className="text-slate-500" />;
+  if (level === 'edit')    return <Eye    size={13} className="text-emerald-400" />;
+  return                          <Eye    size={13} className="text-sky-400" />;
 }
 
 import { buildWikiIndex } from './wikiIndex';
