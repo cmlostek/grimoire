@@ -13,7 +13,7 @@ import {
   EditorView,
   ViewPlugin,
   Decoration,
-  WidgetType,
+  WidgetType, // used by BulletWidget and SecretWidget
   type DecorationSet,
   type ViewUpdate,
   keymap,
@@ -56,7 +56,6 @@ function markerLens(token: string): [number, number] {
 
 function buildMarkDecos(view: EditorView): DecorationSet {
   const builder = new RangeSetBuilder<Decoration>();
-  const cursorLine = view.state.doc.lineAt(view.state.selection.main.head).number;
 
   for (const { from, to } of view.visibleRanges) {
     const text = view.state.doc.sliceString(from, to);
@@ -67,23 +66,15 @@ function buildMarkDecos(view: EditorView): DecorationSet {
       if (!cls) continue;
       const absFrom = from + m.index;
       const absTo   = absFrom + m[0].length;
-      const onCursorLine = view.state.doc.lineAt(absFrom).number === cursorLine;
-
-      if (onCursorLine) {
-        // Cursor on this line — show full raw syntax
-        builder.add(absFrom, absTo, Decoration.mark({ class: cls }));
+      const [openLen, closeLen] = markerLens(m[0]);
+      const contentFrom = absFrom + openLen;
+      const contentTo   = absTo   - closeLen;
+      if (contentFrom < contentTo) {
+        builder.add(absFrom,     contentFrom, HIDDEN);
+        builder.add(contentFrom, contentTo,   Decoration.mark({ class: cls }));
+        builder.add(contentTo,   absTo,       HIDDEN);
       } else {
-        // Off cursor line — hide the surrounding markers, style only the content
-        const [openLen, closeLen] = markerLens(m[0]);
-        const contentFrom = absFrom + openLen;
-        const contentTo   = absTo   - closeLen;
-        if (contentFrom < contentTo) {
-          builder.add(absFrom,    contentFrom, HIDDEN);
-          builder.add(contentFrom, contentTo,  Decoration.mark({ class: cls }));
-          builder.add(contentTo,  absTo,       HIDDEN);
-        } else {
-          builder.add(absFrom, absTo, Decoration.mark({ class: cls }));
-        }
+        builder.add(absFrom, absTo, Decoration.mark({ class: cls }));
       }
     }
   }
@@ -95,7 +86,7 @@ const markPlugin = ViewPlugin.fromClass(
     decorations: DecorationSet;
     constructor(view: EditorView) { this.decorations = buildMarkDecos(view); }
     update(u: ViewUpdate) {
-      if (u.docChanged || u.viewportChanged || u.selectionSet) this.decorations = buildMarkDecos(u.view);
+      if (u.docChanged || u.viewportChanged) this.decorations = buildMarkDecos(u.view);
     }
   },
   { decorations: (v) => v.decorations },
@@ -106,7 +97,6 @@ const H_RE = /^(#{1,3}) /;
 
 function buildHeadingDecos(view: EditorView): DecorationSet {
   const builder = new RangeSetBuilder<Decoration>();
-  const cursorLine = view.state.doc.lineAt(view.state.selection.main.head).number;
   for (const { from, to } of view.visibleRanges) {
     let pos = from;
     while (pos <= to) {
@@ -114,10 +104,7 @@ function buildHeadingDecos(view: EditorView): DecorationSet {
       const m = H_RE.exec(line.text);
       if (m) {
         builder.add(line.from, line.from, Decoration.line({ class: `cm-heading cm-h${m[1].length}` }));
-        // Hide the # markers when not on cursor line
-        if (line.number !== cursorLine) {
-          builder.add(line.from, line.from + m[0].length, HIDDEN);
-        }
+        builder.add(line.from, line.from + m[0].length, HIDDEN);
       }
       if (line.to >= to) break;
       pos = line.to + 1;
@@ -131,7 +118,7 @@ const headingPlugin = ViewPlugin.fromClass(
     decorations: DecorationSet;
     constructor(view: EditorView) { this.decorations = buildHeadingDecos(view); }
     update(u: ViewUpdate) {
-      if (u.docChanged || u.viewportChanged || u.selectionSet) this.decorations = buildHeadingDecos(u.view);
+      if (u.docChanged || u.viewportChanged) this.decorations = buildHeadingDecos(u.view);
     }
   },
   { decorations: (v) => v.decorations },
@@ -143,13 +130,8 @@ const BOLD_RE      = /\*\*([^*\n]+?)\*\*/g;
 const ITALIC_RE    = /(?<!\*)\*(?!\*)([^*\n]+?)(?<!\*)\*(?!\*)/g;
 const CODE_INL_RE  = /`([^`\n]+?)`/g;
 
-// A zero-width widget used to completely erase markdown syntax markers off-cursor.
-class HiddenMarker extends WidgetType {
-  toDOM(): HTMLElement { return document.createElement('span'); }
-  eq() { return true; }
-  ignoreEvent() { return true; }
-}
-const HIDDEN = Decoration.replace({ widget: new HiddenMarker(), inclusive: false });
+// Hides markdown syntax markers via CSS — simpler and more reliable than Decoration.replace().
+const HIDDEN = Decoration.mark({ class: 'cm-syn-hidden' });
 
 /** Build decorations for ONE inline pattern. Ranges always in ascending order. */
 function buildInlineDecos(
@@ -159,7 +141,6 @@ function buildInlineDecos(
   contentCls: string,
 ): DecorationSet {
   const builder = new RangeSetBuilder<Decoration>();
-  const cursorLine = view.state.doc.lineAt(view.state.selection.main.head).number;
 
   for (const { from, to } of view.visibleRanges) {
     const text = view.state.doc.sliceString(from, to);
@@ -168,18 +149,13 @@ function buildInlineDecos(
     while ((m = re.exec(text)) !== null) {
       const abs = from + m.index;
       const absEnd = abs + m[0].length;
-      const lineNum = view.state.doc.lineAt(abs).number;
-      if (lineNum !== cursorLine) {
-        // Off cursor line: hide markers, style content
-        const openTo    = abs + markerLen;
-        const closeFrom = absEnd - markerLen;
-        if (openTo <= closeFrom) {
-          builder.add(abs,       openTo,    HIDDEN);
-          builder.add(openTo,    closeFrom, Decoration.mark({ class: contentCls }));
-          builder.add(closeFrom, absEnd,    HIDDEN);
-        }
+      const openTo    = abs + markerLen;
+      const closeFrom = absEnd - markerLen;
+      if (openTo <= closeFrom) {
+        builder.add(abs,       openTo,    HIDDEN);
+        builder.add(openTo,    closeFrom, Decoration.mark({ class: contentCls }));
+        builder.add(closeFrom, absEnd,    HIDDEN);
       }
-      // On cursor line: leave raw so the user can see and edit the syntax.
     }
   }
   return builder.finish();
@@ -248,30 +224,22 @@ class BulletWidget extends WidgetType {
 
 function buildListDecos(view: EditorView): DecorationSet {
   const builder = new RangeSetBuilder<Decoration>();
-  const cursorLine = view.state.doc.lineAt(view.state.selection.main.head).number;
 
   for (const { from, to } of view.visibleRanges) {
     let pos = from;
     while (pos <= to) {
       const line = view.state.doc.lineAt(pos);
-      if (line.number !== cursorLine) {
-        const lm = LIST_RE.exec(line.text);
-        if (lm) {
-          const indent = lm[1].length;
-          const markerStart = line.from + indent;
-          const markerEnd   = markerStart + lm[2].length + 1; // marker + space
-          builder.add(
-            markerStart,
-            markerEnd,
-            Decoration.replace({ widget: new BulletWidget(lm[2]) }),
-          );
-        }
-        if (BLOCKQUOTE_RE.test(line.text)) {
-          builder.add(line.from, line.from, Decoration.line({ class: 'cm-blockquote-line' }));
-          // hide the "> "
-          const bqEnd = line.from + line.text.match(/^(\s*> )/)![0].length;
-          builder.add(line.from, bqEnd, HIDDEN);
-        }
+      const lm = LIST_RE.exec(line.text);
+      if (lm) {
+        const indent    = lm[1].length;
+        const markerStart = line.from + indent;
+        const markerEnd   = markerStart + lm[2].length + 1;
+        builder.add(markerStart, markerEnd, Decoration.replace({ widget: new BulletWidget(lm[2]) }));
+      }
+      if (BLOCKQUOTE_RE.test(line.text)) {
+        builder.add(line.from, line.from, Decoration.line({ class: 'cm-blockquote-line' }));
+        const bqEnd = line.from + line.text.match(/^(\s*> )/)![0].length;
+        builder.add(line.from, bqEnd, HIDDEN);
       }
       if (line.to >= to) break;
       pos = line.to + 1;
@@ -285,9 +253,7 @@ const listPlugin = ViewPlugin.fromClass(
     decorations: DecorationSet;
     constructor(view: EditorView) { this.decorations = buildListDecos(view); }
     update(u: ViewUpdate) {
-      if (u.docChanged || u.viewportChanged || u.selectionSet) {
-        this.decorations = buildListDecos(u.view);
-      }
+      if (u.docChanged || u.viewportChanged) this.decorations = buildListDecos(u.view);
     }
   },
   { decorations: (v) => v.decorations },
@@ -439,6 +405,7 @@ const noteTheme = EditorView.theme(
     '.cm-h3': { fontSize: '1.15em !important' },
 
     // ── Inline markdown ───────────────────────────────────────────────────────
+    '.cm-syn-hidden':  { display: 'none' },
     '.cm-bold':        { fontWeight: '700' },
     '.cm-italic':      { fontStyle: 'italic' },
     '.cm-code-inline': {

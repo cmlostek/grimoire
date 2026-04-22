@@ -2,16 +2,19 @@ import type { Root, Text, PhrasingContent, RootContent } from 'mdast';
 import { findWiki, type WikiEntry } from './wikiIndex';
 
 export const NEWLINE_PLACEHOLDER = '\uE000';
-// Private-use codepoints to hide markdown syntax *inside* {{secrets}} from
-// the remark parser so it can't split the block across multiple AST nodes.
-const S_STAR  = '\uE001'; // *
-const S_UNDER = '\uE002'; // _
-const S_TICK  = '\uE003'; // `
-const S_TILDE = '\uE004'; // ~
+// Private-use codepoints to hide markdown syntax from the remark parser.
+const S_STAR   = '\uE001'; // * inside {{secrets}}
+const S_UNDER  = '\uE002'; // _ inside {{secrets}}
+const S_TICK   = '\uE003'; // ` inside {{secrets}}
+const S_TILDE  = '\uE004'; // ~ inside {{secrets}}
+// [[wiki links]] — remark parses [label] as a link reference, splitting the
+// token across AST nodes before our plugin can see it.  Escape the brackets.
+const S_WOPEN  = '\uE005'; // [[
+const S_WCLOSE = '\uE006'; // ]]
 
 // Note: \$(?!\{) matches $ NOT followed by { so it doesn't swallow ${artifact}
 const TOKEN =
-  /(@\{[^}\n]+\}|\?\{[^}\n]+\}|!\{[^}\n]+\}|\$\{[^}\n]+\}|\$(?!\{)[^$\n]+\$|%%[^%\n]+?%%|\{\{[^}\n]+\}\}|\[\[[^\]\n]+\]\])/g;
+  /(@\{[^}\n]+\}|\?\{[^}\n]+\}|!\{[^}\n]+\}|\$\{[^}\n]+\}|\$(?!\{)[^$\n]+\$|%%[^%\n]+?%%|\{\{[^}\n]+\}\}|\uE005[^\uE006\n]+\uE006)/g;
 
 const MULTILINE_TRANSFORMS: Array<[RegExp, string, string]> = [
   [/@\{([\s\S]*?)\}/g,  '@{', '}'],
@@ -56,6 +59,11 @@ export function preprocessDecorators(src: string): string {
           .replace(/`/g,   S_TICK)
           .replace(/~/g,   S_TILDE)
         + '}}'
+      );
+      // Wiki links: remark parses [label] as link references, splitting [[...]]
+      // across multiple AST nodes before our plugin can see the full token.
+      t = t.replace(/\[\[([^\]\n]+)\]\]/g, (_: string, inner: string) =>
+        S_WOPEN + inner + S_WCLOSE
       );
       return t;
     })
@@ -157,8 +165,8 @@ function classify(
       'data-secret-content': text,
     });
   }
-  if (raw.startsWith('[[') && raw.endsWith(']]')) {
-    const name = raw.slice(2, -2);
+  if (raw.startsWith(S_WOPEN) && raw.endsWith(S_WCLOSE)) {
+    const name = restore(raw.slice(1, -1));
     const hit = findWiki(wiki, name);
     if (hit) return makeLink(hit.route, name, hit.kind);
     return makeBrokenLink(name);
