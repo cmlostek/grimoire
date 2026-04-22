@@ -25,6 +25,7 @@ export type Folder = {
 
 const EXPANDED_KEY = 'dnd-gm:expandedFolders';
 const ACTIVE_NOTE_KEY = 'dnd-gm:activeNoteId';
+const ICON_KEY = 'dnd-gm:noteIcons';
 
 function loadExpanded(): Record<string, boolean> {
   try {
@@ -35,6 +36,23 @@ function loadExpanded(): Record<string, boolean> {
 }
 function persistExpanded(map: Record<string, boolean>) {
   localStorage.setItem(EXPANDED_KEY, JSON.stringify(map));
+}
+
+/** Icons are persisted locally so they work even before the DB migration runs. */
+function readLocalIcons(): Record<string, string> {
+  try { return JSON.parse(localStorage.getItem(ICON_KEY) ?? '{}'); }
+  catch { return {}; }
+}
+function writeLocalIcon(noteId: string, icon: string | null) {
+  const map = readLocalIcons();
+  if (icon) map[noteId] = icon;
+  else delete map[noteId];
+  localStorage.setItem(ICON_KEY, JSON.stringify(map));
+}
+function mergeIcon(note: Note): Note {
+  if (note.icon) return note;           // DB value wins once migration is run
+  const local = readLocalIcons()[note.id];
+  return local ? { ...note, icon: local } : note;
 }
 
 type NotesState = {
@@ -90,7 +108,7 @@ export const useNotes = create<NotesState>((set, get) => ({
       if (notesRes.error) throw notesRes.error;
       if (foldersRes.error) throw foldersRes.error;
       set({
-        notes: (notesRes.data ?? []) as Note[],
+        notes: ((notesRes.data ?? []) as Note[]).map(mergeIcon),
         folders: (foldersRes.data ?? []) as Folder[],
         loaded: true,
       });
@@ -108,10 +126,11 @@ export const useNotes = create<NotesState>((set, get) => ({
         (payload) => {
           const { notes } = get();
           if (payload.eventType === 'INSERT') {
-            const n = payload.new as Note;
+            const n = mergeIcon(payload.new as Note);
             if (!notes.find((x) => x.id === n.id)) set({ notes: [n, ...notes] });
           } else if (payload.eventType === 'UPDATE') {
-            const n = payload.new as Note;
+            // mergeIcon ensures the local icon survives if the DB column doesn't exist yet
+            const n = mergeIcon(payload.new as Note);
             set({ notes: notes.map((x) => (x.id === n.id ? n : x)) });
           } else if (payload.eventType === 'DELETE') {
             const n = payload.old as Partial<Note>;
@@ -174,16 +193,29 @@ export const useNotes = create<NotesState>((set, get) => ({
   },
 
   updateNote: async (id, patch) => {
+    // Persist icon locally first so it survives DB errors / missing column
+    if ('icon' in patch) {
+      writeLocalIcon(id, patch.icon ?? null);
+    }
+
     const prev = get().notes.find((n) => n.id === id);
     if (!prev) return;
     const optimistic = { ...prev, ...patch };
     set((s) => ({ notes: s.notes.map((n) => (n.id === id ? optimistic : n)) }));
+
     const { error } = await supabase.from('notes').update(patch).eq('id', id);
     if (error) {
-      set((s) => ({
-        notes: s.notes.map((n) => (n.id === id ? prev : n)),
-        error: error.message,
-      }));
+      if ('icon' in patch) {
+        // Icon is already saved to localStorage — don't revert the visual state.
+        // The DB column may not exist yet; the local value will be used until
+        // the migration (ALTER TABLE notes ADD COLUMN IF NOT EXISTS icon text) runs.
+        set({ error: error.message });
+      } else {
+        set((s) => ({
+          notes: s.notes.map((n) => (n.id === id ? prev : n)),
+          error: error.message,
+        }));
+      }
     }
   },
 
