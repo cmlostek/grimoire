@@ -2,18 +2,24 @@ import type { Root, Text, PhrasingContent, RootContent } from 'mdast';
 import { findWiki, type WikiEntry } from './wikiIndex';
 
 export const NEWLINE_PLACEHOLDER = '\uE000';
+// Private-use codepoints to hide markdown syntax *inside* {{secrets}} from
+// the remark parser so it can't split the block across multiple AST nodes.
+const S_STAR  = '\uE001'; // *
+const S_UNDER = '\uE002'; // _
+const S_TICK  = '\uE003'; // `
+const S_TILDE = '\uE004'; // ~
 
 // Note: \$(?!\{) matches $ NOT followed by { so it doesn't swallow ${artifact}
 const TOKEN =
   /(@\{[^}\n]+\}|\?\{[^}\n]+\}|!\{[^}\n]+\}|\$\{[^}\n]+\}|\$(?!\{)[^$\n]+\$|%%[^%\n]+?%%|\{\{[^}\n]+\}\}|\[\[[^\]\n]+\]\])/g;
 
 const MULTILINE_TRANSFORMS: Array<[RegExp, string, string]> = [
-  [/@\{([\s\S]*?)\}/g, '@{', '}'],
+  [/@\{([\s\S]*?)\}/g,  '@{', '}'],
   [/\?\{([\s\S]*?)\}/g, '?{', '}'],
-  [/!\{([\s\S]*?)\}/g, '!{', '}'],
+  [/!\{([\s\S]*?)\}/g,  '!{', '}'],
   [/\$\{([\s\S]*?)\}/g, '${', '}'],
-  [/%%([\s\S]*?)%%/g, '%%', '%%'],
-  [/\{\{([\s\S]*?)\}\}/g, '{{', '}}'],
+  [/%%([\s\S]*?)%%/g,   '%%', '%%'],
+  // {{...}} handled separately below (needs extra markdown-char escaping)
 ];
 
 export function preprocessDecorators(src: string): string {
@@ -38,13 +44,31 @@ export function preprocessDecorators(src: string): string {
           open + inner.replace(/\n/g, NEWLINE_PLACEHOLDER) + close
         );
       }
+      // Secrets: replace newlines AND inline-markdown characters so remark
+      // doesn't parse **bold** / _italic_ / `code` inside the block and split
+      // it across multiple AST text nodes before our plugin can match {{...}}.
+      t = t.replace(/\{\{([\s\S]*?)\}\}/g, (_, inner: string) =>
+        '{{' +
+        inner
+          .replace(/\n/g, NEWLINE_PLACEHOLDER)
+          .replace(/\*/g,  S_STAR)
+          .replace(/_/g,   S_UNDER)
+          .replace(/`/g,   S_TICK)
+          .replace(/~/g,   S_TILDE)
+        + '}}'
+      );
       return t;
     })
     .join('');
 }
 
 function restore(text: string): string {
-  return text.split(NEWLINE_PLACEHOLDER).join('\n');
+  return text
+    .split(NEWLINE_PLACEHOLDER).join('\n')
+    .replace(/\uE001/g, '*')
+    .replace(/\uE002/g, '_')
+    .replace(/\uE003/g, '`')
+    .replace(/\uE004/g, '~');
 }
 
 type CustomSpan = {
@@ -124,10 +148,13 @@ function classify(
     const revealed = inner.startsWith('!');
     const text = revealed ? inner.slice(1) : inner;
     const idx = String(secretCounter());
-    return makeSpan('note-secret', text, {
+    // Pass the full restored content (may include markdown) via data attribute.
+    // The span handler in Notes.tsx will render it with its own ReactMarkdown.
+    return makeSpan('note-secret', '', {
       'data-secret': 'true',
       'data-secret-index': idx,
       'data-secret-revealed': String(revealed),
+      'data-secret-content': text,
     });
   }
   if (raw.startsWith('[[') && raw.endsWith(']]')) {

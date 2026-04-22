@@ -40,7 +40,7 @@ export function Secret({ children, isGM, revealed, onToggle }: Props) {
             <span className="note-secret-block note-secret-locked">
                 <span className="note-secret-row">
                     <Lock size={11} className="note-secret-icon" />
-                    <span className="note-secret-label">Not yet revealed</span>
+                    <span className="note-secret-label">Not yet discovered</span>
                 </span>
             </span>
         );

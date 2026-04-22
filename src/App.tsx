@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { NavLink, Route, Routes, Navigate } from 'react-router-dom';
-import { Dice6, Swords, NotebookPen, Map as MapIcon, BookOpen, Sparkles, Coins, Package, ScrollText, Users, FlaskConical, Dices, LogOut, Copy, Mic, Palette } from 'lucide-react';
+import { Dice6, Swords, NotebookPen, Map as MapIcon, BookOpen, Sparkles, Coins, Package, ScrollText, Users, FlaskConical, Dices, LogOut, Copy, Mic, Palette, Eye, EyeOff, Settings } from 'lucide-react';
 import DiceRoller from './features/dice/DiceRoller';
 import { QuickDice } from './features/dice/QuickDice';
 import { useQuickDice } from './features/dice/quickDiceStore';
@@ -17,6 +17,7 @@ import Homebrew from './features/homebrew/Homebrew';
 import Transcription from './features/transcription/Transcription';
 import CampaignPicker from './features/session/CampaignPicker';
 import { useSession } from './features/session/sessionStore';
+import { useCampaignSettings } from './features/notes/campaignSettingsStore';
 
 type NavItem = {
   to: string;
@@ -87,6 +88,7 @@ function AppShell() {
   const toggleQuickDice = useQuickDice((s) => s.toggle);
   const quickDiceOpen = useQuickDice((s) => s.open);
   const role = useSession((s) => s.role);
+  const campaignId = useSession((s) => s.campaignId);
   const campaignName = useSession((s) => s.campaignName);
   const joinCode = useSession((s) => s.joinCode);
   const displayName = useSession((s) => s.displayName);
@@ -94,8 +96,25 @@ function AppShell() {
   const signOut = useSession((s) => s.signOut);
   const [bgColor, setBgColor] = useBgColor();
   const [showBgPicker, setShowBgPicker] = useState(false);
+  const [showPagePicker, setShowPagePicker] = useState(false);
+  const isGM = role === 'gm';
 
-  const visibleNav = nav.filter((n) => !n.gmOnly || role === 'gm');
+  const loadSettings = useCampaignSettings((s) => s.load);
+  const subscribeSettings = useCampaignSettings((s) => s.subscribe);
+  const togglePage = useCampaignSettings((s) => s.togglePage);
+  const hiddenPages = useCampaignSettings((s) => s.settings.hiddenPages);
+
+  useEffect(() => {
+    if (!campaignId) return;
+    loadSettings(campaignId);
+    const unsub = subscribeSettings(campaignId);
+    return unsub;
+  }, [campaignId, loadSettings, subscribeSettings]);
+
+  // Players see only non-gmOnly pages that the GM hasn't hidden
+  const visibleNav = nav.filter((n) =>
+    (!n.gmOnly || isGM) && (isGM || !hiddenPages.includes(n.to.replace('/', '')))
+  );
 
   const copyJoinCode = () => {
     if (joinCode) navigator.clipboard.writeText(joinCode);
@@ -183,6 +202,49 @@ function AppShell() {
                 />
               </div>
             </div>
+          )}
+          {/* GM: control which pages players can see */}
+          {isGM && showPagePicker && (
+            <div className="px-4 py-2 border-b border-slate-800">
+              <div className="text-[10px] uppercase tracking-wider text-slate-500 mb-2">
+                Player Visibility
+              </div>
+              <div className="space-y-1">
+                {nav.filter((n) => !n.gmOnly).map((item) => {
+                  const slug = item.to.replace('/', '');
+                  const hidden = hiddenPages.includes(slug);
+                  return (
+                    <button
+                      key={item.to}
+                      onClick={() => togglePage(slug)}
+                      className={`w-full flex items-center justify-between px-2 py-1 rounded text-[11px] transition-colors ${
+                        hidden
+                          ? 'text-slate-500 hover:bg-slate-800 hover:text-slate-300'
+                          : 'text-slate-200 hover:bg-slate-800'
+                      }`}
+                    >
+                      <span className="flex items-center gap-1.5">
+                        <item.icon size={11} />
+                        {item.label}
+                      </span>
+                      {hidden ? (
+                        <EyeOff size={11} className="text-amber-500" />
+                      ) : (
+                        <Eye size={11} className="text-emerald-500" />
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+          {isGM && (
+            <button
+              onClick={() => setShowPagePicker((v) => !v)}
+              className="w-full px-4 py-2 text-xs text-slate-500 hover:text-slate-300 hover:bg-slate-900 flex items-center gap-2"
+            >
+              <Settings size={12} /> Player visibility
+            </button>
           )}
           <button
             onClick={() => setShowBgPicker((v) => !v)}

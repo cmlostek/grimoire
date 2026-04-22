@@ -8,6 +8,8 @@ export type Note = {
   body: string;
   folder_id: string | null;
   visible_to_players: boolean;
+  /** null = read-only for players; true = any player may edit (DB col added by migration) */
+  player_editable: boolean | null;
   owner_user_id: string | null;
   icon: string | null;
   created_at: string;
@@ -26,6 +28,7 @@ export type Folder = {
 const EXPANDED_KEY = 'dnd-gm:expandedFolders';
 const ACTIVE_NOTE_KEY = 'dnd-gm:activeNoteId';
 const ICON_KEY = 'dnd-gm:noteIcons';
+const EDITABLE_KEY = 'dnd-gm:noteEditable';
 
 function loadExpanded(): Record<string, boolean> {
   try {
@@ -55,6 +58,27 @@ function mergeIcon(note: Note): Note {
   return local ? { ...note, icon: local } : note;
 }
 
+/** player_editable persisted to localStorage until DB column exists. */
+function readLocalEditables(): Record<string, boolean> {
+  try { return JSON.parse(localStorage.getItem(EDITABLE_KEY) ?? '{}'); }
+  catch { return {}; }
+}
+function writeLocalEditable(noteId: string, editable: boolean | null) {
+  const map = readLocalEditables();
+  if (editable != null) map[noteId] = editable;
+  else delete map[noteId];
+  localStorage.setItem(EDITABLE_KEY, JSON.stringify(map));
+}
+function mergeEditable(note: Note): Note {
+  if (note.player_editable != null) return note; // DB value wins
+  const local = readLocalEditables()[note.id];
+  return local !== undefined ? { ...note, player_editable: local } : note;
+}
+
+function mergeAll(note: Note): Note {
+  return mergeEditable(mergeIcon(note));
+}
+
 type NotesState = {
   notes: Note[];
   folders: Folder[];
@@ -69,7 +93,7 @@ type NotesState = {
   setActiveNote: (id: string | null) => void;
 
   createNote: (campaignId: string, folderId: string | null, ownerId?: string | null) => Promise<string | null>;
-  updateNote: (id: string, patch: Partial<Pick<Note, 'title' | 'body' | 'folder_id' | 'visible_to_players' | 'icon'>>) => Promise<void>;
+  updateNote: (id: string, patch: Partial<Pick<Note, 'title' | 'body' | 'folder_id' | 'visible_to_players' | 'icon' | 'player_editable'>>) => Promise<void>;
   deleteNote: (id: string) => Promise<void>;
   moveNote: (id: string, folderId: string | null) => Promise<void>;
 
@@ -108,7 +132,7 @@ export const useNotes = create<NotesState>((set, get) => ({
       if (notesRes.error) throw notesRes.error;
       if (foldersRes.error) throw foldersRes.error;
       set({
-        notes: ((notesRes.data ?? []) as Note[]).map(mergeIcon),
+        notes: ((notesRes.data ?? []) as Note[]).map(mergeAll),
         folders: (foldersRes.data ?? []) as Folder[],
         loaded: true,
       });
@@ -126,11 +150,11 @@ export const useNotes = create<NotesState>((set, get) => ({
         (payload) => {
           const { notes } = get();
           if (payload.eventType === 'INSERT') {
-            const n = mergeIcon(payload.new as Note);
+            const n = mergeAll(payload.new as Note);
             if (!notes.find((x) => x.id === n.id)) set({ notes: [n, ...notes] });
           } else if (payload.eventType === 'UPDATE') {
-            // mergeIcon ensures the local icon survives if the DB column doesn't exist yet
-            const n = mergeIcon(payload.new as Note);
+            // mergeAll ensures local icon/player_editable survives if DB columns don't exist yet
+            const n = mergeAll(payload.new as Note);
             set({ notes: notes.map((x) => (x.id === n.id ? n : x)) });
           } else if (payload.eventType === 'DELETE') {
             const n = payload.old as Partial<Note>;
@@ -193,10 +217,9 @@ export const useNotes = create<NotesState>((set, get) => ({
   },
 
   updateNote: async (id, patch) => {
-    // Persist icon locally first so it survives DB errors / missing column
-    if ('icon' in patch) {
-      writeLocalIcon(id, patch.icon ?? null);
-    }
+    // Persist locally-only fields first so they survive DB errors / missing columns
+    if ('icon' in patch) writeLocalIcon(id, patch.icon ?? null);
+    if ('player_editable' in patch) writeLocalEditable(id, patch.player_editable ?? null);
 
     const prev = get().notes.find((n) => n.id === id);
     if (!prev) return;
@@ -205,10 +228,9 @@ export const useNotes = create<NotesState>((set, get) => ({
 
     const { error } = await supabase.from('notes').update(patch).eq('id', id);
     if (error) {
-      if ('icon' in patch) {
-        // Icon is already saved to localStorage — don't revert the visual state.
-        // The DB column may not exist yet; the local value will be used until
-        // the migration (ALTER TABLE notes ADD COLUMN IF NOT EXISTS icon text) runs.
+      if ('icon' in patch || 'player_editable' in patch) {
+        // Already saved to localStorage — don't revert visual state.
+        // DB columns may not exist yet; local values used until migrations run.
         set({ error: error.message });
       } else {
         set((s) => ({

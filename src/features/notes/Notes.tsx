@@ -9,12 +9,14 @@ import PageHeader from '../../components/PageHeader';
 import {
   ChevronRight,
   FileText,
+  Folder as FolderIcon,
   FolderPlus,
   FilePlus,
   Trash2,
   Eye,
   EyeOff,
   Pencil,
+  PencilLine,
   Search,
   HelpCircle,
   Home,
@@ -34,8 +36,22 @@ import {
   MapPin,
   ArrowUpAZ,
   Clock,
+  Palette,
 } from 'lucide-react';
 import { useVisibilityReload } from '../../hooks/useVisibilityReload';
+import { useCampaignSettings } from './campaignSettingsStore';
+
+// ─── Folder colour palette ───────────────────────────────────────────────────
+const FOLDER_COLORS = [
+  { color: '#60a5fa', label: 'Blue' },
+  { color: '#f87171', label: 'Red' },
+  { color: '#fbbf24', label: 'Amber' },
+  { color: '#34d399', label: 'Green' },
+  { color: '#a78bfa', label: 'Purple' },
+  { color: '#fb923c', label: 'Orange' },
+  { color: '#f472b6', label: 'Pink' },
+  { color: '#94a3b8', label: 'Slate' },
+] as const;
 
 // ─── Note icon palette ───────────────────────────────────────────────────────
 type NoteIconDef = {
@@ -74,7 +90,37 @@ function NoteIconDisplay({ iconId, size = 11 }: { iconId: string | null | undefi
   const { Icon, color } = getNoteIconDef(iconId);
   return <Icon size={size} style={{ color }} className="shrink-0" />;
 }
-import { buildWikiIndex, searchWiki, kindLabel, type WikiEntry } from './wikiIndex';
+// ─── Note permission helpers ─────────────────────────────────────────────────
+type PermLevel = 'private' | 'read' | 'edit';
+function getPermLevel(n: { visible_to_players: boolean; player_editable: boolean | null }): PermLevel {
+  if (!n.visible_to_players) return 'private';
+  if (n.player_editable) return 'edit';
+  return 'read';
+}
+const PERM_META: Record<PermLevel, { label: string; title: string; cls: string }> = {
+  private: {
+    label: 'GM Only',
+    title: 'Only GM can see — click to share with players',
+    cls: 'bg-slate-800 border border-slate-700 text-slate-400 hover:bg-slate-700',
+  },
+  read: {
+    label: 'View Only',
+    title: 'Players can view (read-only) — click to let them edit',
+    cls: 'bg-sky-900/40 border border-sky-800 text-sky-200 hover:bg-sky-900/60',
+  },
+  edit: {
+    label: 'Editable',
+    title: 'Players can edit — click to make read-only',
+    cls: 'bg-emerald-900/40 border border-emerald-800 text-emerald-200 hover:bg-emerald-900/60',
+  },
+};
+function permIcon(level: PermLevel) {
+  if (level === 'private') return <EyeOff size={13} />;
+  if (level === 'edit') return <PencilLine size={13} />;
+  return <Eye size={13} />;
+}
+
+import { buildWikiIndex } from './wikiIndex';
 import { remarkNoteDecorators, preprocessDecorators } from './decorators';
 import { Secret } from './Secret';
 import { PartyRefSpan } from './PartyTooltip';
@@ -116,6 +162,7 @@ function toggleSecret(body: string, index: number): string {
 }
 import { QuickDiceButton } from '../dice/QuickDice';
 import { useQuickDice } from '../dice/quickDiceStore';
+import { LiveEditor } from './LiveEditor';
 
 type DragItem =
   | { kind: 'note'; id: string }
@@ -126,7 +173,7 @@ export default function Notes() {
   const userId = useSession((s) => s.userId);
   const role = useSession((s) => s.role);
   const isGM = role === 'gm';
-  const canEditNote = (n: Note) => isGM || n.owner_user_id === userId;
+  const canEditNote = (n: Note) => isGM || n.owner_user_id === userId || n.player_editable === true;
 
   const notes = useNotes((s) => s.notes);
   const folders = useNotes((s) => s.folders);
@@ -150,12 +197,18 @@ export default function Notes() {
   const party = useParty((s) => s.party);
   const rollFormula = useQuickDice((s) => s.rollFormula);
 
+  const loadSettings = useCampaignSettings((s) => s.load);
+  const subscribeSettings = useCampaignSettings((s) => s.subscribe);
+  const campaignSettings = useCampaignSettings((s) => s.settings);
+
   useEffect(() => {
     if (!campaignId) return;
     loadForCampaign(campaignId);
     const unsub = subscribe(campaignId);
-    return unsub;
-  }, [campaignId, loadForCampaign, subscribe]);
+    loadSettings(campaignId);
+    const unsubSettings = subscribeSettings(campaignId);
+    return () => { unsub(); unsubSettings(); };
+  }, [campaignId, loadForCampaign, subscribe, loadSettings, subscribeSettings]);
 
   // Re-fetch when the tab becomes visible again (stale realtime guard)
   useVisibilityReload(() => {
@@ -164,7 +217,6 @@ export default function Notes() {
 
   const navigate = useNavigate();
   const [query, setQuery] = useState('');
-  const [preview, setPreview] = useState(false);
   const [confirmingId, setConfirmingId] = useState<string | null>(null);
   const [renamingFolderId, setRenamingFolderId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState('');
@@ -229,7 +281,6 @@ export default function Notes() {
     if (!campaignId) return;
     const ownerId = isGM ? null : userId;
     await createNote(campaignId, folderId, ownerId);
-    setPreview(false);
   };
 
   const onDrop = (target: string | null) => {
@@ -244,7 +295,10 @@ export default function Notes() {
 
   const [dragData, setDragData] = useState<DragItem | null>(null);
 
-  const rootFolders = sortedFolders.filter((f) => f.parent_id === null);
+  const { hiddenFolderIds } = campaignSettings;
+  const rootFolders = sortedFolders.filter(
+    (f) => f.parent_id === null && (isGM || !hiddenFolderIds.includes(f.id))
+  );
   const rootNotes = sortedVisibleNotes.filter((n) => n.folder_id === null);
 
   const onWikiClick = (href: string) => {
@@ -264,15 +318,6 @@ export default function Notes() {
           >
             <HelpCircle size={12} /> Syntax
           </button>
-          {active && (
-            <button
-              onClick={() => setPreview((p) => !p)}
-              className="px-2 py-1 text-xs bg-slate-800 hover:bg-slate-700 rounded flex items-center gap-1"
-            >
-              {preview ? <Pencil size={12} /> : <Eye size={12} />}
-              {preview ? 'Edit' : 'Preview'}
-            </button>
-          )}
           {showLegend && (
             <div className="absolute right-0 top-full mt-2 z-20 w-80 bg-slate-900 border border-slate-700 rounded shadow-lg p-3 text-xs space-y-1.5">
               <div className="text-[10px] uppercase tracking-wider text-slate-500 mb-1">
@@ -403,11 +448,11 @@ export default function Notes() {
                 confirmingId={confirmingId}
                 dragOverId={dragOverId}
                 isGM={isGM}
+                hiddenFolderIds={hiddenFolderIds}
                 isExpanded={isFolderExpanded}
                 onToggle={toggleFolderExpanded}
                 onSelectNote={(id) => {
                   setActiveNote(id);
-                  setPreview(false);
                 }}
                 onCreateNote={onCreateNote}
                 onCreateFolder={async (parentId) => {
@@ -455,7 +500,6 @@ export default function Notes() {
                 isGM={isGM}
                 onSelect={() => {
                   setActiveNote(n.id);
-                  setPreview(false);
                 }}
                 onStartDelete={() => setConfirmingId(n.id)}
                 onDelete={() => {
@@ -532,30 +576,30 @@ export default function Notes() {
                   className="flex-1 bg-transparent font-serif text-xl outline-none"
                   placeholder="Title"
                 />
-                {canEditNote(active) && (
-                  <button
-                    onClick={() =>
-                      updateNote(active.id, {
-                        visible_to_players: !active.visible_to_players,
-                      })
+                {/* Permission-level cycle: GM Only → View Only → Editable → … */}
+                {(isGM || active.owner_user_id === userId) && (() => {
+                  const level = getPermLevel(active);
+                  const meta = PERM_META[level];
+                  const cycleNext = () => {
+                    if (level === 'private') {
+                      updateNote(active.id, { visible_to_players: true, player_editable: false });
+                    } else if (level === 'read') {
+                      updateNote(active.id, { visible_to_players: true, player_editable: true });
+                    } else {
+                      updateNote(active.id, { visible_to_players: false, player_editable: false });
                     }
-                    title={
-                      active.visible_to_players
-                        ? 'Shared with players — click to hide'
-                        : isGM
-                          ? 'Hidden from players — click to share'
-                          : 'Private — click to share with party'
-                    }
-                    className={`px-2 py-1 text-xs rounded flex items-center gap-1 ${
-                      active.visible_to_players
-                        ? 'bg-emerald-900/40 border border-emerald-800 text-emerald-200 hover:bg-emerald-900/60'
-                        : 'bg-slate-800 border border-slate-700 text-slate-400 hover:bg-slate-700'
-                    }`}
-                  >
-                    {active.visible_to_players ? <Eye size={13} /> : <EyeOff size={13} />}
-                    {active.visible_to_players ? 'Shared' : 'Private'}
-                  </button>
-                )}
+                  };
+                  return (
+                    <button
+                      onClick={cycleNext}
+                      title={meta.title}
+                      className={`px-2 py-1 text-xs rounded flex items-center gap-1 ${meta.cls}`}
+                    >
+                      {permIcon(level)}
+                      {meta.label}
+                    </button>
+                  );
+                })()}
                 {canEditNote(active) && (confirmingId === active.id ? (
                   <div className="flex items-center gap-1">
                     <span className="text-xs text-slate-400 mr-1">Delete this note?</span>
@@ -585,7 +629,18 @@ export default function Notes() {
                 ))}
               </div>
               <div className="flex-1 min-h-0 overflow-hidden">
-                {preview || !canEditNote(active) ? (
+                {canEditNote(active) ? (
+                  /* Live editor — highlights decorators inline as you type */
+                  <LiveEditor
+                    key={active.id}
+                    body={active.body}
+                    onChange={(v) => updateNote(active.id, { body: v })}
+                    wikiIndex={wikiIndex}
+                    onNavigate={onWikiClick}
+                    rollFormula={rollFormula}
+                  />
+                ) : (
+                  /* Read-only rendered view for players / non-owners */
                   <div
                     className="h-full overflow-y-auto px-8 py-6 markdown-body"
                     onClick={(e) => {
@@ -606,6 +661,10 @@ export default function Notes() {
                           if (className.includes('note-secret')) {
                             const revealed = p['data-secret-revealed'] === 'true';
                             const idx = parseInt((p['data-secret-index'] as string) ?? '0', 10);
+                            // Content is passed as data-secret-content so we can
+                            // render it with its own ReactMarkdown (supports bold,
+                            // headings, lists, etc. inside the secret block).
+                            const content = (p['data-secret-content'] as string) ?? '';
                             return (
                               <Secret
                                 isGM={isGM}
@@ -614,7 +673,9 @@ export default function Notes() {
                                   if (active) updateNote(active.id, { body: toggleSecret(active.body, idx) });
                                 }}
                               >
-                                {children}
+                                <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                                  {content}
+                                </ReactMarkdown>
                               </Secret>
                             );
                           }
@@ -647,20 +708,9 @@ export default function Notes() {
                         },
                       }}
                     >
-                      {active.body
-                        ? preprocessDecorators(active.body)
-                        : canEditNote(active)
-                          ? '*Nothing yet. Switch to Edit to start writing.*'
-                          : '*Empty note.*'}
+                      {active.body ? preprocessDecorators(active.body) : '*Empty note.*'}
                     </ReactMarkdown>
                   </div>
-                ) : (
-                  <Editor
-                    key={active.id}
-                    body={active.body}
-                    onChange={(v) => updateNote(active.id, { body: v })}
-                    wikiIndex={wikiIndex}
-                  />
                 )}
               </div>
             </>
@@ -691,180 +741,6 @@ function LegendRow({
   );
 }
 
-type EditorProps = {
-  body: string;
-  onChange: (v: string) => void;
-  wikiIndex: WikiEntry[];
-};
-
-function Editor({ body, onChange, wikiIndex }: EditorProps) {
-  const taRef = useRef<HTMLTextAreaElement>(null);
-  const [suggest, setSuggest] = useState<{
-    start: number;
-    query: string;
-    results: WikiEntry[];
-    cursor: number;
-  } | null>(null);
-
-  const updateSuggest = (value: string, caret: number) => {
-    const upto = value.slice(0, caret);
-    const open = upto.lastIndexOf('[[');
-    if (open === -1) {
-      setSuggest(null);
-      return;
-    }
-    const close = upto.indexOf(']]', open);
-    if (close !== -1) {
-      setSuggest(null);
-      return;
-    }
-    const between = upto.slice(open + 2);
-    if (/[\n\]]/.test(between)) {
-      setSuggest(null);
-      return;
-    }
-    const results = searchWiki(wikiIndex, between, 6);
-    if (results.length === 0) {
-      setSuggest(null);
-      return;
-    }
-    setSuggest({ start: open, query: between, results, cursor: 0 });
-  };
-
-  const accept = (entry: WikiEntry) => {
-    if (!suggest || !taRef.current) return;
-    const ta = taRef.current;
-    const before = body.slice(0, suggest.start);
-    let afterStart = suggest.start + 2 + suggest.query.length;
-    if (body.slice(afterStart, afterStart + 2) === ']]') afterStart += 2;
-    const after = body.slice(afterStart);
-    const inserted = `[[${entry.name}]]`;
-    const next = before + inserted + after;
-    onChange(next);
-    setSuggest(null);
-    const newCaret = before.length + inserted.length;
-    requestAnimationFrame(() => {
-      ta.focus();
-      ta.setSelectionRange(newCaret, newCaret);
-    });
-  };
-
-  function pairFor(key: string, prev: string): string | null {
-    if (key === '{' && prev.length === 1 && '@?!$'.includes(prev)) return '}';
-    if (key === '{' && prev === '{') return '}}';
-    if (key === '[' && prev === '[') return ']]';
-    if (key === '%' && prev === '%') return '%%';
-    return null;
-  }
-
-  useEffect(() => {
-    if (!suggest) return;
-    const onDocClick = () => setSuggest(null);
-    document.addEventListener('mousedown', onDocClick);
-    return () => document.removeEventListener('mousedown', onDocClick);
-  }, [suggest]);
-
-  return (
-    <div className="relative h-full">
-      <textarea
-        ref={taRef}
-        value={body}
-        onChange={(e) => {
-          onChange(e.target.value);
-          updateSuggest(e.target.value, e.target.selectionStart);
-        }}
-        onKeyDown={(e) => {
-          if (!suggest) {
-            const ta = e.currentTarget;
-            if (ta.selectionStart === ta.selectionEnd) {
-              const caret = ta.selectionStart;
-              const prev = caret > 0 ? body[caret - 1] : '';
-              const closer = pairFor(e.key, prev);
-              if (closer) {
-                e.preventDefault();
-                const before = body.slice(0, caret);
-                const after = body.slice(caret);
-                const next = before + e.key + closer + after;
-                onChange(next);
-                const newCaret = caret + 1;
-                requestAnimationFrame(() => {
-                  ta.focus();
-                  ta.setSelectionRange(newCaret, newCaret);
-                  updateSuggest(next, newCaret);
-                });
-                return;
-              }
-            }
-            return;
-          }
-          if (e.key === 'ArrowDown') {
-            e.preventDefault();
-            setSuggest({
-              ...suggest,
-              cursor: (suggest.cursor + 1) % suggest.results.length,
-            });
-          } else if (e.key === 'ArrowUp') {
-            e.preventDefault();
-            setSuggest({
-              ...suggest,
-              cursor:
-                (suggest.cursor - 1 + suggest.results.length) % suggest.results.length,
-            });
-          } else if (e.key === 'Enter' || e.key === 'Tab') {
-            e.preventDefault();
-            accept(suggest.results[suggest.cursor]);
-          } else if (e.key === 'Escape') {
-            e.preventDefault();
-            setSuggest(null);
-          }
-        }}
-        onKeyUp={(e) => {
-          const t = e.currentTarget;
-          if (
-            e.key === 'ArrowLeft' ||
-            e.key === 'ArrowRight' ||
-            e.key === 'Home' ||
-            e.key === 'End'
-          ) {
-            updateSuggest(t.value, t.selectionStart);
-          }
-        }}
-        onClick={(e) => {
-          const t = e.currentTarget;
-          updateSuggest(t.value, t.selectionStart);
-        }}
-        placeholder={
-          '# Heading\n\nWrite in markdown. Decorators:\n@{location}  ?{dependency}  !{milestone}  ${artifact}\n%%comment%%  [[wiki link]]  {{secret}}'
-        }
-        className="w-full h-full bg-slate-950 text-slate-100 font-mono text-sm p-6 resize-none outline-none leading-relaxed"
-      />
-      {suggest && (
-        <div
-          className="absolute left-8 bottom-8 z-10 w-64 bg-slate-900 border border-slate-700 rounded shadow-lg overflow-hidden"
-          onMouseDown={(e) => e.preventDefault()}
-        >
-          <div className="px-2 py-1 text-[10px] uppercase tracking-wider text-slate-500 border-b border-slate-800">
-            Wiki — {suggest.query || '(type to filter)'}
-          </div>
-          {suggest.results.map((r, i) => (
-            <div
-              key={`${r.kind}-${r.id}`}
-              onClick={() => accept(r)}
-              className={`px-2 py-1 flex items-center justify-between cursor-pointer text-xs ${
-                i === suggest.cursor ? 'bg-sky-900/50 text-sky-100' : 'hover:bg-slate-800'
-              }`}
-            >
-              <span className="truncate">{r.name}</span>
-              <span className="text-[10px] text-slate-500 ml-2 shrink-0">
-                {kindLabel(r.kind)}
-              </span>
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
 
 type FolderNodeProps = {
   folder: Folder;
@@ -878,6 +754,7 @@ type FolderNodeProps = {
   confirmingId: string | null;
   dragOverId: string | 'root' | null;
   isGM: boolean;
+  hiddenFolderIds: string[];
   isExpanded: (id: string) => boolean;
   onToggle: (id: string) => void;
   onSelectNote: (id: string) => void;
@@ -898,8 +775,19 @@ type FolderNodeProps = {
 };
 
 function FolderNode(props: FolderNodeProps) {
-  const { folder, depth, folders, notes, matching, isGM, isExpanded } = props;
-  const children = folders.filter((f) => f.parent_id === folder.id);
+  const { folder, depth, folders, notes, matching, isGM, isExpanded, hiddenFolderIds } = props;
+  const [showColorPicker, setShowColorPicker] = useState(false);
+
+  // Campaign settings (folder color & visibility)
+  const toggleFolder = useCampaignSettings((s) => s.toggleFolder);
+  const setFolderColor = useCampaignSettings((s) => s.setFolderColor);
+  const folderColors = useCampaignSettings((s) => s.settings.folderColors);
+  const folderColor = folderColors[folder.id] ?? '#60a5fa';
+  const isHiddenFromPlayers = hiddenFolderIds.includes(folder.id);
+
+  const children = folders.filter(
+    (f) => f.parent_id === folder.id && (isGM || !hiddenFolderIds.includes(f.id))
+  );
   const folderNotes = notes.filter((n) => n.folder_id === folder.id);
   const renaming = props.renamingFolderId === folder.id;
   const confirming = props.confirmingId === folder.id;
@@ -940,7 +828,12 @@ function FolderNode(props: FolderNodeProps) {
           className="text-slate-500 shrink-0 transition-transform duration-200"
           style={{ transform: expanded ? 'rotate(90deg)' : 'rotate(0deg)' }}
         />
-        <span className="text-sky-400 shrink-0">📁</span>
+        {/* Lucide folder icon with campaign color */}
+        <FolderIcon
+          size={12}
+          className="shrink-0"
+          style={{ color: isHiddenFromPlayers && isGM ? '#475569' : folderColor }}
+        />
         {renaming ? (
           <input
             autoFocus
@@ -961,28 +854,22 @@ function FolderNode(props: FolderNodeProps) {
               e.stopPropagation();
               props.onStartRename(folder.id, folder.name);
             }}
-            className="flex-1 min-w-0 truncate text-slate-200"
+            className={`flex-1 min-w-0 truncate ${isHiddenFromPlayers && isGM ? 'text-slate-500 italic' : 'text-slate-200'}`}
           >
             {folder.name}
           </span>
         )}
         {!renaming && !confirming && (
-          <div className="flex gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity duration-150 shrink-0">
+          <div className="flex gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity duration-150 shrink-0 relative">
             <button
-              onClick={(e) => {
-                e.stopPropagation();
-                props.onCreateNote(folder.id);
-              }}
+              onClick={(e) => { e.stopPropagation(); props.onCreateNote(folder.id); }}
               title="New note"
               className="p-0.5 text-slate-500 hover:text-sky-300"
             >
               <FilePlus size={11} />
             </button>
             <button
-              onClick={(e) => {
-                e.stopPropagation();
-                props.onCreateFolder(folder.id);
-              }}
+              onClick={(e) => { e.stopPropagation(); props.onCreateFolder(folder.id); }}
               title="New subfolder"
               className="p-0.5 text-slate-500 hover:text-sky-300"
             >
@@ -990,10 +877,7 @@ function FolderNode(props: FolderNodeProps) {
             </button>
             {isGM && (
               <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  props.onStartRename(folder.id, folder.name);
-                }}
+                onClick={(e) => { e.stopPropagation(); props.onStartRename(folder.id, folder.name); }}
                 title="Rename folder"
                 className="p-0.5 text-slate-500 hover:text-sky-300"
               >
@@ -1001,11 +885,55 @@ function FolderNode(props: FolderNodeProps) {
               </button>
             )}
             {isGM && (
+              /* Folder color picker */
+              <div className="relative">
+                <button
+                  onClick={(e) => { e.stopPropagation(); setShowColorPicker((v) => !v); }}
+                  title="Folder colour"
+                  className="p-0.5 text-slate-500 hover:text-sky-300"
+                >
+                  <Palette size={11} />
+                </button>
+                {showColorPicker && (
+                  <>
+                    <div className="fixed inset-0 z-30" onClick={(e) => { e.stopPropagation(); setShowColorPicker(false); }} />
+                    <div
+                      className="absolute left-0 top-full mt-1 z-40 bg-slate-900 border border-slate-700 rounded shadow-lg p-1.5 flex gap-1"
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      {FOLDER_COLORS.map(({ color, label }) => (
+                        <button
+                          key={color}
+                          title={label}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setFolderColor(folder.id, color);
+                            setShowColorPicker(false);
+                          }}
+                          className={`w-4 h-4 rounded-full border-2 transition-transform hover:scale-110 ${
+                            folderColor === color ? 'border-white' : 'border-transparent'
+                          }`}
+                          style={{ backgroundColor: color }}
+                        />
+                      ))}
+                    </div>
+                  </>
+                )}
+              </div>
+            )}
+            {isGM && (
+              /* Hide/show folder from players */
               <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  props.onStartDeleteFolder(folder.id);
-                }}
+                onClick={(e) => { e.stopPropagation(); toggleFolder(folder.id); }}
+                title={isHiddenFromPlayers ? 'Hidden from players — click to show' : 'Visible to players — click to hide'}
+                className={`p-0.5 ${isHiddenFromPlayers ? 'text-amber-500 hover:text-amber-300 opacity-100' : 'text-slate-500 hover:text-amber-400'}`}
+              >
+                {isHiddenFromPlayers ? <EyeOff size={11} /> : <Eye size={11} />}
+              </button>
+            )}
+            {isGM && (
+              <button
+                onClick={(e) => { e.stopPropagation(); props.onStartDeleteFolder(folder.id); }}
                 title="Delete folder"
                 className="p-0.5 text-slate-500 hover:text-rose-400"
               >
