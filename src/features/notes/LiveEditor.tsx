@@ -46,8 +46,18 @@ function tokenClass(token: string): string | null {
 }
 
 // ─── Decorator token marks ────────────────────────────────────────────────────
+// Returns [openLen, closeLen] for each token type's syntax markers.
+function markerLens(token: string): [number, number] {
+  if (token.startsWith('%%'))                               return [2, 2]; // %%…%%
+  if (token.startsWith('[['))                               return [2, 2]; // [[…]]
+  if (token.startsWith('$') && !token.startsWith('${'))    return [1, 1]; // $…$  dice
+  return [2, 1]; // @{…}  ?{…}  !{…}  ${…}
+}
+
 function buildMarkDecos(view: EditorView): DecorationSet {
   const builder = new RangeSetBuilder<Decoration>();
+  const cursorLine = view.state.doc.lineAt(view.state.selection.main.head).number;
+
   for (const { from, to } of view.visibleRanges) {
     const text = view.state.doc.sliceString(from, to);
     DECO_RE.lastIndex = 0;
@@ -55,7 +65,26 @@ function buildMarkDecos(view: EditorView): DecorationSet {
     while ((m = DECO_RE.exec(text)) !== null) {
       const cls = tokenClass(m[0]);
       if (!cls) continue;
-      builder.add(from + m.index, from + m.index + m[0].length, Decoration.mark({ class: cls }));
+      const absFrom = from + m.index;
+      const absTo   = absFrom + m[0].length;
+      const onCursorLine = view.state.doc.lineAt(absFrom).number === cursorLine;
+
+      if (onCursorLine) {
+        // Cursor on this line — show full raw syntax
+        builder.add(absFrom, absTo, Decoration.mark({ class: cls }));
+      } else {
+        // Off cursor line — hide the surrounding markers, style only the content
+        const [openLen, closeLen] = markerLens(m[0]);
+        const contentFrom = absFrom + openLen;
+        const contentTo   = absTo   - closeLen;
+        if (contentFrom < contentTo) {
+          builder.add(absFrom,    contentFrom, HIDDEN);
+          builder.add(contentFrom, contentTo,  Decoration.mark({ class: cls }));
+          builder.add(contentTo,  absTo,       HIDDEN);
+        } else {
+          builder.add(absFrom, absTo, Decoration.mark({ class: cls }));
+        }
+      }
     }
   }
   return builder.finish();
@@ -66,7 +95,7 @@ const markPlugin = ViewPlugin.fromClass(
     decorations: DecorationSet;
     constructor(view: EditorView) { this.decorations = buildMarkDecos(view); }
     update(u: ViewUpdate) {
-      if (u.docChanged || u.viewportChanged) this.decorations = buildMarkDecos(u.view);
+      if (u.docChanged || u.viewportChanged || u.selectionSet) this.decorations = buildMarkDecos(u.view);
     }
   },
   { decorations: (v) => v.decorations },
