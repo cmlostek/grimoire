@@ -9,7 +9,6 @@ A real-time, multiplayer GM companion for running **D&D 5e** campaigns in the br
 ## Table of Contents
 
 - [Features](#features)
-- [Screenshots](#screenshots)
 - [Tech Stack](#tech-stack)
 - [Getting Started](#getting-started)
   - [Prerequisites](#prerequisites)
@@ -93,24 +92,6 @@ A full campaign journal with live Obsidian-style markdown editing. Syntax marker
 - Real-time interim and final transcript display
 - Link recordings directly to campaign notes
 - Transcript history with timestamps and search
-
----
-
-## Screenshots
-
-> **Note:** Replace the paths below with real screenshots once captured.
-
-| Notes Editor | Initiative Tracker |
-|---|---|
-| ![Notes editor with Obsidian-style live markdown](docs/screenshots/notes-editor.png) | ![Initiative tracker with combatants](docs/screenshots/initiative.png) |
-
-| Map Board | Party Roster |
-|---|---|
-| ![Tactical map with tokens and AoE shapes](docs/screenshots/map.png) | ![Party member cards with stats](docs/screenshots/party.png) |
-
-| Dice Panel | Shop Manager |
-|---|---|
-| ![Quick dice panel with roll history](docs/screenshots/dice.png) | ![Shop inventory manager](docs/screenshots/shop.png) |
 
 ---
 
