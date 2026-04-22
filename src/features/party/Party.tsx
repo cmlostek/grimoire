@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import PageHeader from '../../components/PageHeader';
 import { useParty, type PartyMember } from './partyStore';
 import { useSession } from '../session/sessionStore';
+import { useVisibilityReload } from '../../hooks/useVisibilityReload';
 import { parseDdb, parseGenericJson, isLikelyDdb, isDdbWrapper } from './ddb';
 import { modifier } from '../../data/srd';
 import {
@@ -62,6 +63,11 @@ export default function Party() {
     const unsub = subscribe(campaignId);
     return unsub;
   }, [campaignId, loadForCampaign, subscribe]);
+
+  // Re-fetch when the tab becomes visible again (stale realtime guard)
+  useVisibilityReload(() => {
+    if (campaignId) loadForCampaign(campaignId);
+  });
 
   const canEdit = (m: PartyMember) => isGM || m.owner_user_id === userId;
 

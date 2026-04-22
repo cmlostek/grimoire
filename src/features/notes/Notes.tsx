@@ -8,7 +8,6 @@ import { useSession } from '../session/sessionStore';
 import PageHeader from '../../components/PageHeader';
 import {
   ChevronRight,
-  ChevronDown,
   FileText,
   FolderPlus,
   FilePlus,
@@ -19,6 +18,7 @@ import {
   Search,
   HelpCircle,
 } from 'lucide-react';
+import { useVisibilityReload } from '../../hooks/useVisibilityReload';
 import { buildWikiIndex, searchWiki, kindLabel, type WikiEntry } from './wikiIndex';
 import { remarkNoteDecorators, preprocessDecorators } from './decorators';
 import { Secret } from './Secret';
@@ -99,6 +99,11 @@ export default function Notes() {
     const unsub = subscribe(campaignId);
     return unsub;
   }, [campaignId, loadForCampaign, subscribe]);
+
+  // Re-fetch when the tab becomes visible again (stale realtime guard)
+  useVisibilityReload(() => {
+    if (campaignId) loadForCampaign(campaignId);
+  });
 
   const navigate = useNavigate();
   const [query, setQuery] = useState('');
@@ -770,17 +775,18 @@ function FolderNode(props: FolderNodeProps) {
           e.stopPropagation();
           props.onDrop(folder.id);
         }}
-        className={`group flex items-center gap-1 px-1 py-0.5 cursor-pointer hover:bg-slate-900 ${
+        className={`group flex items-center gap-1 px-1 py-0.5 cursor-pointer transition-colors duration-100 hover:bg-slate-900 ${
           isDragOver ? 'bg-sky-950/40 ring-1 ring-sky-700' : ''
         }`}
         style={{ paddingLeft: 4 + depth * 12 }}
         onClick={() => props.onToggle(folder.id)}
       >
-        {expanded ? (
-          <ChevronDown size={12} className="text-slate-500 shrink-0" />
-        ) : (
-          <ChevronRight size={12} className="text-slate-500 shrink-0" />
-        )}
+        {/* Chevron rotates smoothly on expand/collapse */}
+        <ChevronRight
+          size={12}
+          className="text-slate-500 shrink-0 transition-transform duration-200"
+          style={{ transform: expanded ? 'rotate(90deg)' : 'rotate(0deg)' }}
+        />
         <span className="text-sky-400 shrink-0">📁</span>
         {renaming ? (
           <input
@@ -808,7 +814,7 @@ function FolderNode(props: FolderNodeProps) {
           </span>
         )}
         {!renaming && !confirming && (
-          <div className="flex gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
+          <div className="flex gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity duration-150 shrink-0">
             <button
               onClick={(e) => {
                 e.stopPropagation();
@@ -863,8 +869,16 @@ function FolderNode(props: FolderNodeProps) {
           </div>
         )}
       </div>
-      {expanded && (
-        <div>
+
+      {/* Animated expand/collapse via CSS grid trick */}
+      <div
+        style={{
+          display: 'grid',
+          gridTemplateRows: expanded ? '1fr' : '0fr',
+          transition: 'grid-template-rows 200ms ease',
+        }}
+      >
+        <div style={{ overflow: 'hidden' }}>
           {children.map((c) => (
             <FolderNode {...props} key={c.id} folder={c} depth={depth + 1} />
           ))}
@@ -885,7 +899,7 @@ function FolderNode(props: FolderNodeProps) {
             />
           ))}
         </div>
-      )}
+      </div>
     </div>
   );
 }
@@ -926,7 +940,7 @@ function NoteRow({
         onDragStart();
       }}
       onClick={onSelect}
-      className={`group flex items-center gap-1 px-1 py-0.5 cursor-pointer ${
+      className={`group flex items-center gap-1 px-1 py-0.5 cursor-pointer transition-colors duration-100 ${
         active ? 'bg-sky-900/40 text-sky-100' : 'hover:bg-slate-900 text-slate-300'
       } ${dimmed ? 'opacity-30' : ''}`}
       style={{ paddingLeft: 16 + depth * 12 }}

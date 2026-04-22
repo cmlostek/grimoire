@@ -3,6 +3,7 @@ import { useMap, type MapShape, type MapToken } from './mapStore';
 import { useSession } from '../session/sessionStore';
 import { supabase } from '../../lib/supabase';
 import PageHeader from '../../components/PageHeader';
+import { useVisibilityReload } from '../../hooks/useVisibilityReload';
 import {
   MousePointer2,
   Ruler,
@@ -70,6 +71,11 @@ export default function MapBoard() {
     const unsub = subscribe(campaignId);
     return unsub;
   }, [campaignId, loadForCampaign, subscribe]);
+
+  // Re-fetch when the tab becomes visible again (stale realtime guard)
+  useVisibilityReload(() => {
+    if (campaignId) loadForCampaign(campaignId);
+  });
 
   useEffect(() => {
     if (!campaignId || !isGM) return;
