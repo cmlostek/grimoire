@@ -975,6 +975,18 @@ function FolderNode(props: FolderNodeProps) {
               <button
                 onClick={(e) => {
                   e.stopPropagation();
+                  props.onStartRename(folder.id, folder.name);
+                }}
+                title="Rename folder"
+                className="p-0.5 text-slate-500 hover:text-sky-300"
+              >
+                <Pencil size={11} />
+              </button>
+            )}
+            {isGM && (
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
                   props.onStartDeleteFolder(folder.id);
                 }}
                 title="Delete folder"
