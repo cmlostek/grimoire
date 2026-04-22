@@ -85,9 +85,9 @@ function buildHeadingDecos(view: EditorView): DecorationSet {
       const m = H_RE.exec(line.text);
       if (m) {
         builder.add(line.from, line.from, Decoration.line({ class: `cm-heading cm-h${m[1].length}` }));
-        // Dim the # markers when not on cursor line
+        // Hide the # markers when not on cursor line
         if (line.number !== cursorLine) {
-          builder.add(line.from, line.from + m[0].length, Decoration.mark({ class: 'cm-md-marker' }));
+          builder.add(line.from, line.from + m[0].length, HIDDEN);
         }
       }
       if (line.to >= to) break;
@@ -114,13 +114,20 @@ const BOLD_RE      = /\*\*([^*\n]+?)\*\*/g;
 const ITALIC_RE    = /(?<!\*)\*(?!\*)([^*\n]+?)(?<!\*)\*(?!\*)/g;
 const CODE_INL_RE  = /`([^`\n]+?)`/g;
 
+// A zero-width widget used to completely erase markdown syntax markers off-cursor.
+class HiddenMarker extends WidgetType {
+  toDOM(): HTMLElement { return document.createElement('span'); }
+  eq() { return true; }
+  ignoreEvent() { return true; }
+}
+const HIDDEN = Decoration.replace({ widget: new HiddenMarker(), inclusive: false });
+
 /** Build decorations for ONE inline pattern. Ranges always in ascending order. */
 function buildInlineDecos(
   view: EditorView,
   re: RegExp,
   markerLen: number,
   contentCls: string,
-  markerCls: string,
 ): DecorationSet {
   const builder = new RangeSetBuilder<Decoration>();
   const cursorLine = view.state.doc.lineAt(view.state.selection.main.head).number;
@@ -134,17 +141,16 @@ function buildInlineDecos(
       const absEnd = abs + m[0].length;
       const lineNum = view.state.doc.lineAt(abs).number;
       if (lineNum !== cursorLine) {
-        // Off cursor line: dim markers, style content
-        const openTo   = abs + markerLen;
+        // Off cursor line: hide markers, style content
+        const openTo    = abs + markerLen;
         const closeFrom = absEnd - markerLen;
         if (openTo <= closeFrom) {
-          builder.add(abs,       openTo,    Decoration.mark({ class: markerCls }));
+          builder.add(abs,       openTo,    HIDDEN);
           builder.add(openTo,    closeFrom, Decoration.mark({ class: contentCls }));
-          builder.add(closeFrom, absEnd,    Decoration.mark({ class: markerCls }));
+          builder.add(closeFrom, absEnd,    HIDDEN);
         }
       }
-      // On cursor line: leave raw (the content class would conflict with dim,
-      // so we just skip — the text renders normally).
+      // On cursor line: leave raw so the user can see and edit the syntax.
     }
   }
   return builder.finish();
@@ -154,11 +160,11 @@ const boldPlugin = ViewPlugin.fromClass(
   class {
     decorations: DecorationSet;
     constructor(view: EditorView) {
-      this.decorations = buildInlineDecos(view, BOLD_RE, 2, 'cm-bold', 'cm-md-marker');
+      this.decorations = buildInlineDecos(view, BOLD_RE, 2, 'cm-bold');
     }
     update(u: ViewUpdate) {
       if (u.docChanged || u.viewportChanged || u.selectionSet) {
-        this.decorations = buildInlineDecos(u.view, BOLD_RE, 2, 'cm-bold', 'cm-md-marker');
+        this.decorations = buildInlineDecos(u.view, BOLD_RE, 2, 'cm-bold');
       }
     }
   },
@@ -169,11 +175,11 @@ const italicPlugin = ViewPlugin.fromClass(
   class {
     decorations: DecorationSet;
     constructor(view: EditorView) {
-      this.decorations = buildInlineDecos(view, ITALIC_RE, 1, 'cm-italic', 'cm-md-marker');
+      this.decorations = buildInlineDecos(view, ITALIC_RE, 1, 'cm-italic');
     }
     update(u: ViewUpdate) {
       if (u.docChanged || u.viewportChanged || u.selectionSet) {
-        this.decorations = buildInlineDecos(u.view, ITALIC_RE, 1, 'cm-italic', 'cm-md-marker');
+        this.decorations = buildInlineDecos(u.view, ITALIC_RE, 1, 'cm-italic');
       }
     }
   },
@@ -184,11 +190,11 @@ const codeInlinePlugin = ViewPlugin.fromClass(
   class {
     decorations: DecorationSet;
     constructor(view: EditorView) {
-      this.decorations = buildInlineDecos(view, CODE_INL_RE, 1, 'cm-code-inline', 'cm-code-marker');
+      this.decorations = buildInlineDecos(view, CODE_INL_RE, 1, 'cm-code-inline');
     }
     update(u: ViewUpdate) {
       if (u.docChanged || u.viewportChanged || u.selectionSet) {
-        this.decorations = buildInlineDecos(u.view, CODE_INL_RE, 1, 'cm-code-inline', 'cm-code-marker');
+        this.decorations = buildInlineDecos(u.view, CODE_INL_RE, 1, 'cm-code-inline');
       }
     }
   },
@@ -233,9 +239,9 @@ function buildListDecos(view: EditorView): DecorationSet {
         }
         if (BLOCKQUOTE_RE.test(line.text)) {
           builder.add(line.from, line.from, Decoration.line({ class: 'cm-blockquote-line' }));
-          // dim the "> "
+          // hide the "> "
           const bqEnd = line.from + line.text.match(/^(\s*> )/)![0].length;
-          builder.add(line.from, bqEnd, Decoration.mark({ class: 'cm-md-marker' }));
+          builder.add(line.from, bqEnd, HIDDEN);
         }
       }
       if (line.to >= to) break;
@@ -277,7 +283,9 @@ class SecretWidget extends WidgetType {
 
     const icon = document.createElement('span');
     icon.className = 'csw-icon';
-    icon.textContent = this.revealed ? '🔓' : '🔒';
+    icon.innerHTML = this.revealed
+      ? `<svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 9.9-1"/></svg>`
+      : `<svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>`;
 
     const lbl = document.createElement('span');
     lbl.className = 'csw-label';
@@ -412,8 +420,6 @@ const noteTheme = EditorView.theme(
       fontSize: '0.88em',
       color: '#e2e8f0',
     },
-    '.cm-md-marker':   { opacity: '0.3' },
-    '.cm-code-marker': { opacity: '0.3', fontFamily: 'ui-monospace, monospace' },
 
     // ── Lists & blockquotes ───────────────────────────────────────────────────
     '.cm-blockquote-line': {
