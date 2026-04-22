@@ -38,6 +38,33 @@ input[type="number"] { -moz-appearance: textfield; appearance: textfield; }
 .markdown-body hr { border: none; border-top: 1px solid #334155; margin: 1.5em 0; }
 .markdown-body input[type="checkbox"] { margin-right: 6px; }
 
+/* Inline dice roll chip */
+.note-dice {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.2em;
+  background: rgba(99, 102, 241, 0.15);
+  border: 1px solid rgba(129, 140, 248, 0.35);
+  color: #a5b4fc;
+  padding: 0.05em 0.45em;
+  border-radius: 0.3em;
+  font-size: 0.88em;
+  font-family: ui-monospace, monospace;
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s;
+  white-space: nowrap;
+  vertical-align: baseline;
+}
+.note-dice:hover {
+  background: rgba(99, 102, 241, 0.32);
+  color: #c7d2fe;
+  border-color: rgba(165, 180, 252, 0.6);
+}
+.note-dice:active {
+  background: rgba(99, 102, 241, 0.5);
+  transform: scale(0.97);
+}
+
 /* Note decorators */
 .note-deco { padding: 0.05em 0.35em; border-radius: 0.3em; white-space: pre-wrap; }
 .note-loc { background: rgba(251, 146, 60, 0.18); color: #fdba74; }

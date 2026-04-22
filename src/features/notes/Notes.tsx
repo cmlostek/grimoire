@@ -115,6 +115,7 @@ function toggleSecret(body: string, index: number): string {
     .join('');
 }
 import { QuickDiceButton } from '../dice/QuickDice';
+import { useQuickDice } from '../dice/quickDiceStore';
 
 type DragItem =
   | { kind: 'note'; id: string }
@@ -147,6 +148,7 @@ export default function Notes() {
   const homebrewItems = useStore((s) => s.homebrewItems);
   const homebrewSpells = useStore((s) => s.homebrewSpells);
   const party = useParty((s) => s.party);
+  const rollFormula = useQuickDice((s) => s.rollFormula);
 
   useEffect(() => {
     if (!campaignId) return;
@@ -296,6 +298,9 @@ export default function Notes() {
               </LegendRow>
               <LegendRow syntax="{{spoiler}}" label="secret">
                 <span className="note-secret">spoiler</span>
+              </LegendRow>
+              <LegendRow syntax="$1d20 + 8$" label="dice roll">
+                <button className="note-dice" style={{ pointerEvents: 'none' }}>🎲 1d20 + 8</button>
               </LegendRow>
             </div>
           )}
@@ -625,6 +630,18 @@ export default function Notes() {
                                 </PartyRefSpan>
                               );
                             }
+                          }
+                          if (className.includes('note-dice')) {
+                            const formula = (p['data-dice-formula'] as string) ?? extractText(children);
+                            return (
+                              <button
+                                className="note-dice"
+                                title={`Roll ${formula}`}
+                                onClick={() => rollFormula(formula)}
+                              >
+                                🎲 {formula}
+                              </button>
+                            );
                           }
                           return <span {...props}>{children}</span>;
                         },

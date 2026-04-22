@@ -3,8 +3,9 @@ import { findWiki, type WikiEntry } from './wikiIndex';
 
 export const NEWLINE_PLACEHOLDER = '\uE000';
 
+// Note: \$(?!\{) matches $ NOT followed by { so it doesn't swallow ${artifact}
 const TOKEN =
-  /(@\{[^}\n]+\}|\?\{[^}\n]+\}|!\{[^}\n]+\}|\$\{[^}\n]+\}|%%[^%\n]+?%%|\{\{[^}\n]+\}\}|\[\[[^\]\n]+\]\])/g;
+  /(@\{[^}\n]+\}|\?\{[^}\n]+\}|!\{[^}\n]+\}|\$\{[^}\n]+\}|\$(?!\{)[^$\n]+\$|%%[^%\n]+?%%|\{\{[^}\n]+\}\}|\[\[[^\]\n]+\]\])/g;
 
 const MULTILINE_TRANSFORMS: Array<[RegExp, string, string]> = [
   [/@\{([\s\S]*?)\}/g, '@{', '}'],
@@ -100,7 +101,8 @@ function makeBrokenLink(text: string): PhrasingContent {
 
 function classify(
   raw: string,
-  wiki: WikiEntry[]
+  wiki: WikiEntry[],
+  secretCounter: () => number
 ): PhrasingContent | null {
   if (raw.startsWith('@{') && raw.endsWith('}')) {
     return makeSpan('note-deco note-loc', restore(raw.slice(2, -1)));
@@ -118,7 +120,15 @@ function classify(
     return makeSpan('note-comment', restore(raw.slice(2, -2)));
   }
   if (raw.startsWith('{{') && raw.endsWith('}}')) {
-    return makeSpan('note-secret', restore(raw.slice(2, -2)), { 'data-secret': 'true' });
+    const inner = restore(raw.slice(2, -2));
+    const revealed = inner.startsWith('!');
+    const text = revealed ? inner.slice(1) : inner;
+    const idx = String(secretCounter());
+    return makeSpan('note-secret', text, {
+      'data-secret': 'true',
+      'data-secret-index': idx,
+      'data-secret-revealed': String(revealed),
+    });
   }
   if (raw.startsWith('[[') && raw.endsWith(']]')) {
     const name = raw.slice(2, -2);
@@ -126,10 +136,17 @@ function classify(
     if (hit) return makeLink(hit.route, name, hit.kind);
     return makeBrokenLink(name);
   }
+  // $1d20 + 8$ — inline dice roll chip ($ not followed by {)
+  if (raw.startsWith('$') && raw.endsWith('$') && !raw.startsWith('${') && raw.length > 2) {
+    const formula = raw.slice(1, -1).trim();
+    if (/\dd\d/i.test(formula)) {
+      return makeSpan('note-dice', formula, { 'data-dice-formula': formula });
+    }
+  }
   return null;
 }
 
-function splitText(node: Text, wiki: WikiEntry[]): PhrasingContent[] | null {
+function splitText(node: Text, wiki: WikiEntry[], secretCounter: () => number): PhrasingContent[] | null {
   const text = node.value;
   TOKEN.lastIndex = 0;
   let match: RegExpExecArray | null;
@@ -137,7 +154,7 @@ function splitText(node: Text, wiki: WikiEntry[]): PhrasingContent[] | null {
   let last = 0;
   let found = false;
   while ((match = TOKEN.exec(text)) !== null) {
-    const replacement = classify(match[0], wiki);
+    const replacement = classify(match[0], wiki, secretCounter);
     if (!replacement) continue;
     found = true;
     if (match.index > last) {
@@ -155,7 +172,7 @@ function splitText(node: Text, wiki: WikiEntry[]): PhrasingContent[] | null {
 
 type Parent = { children: Array<RootContent | PhrasingContent> };
 
-function walk(node: unknown, wiki: WikiEntry[]): void {
+function walk(node: unknown, wiki: WikiEntry[], secretCounter: () => number): void {
   if (!node || typeof node !== 'object') return;
   const n = node as { type?: string; children?: unknown[] };
   if (!Array.isArray(n.children)) return;
@@ -164,13 +181,13 @@ function walk(node: unknown, wiki: WikiEntry[]): void {
   for (const child of parent.children) {
     const c = child as { type?: string };
     if (c?.type === 'text') {
-      const replaced = splitText(child as Text, wiki);
+      const replaced = splitText(child as Text, wiki, secretCounter);
       if (replaced) next.push(...(replaced as Array<RootContent | PhrasingContent>));
       else next.push(child);
     } else if (c?.type === 'code' || c?.type === 'inlineCode') {
       next.push(child);
     } else {
-      walk(child, wiki);
+      walk(child, wiki, secretCounter);
       next.push(child);
     }
   }
@@ -179,6 +196,7 @@ function walk(node: unknown, wiki: WikiEntry[]): void {
 
 export function remarkNoteDecorators(wiki: WikiEntry[]) {
   return () => (tree: Root) => {
-    walk(tree, wiki);
+    let idx = 0;
+    walk(tree, wiki, () => idx++);
   };
 }

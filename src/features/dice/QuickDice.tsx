@@ -1,25 +1,15 @@
 import { useEffect, useRef, useState } from 'react';
 import { Dices, X, Trash2 } from 'lucide-react';
-import { useQuickDice } from './quickDiceStore';
+import { useQuickDice, type Roll } from './quickDiceStore';
 
 type Die = 4 | 6 | 8 | 10 | 12 | 20 | 100;
 const DICE: Die[] = [4, 6, 8, 10, 12, 20, 100];
 
-type Roll = {
-  id: string;
-  label: string;
-  detail: string;
-  total: number;
-  crit?: 'hit' | 'miss';
-  dropped?: number;
-};
-
 const rollDie = (sides: Die) => Math.floor(Math.random() * sides) + 1;
 
 export function QuickDice() {
-  const { open, close } = useQuickDice();
+  const { open, close, history, pushRoll, clearHistory } = useQuickDice();
   const [mod, setMod] = useState(0);
-  const [history, setHistory] = useState<Roll[]>([]);
   const panelRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -32,8 +22,6 @@ export function QuickDice() {
   }, [open, close]);
 
   if (!open) return null;
-
-  const pushRoll = (r: Roll) => setHistory((h) => [r, ...h].slice(0, 10));
 
   const quick = (d: Die) => {
     const v = rollDie(d);
@@ -48,7 +36,7 @@ export function QuickDice() {
     });
   };
 
-  const d20 = (mode: 'adv' | 'dis') => {
+  const d20adv = (mode: 'adv' | 'dis') => {
     const a = rollDie(20);
     const b = rollDie(20);
     const pick = mode === 'adv' ? Math.max(a, b) : Math.min(a, b);
@@ -76,7 +64,7 @@ export function QuickDice() {
         <div className="flex items-center gap-1">
           {history.length > 0 && (
             <button
-              onClick={() => setHistory([])}
+              onClick={clearHistory}
               title="Clear history"
               className="p-1 text-slate-500 hover:text-slate-200"
             >
@@ -104,13 +92,13 @@ export function QuickDice() {
 
         <div className="grid grid-cols-2 gap-1">
           <button
-            onClick={() => d20('adv')}
+            onClick={() => d20adv('adv')}
             className="py-1.5 bg-emerald-900/40 hover:bg-emerald-800/60 border border-emerald-800 rounded text-xs text-emerald-200"
           >
             d20 Advantage
           </button>
           <button
-            onClick={() => d20('dis')}
+            onClick={() => d20adv('dis')}
             className="py-1.5 bg-rose-900/40 hover:bg-rose-800/60 border border-rose-800 rounded text-xs text-rose-200"
           >
             d20 Disadvantage
@@ -154,7 +142,7 @@ export function QuickDice() {
             No rolls yet.
           </div>
         ) : (
-          history.map((r) => (
+          history.map((r: Roll) => (
             <div
               key={r.id}
               className="px-3 py-1.5 border-b border-slate-900 flex items-baseline justify-between gap-2"
