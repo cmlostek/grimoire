@@ -9,6 +9,7 @@ export type Note = {
   folder_id: string | null;
   visible_to_players: boolean;
   owner_user_id: string | null;
+  icon: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -50,7 +51,7 @@ type NotesState = {
   setActiveNote: (id: string | null) => void;
 
   createNote: (campaignId: string, folderId: string | null, ownerId?: string | null) => Promise<string | null>;
-  updateNote: (id: string, patch: Partial<Pick<Note, 'title' | 'body' | 'folder_id' | 'visible_to_players'>>) => Promise<void>;
+  updateNote: (id: string, patch: Partial<Pick<Note, 'title' | 'body' | 'folder_id' | 'visible_to_players' | 'icon'>>) => Promise<void>;
   deleteNote: (id: string) => Promise<void>;
   moveNote: (id: string, folderId: string | null) => Promise<void>;
 

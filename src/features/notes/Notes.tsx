@@ -17,8 +17,63 @@ import {
   Pencil,
   Search,
   HelpCircle,
+  Home,
+  Mountain,
+  Flag,
+  Ship,
+  AlertTriangle,
+  Gem,
+  Flame,
+  Swords,
+  Skull,
+  BookOpen,
+  Star,
+  Crown,
+  Compass,
+  Lock,
+  MapPin,
+  ArrowUpAZ,
+  Clock,
 } from 'lucide-react';
 import { useVisibilityReload } from '../../hooks/useVisibilityReload';
+
+// ─── Note icon palette ───────────────────────────────────────────────────────
+type NoteIconDef = {
+  id: string;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  Icon: React.ComponentType<any>;
+  color: string;
+  label: string;
+};
+
+const NOTE_ICONS: NoteIconDef[] = [
+  { id: 'note',      Icon: FileText,      color: '#64748b', label: 'Note' },
+  { id: 'town',      Icon: Home,          color: '#60a5fa', label: 'Town' },
+  { id: 'dungeon',   Icon: Mountain,      color: '#c2863b', label: 'Dungeon' },
+  { id: 'quest',     Icon: Flag,          color: '#f87171', label: 'Quest' },
+  { id: 'travel',    Icon: Ship,          color: '#38bdf8', label: 'Travel' },
+  { id: 'alert',     Icon: AlertTriangle, color: '#fbbf24', label: 'Alert' },
+  { id: 'mystery',   Icon: HelpCircle,    color: '#a78bfa', label: 'Mystery' },
+  { id: 'treasure',  Icon: Gem,           color: '#34d399', label: 'Treasure' },
+  { id: 'danger',    Icon: Flame,         color: '#fb923c', label: 'Danger' },
+  { id: 'combat',    Icon: Swords,        color: '#f472b6', label: 'Combat' },
+  { id: 'death',     Icon: Skull,         color: '#94a3b8', label: 'Death' },
+  { id: 'lore',      Icon: BookOpen,      color: '#c084fc', label: 'Lore' },
+  { id: 'important', Icon: Star,          color: '#facc15', label: 'Important' },
+  { id: 'npc',       Icon: Crown,         color: '#f59e0b', label: 'NPC' },
+  { id: 'explore',   Icon: Compass,       color: '#2dd4bf', label: 'Explore' },
+  { id: 'secret',    Icon: Lock,          color: '#818cf8', label: 'Secret' },
+  { id: 'location',  Icon: MapPin,        color: '#fb7185', label: 'Location' },
+];
+
+function getNoteIconDef(iconId: string | null | undefined): NoteIconDef {
+  return NOTE_ICONS.find((i) => i.id === iconId) ?? NOTE_ICONS[0];
+}
+
+function NoteIconDisplay({ iconId, size = 11 }: { iconId: string | null | undefined; size?: number }) {
+  const { Icon, color } = getNoteIconDef(iconId);
+  return <Icon size={size} style={{ color }} className="shrink-0" />;
+}
 import { buildWikiIndex, searchWiki, kindLabel, type WikiEntry } from './wikiIndex';
 import { remarkNoteDecorators, preprocessDecorators } from './decorators';
 import { Secret } from './Secret';
@@ -113,6 +168,11 @@ export default function Notes() {
   const [renameValue, setRenameValue] = useState('');
   const [dragOverId, setDragOverId] = useState<string | 'root' | null>(null);
   const [showLegend, setShowLegend] = useState(false);
+  const [showIconPicker, setShowIconPicker] = useState(false);
+  const [sortMode, setSortMode] = useState<'updated' | 'alpha'>(() => {
+    const stored = localStorage.getItem('dnd-gm:noteSortMode');
+    return stored === 'alpha' ? 'alpha' : 'updated';
+  });
 
   const visibleNotes = useMemo(
     () =>
@@ -120,6 +180,24 @@ export default function Notes() {
         ? notes
         : notes.filter((n) => n.visible_to_players || n.owner_user_id === userId),
     [isGM, notes, userId]
+  );
+
+  // Apply sort order to notes and folders for the sidebar
+  const sortedVisibleNotes = useMemo(
+    () =>
+      sortMode === 'alpha'
+        ? [...visibleNotes].sort((a, b) =>
+            (a.title || 'Untitled').localeCompare(b.title || 'Untitled')
+          )
+        : visibleNotes,
+    [visibleNotes, sortMode]
+  );
+  const sortedFolders = useMemo(
+    () =>
+      sortMode === 'alpha'
+        ? [...folders].sort((a, b) => a.name.localeCompare(b.name))
+        : folders,
+    [folders, sortMode]
   );
 
   const active = visibleNotes.find((n) => n.id === activeNoteId) ?? null;
@@ -164,8 +242,8 @@ export default function Notes() {
 
   const [dragData, setDragData] = useState<DragItem | null>(null);
 
-  const rootFolders = folders.filter((f) => f.parent_id === null);
-  const rootNotes = visibleNotes.filter((n) => n.folder_id === null);
+  const rootFolders = sortedFolders.filter((f) => f.parent_id === null);
+  const rootNotes = sortedVisibleNotes.filter((n) => n.folder_id === null);
 
   const onWikiClick = (href: string) => {
     const [path, hash] = href.split('#');
@@ -231,6 +309,17 @@ export default function Notes() {
               Explorer
             </div>
             <div className="flex gap-0.5">
+              <button
+                onClick={() => {
+                  const next = sortMode === 'alpha' ? 'updated' : 'alpha';
+                  setSortMode(next);
+                  localStorage.setItem('dnd-gm:noteSortMode', next);
+                }}
+                title={sortMode === 'alpha' ? 'A–Z order — click for recent first' : 'Recent first — click for A–Z'}
+                className="p-1 text-slate-400 hover:text-sky-300 hover:bg-slate-800 rounded"
+              >
+                {sortMode === 'alpha' ? <ArrowUpAZ size={12} /> : <Clock size={12} />}
+              </button>
               <button
                 onClick={() => onCreateNote(null)}
                 title="New note"
@@ -300,8 +389,8 @@ export default function Notes() {
                 key={f.id}
                 folder={f}
                 depth={0}
-                folders={folders}
-                notes={visibleNotes}
+                folders={sortedFolders}
+                notes={sortedVisibleNotes}
                 activeNoteId={activeNoteId}
                 matching={matchingNoteIds}
                 renamingFolderId={renamingFolderId}
@@ -384,6 +473,53 @@ export default function Notes() {
           {active && (
             <>
               <div className="px-6 py-3 border-b border-slate-800 flex items-center gap-3">
+                {/* Icon picker button */}
+                {canEditNote(active) ? (
+                  <div className="relative shrink-0">
+                    <button
+                      onClick={() => setShowIconPicker((p) => !p)}
+                      title="Change note icon"
+                      className="p-1.5 rounded hover:bg-slate-800 transition-colors"
+                    >
+                      <NoteIconDisplay iconId={active.icon} size={18} />
+                    </button>
+                    {showIconPicker && (
+                      <>
+                        {/* Backdrop to close picker */}
+                        <div
+                          className="fixed inset-0 z-20"
+                          onClick={() => setShowIconPicker(false)}
+                        />
+                        <div className="absolute top-full left-0 mt-1 z-30 bg-slate-900 border border-slate-700 rounded-lg shadow-xl p-2 grid grid-cols-6 gap-1 w-56">
+                          {NOTE_ICONS.map(({ id, Icon, color, label }) => (
+                            <button
+                              key={id}
+                              title={label}
+                              onClick={() => {
+                                updateNote(active.id, { icon: id === 'note' ? null : id });
+                                setShowIconPicker(false);
+                              }}
+                              className={`flex flex-col items-center gap-0.5 rounded p-1.5 transition-colors hover:bg-slate-800 ${
+                                (active.icon ?? 'note') === id
+                                  ? 'bg-slate-700 ring-1 ring-sky-500'
+                                  : ''
+                              }`}
+                            >
+                              <Icon size={14} style={{ color }} />
+                              <span className="text-[8px] text-slate-500 leading-none truncate w-full text-center">
+                                {label}
+                              </span>
+                            </button>
+                          ))}
+                        </div>
+                      </>
+                    )}
+                  </div>
+                ) : (
+                  <div className="shrink-0 p-1.5">
+                    <NoteIconDisplay iconId={active.icon} size={18} />
+                  </div>
+                )}
                 <input
                   value={active.title}
                   onChange={(e) => updateNote(active.id, { title: e.target.value })}
@@ -945,7 +1081,7 @@ function NoteRow({
       } ${dimmed ? 'opacity-30' : ''}`}
       style={{ paddingLeft: 16 + depth * 12 }}
     >
-      <FileText size={11} className="text-slate-500 shrink-0" />
+      <NoteIconDisplay iconId={note.icon} size={11} />
       <span className="flex-1 min-w-0 truncate">{note.title || 'Untitled'}</span>
       {isGM && note.visible_to_players && !active && (
         <Eye size={10} className="text-emerald-500 shrink-0" />
