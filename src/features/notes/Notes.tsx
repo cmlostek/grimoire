@@ -1040,9 +1040,12 @@ function NoteRow({
     >
       <NoteIconDisplay iconId={note.icon} size={11} />
       <span className="flex-1 min-w-0 truncate">{note.title || 'Untitled'}</span>
-      {isGM && note.visible_to_players && !active && (
-        <Eye size={10} className="text-emerald-500 shrink-0" />
-      )}
+      {isGM && !active && (() => {
+        const level = getPermLevel(note);
+        if (level === 'edit')    return <Eye size={10} className="text-emerald-400 shrink-0" />;
+        if (level === 'read')    return <Eye size={10} className="text-sky-400 shrink-0" />;
+        return null;
+      })()}
       {isGM && (confirming ? (
         <div className="flex gap-0.5 shrink-0" onClick={(e) => e.stopPropagation()}>
           <button
