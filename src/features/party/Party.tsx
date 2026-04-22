@@ -6,7 +6,7 @@ import { parseDdb, parseGenericJson, isLikelyDdb, isDdbWrapper } from './ddb';
 import { modifier } from '../../data/srd';
 import {
   Plus, Trash2, UserPlus, FileJson, ExternalLink, X, Shield, Heart,
-  Eye, Search, Brain, UserCheck, User as UserIcon,
+  Eye, Search, Brain, UserCheck, User as UserIcon, Save,
 } from 'lucide-react';
 
 type AddMode = null | 'manual' | 'json';
@@ -108,7 +108,7 @@ export default function Party() {
               userId={userId}
               isGM={isGM}
               editable={canEdit(m)}
-              onUpdate={(p) => updatePartyMember(m.id, p)}
+              onUpdate={(p) => updatePartyMember(m.id, p) as Promise<void>}
               onRemove={() => removePartyMember(m.id)}
               onClaim={() => claim(m.id)}
               onUnclaim={() => unclaim(m.id)}
@@ -144,45 +144,79 @@ function CharCard({
   userId: string | null;
   isGM: boolean;
   editable: boolean;
-  onUpdate: (p: Partial<PartyMember>) => void;
+  onUpdate: (p: Partial<PartyMember>) => Promise<void>;
   onRemove: () => void;
   onClaim: () => void;
   onUnclaim: () => void;
 }) {
+  const [draft, setDraft] = useState<PartyMember>(m);
+  const [dirty, setDirty] = useState(false);
+  const [saving, setSaving] = useState(false);
   const [expanded, setExpanded] = useState(false);
   const [confirming, setConfirming] = useState(false);
-  const hpPct = m.maxHp > 0 ? (m.hp / m.maxHp) * 100 : 0;
 
+  // Sync from server when not being locally edited
+  useEffect(() => {
+    if (!dirty) setDraft(m);
+  }, [m]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const apply = (p: Partial<PartyMember>) => {
+    setDraft((d) => ({ ...d, ...p }));
+    setDirty(true);
+  };
+
+  const save = async () => {
+    setSaving(true);
+    try {
+      const { id: _id, owner_user_id: _o, ...rest } = draft;
+      await onUpdate(rest);
+      setDirty(false);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const hpPct = draft.maxHp > 0 ? (draft.hp / draft.maxHp) * 100 : 0;
   const ownedByMe = m.owner_user_id === userId && userId !== null;
   const owned = m.owner_user_id !== null;
 
   return (
-    <div className="bg-slate-900 border border-slate-800 rounded-lg p-4 flex flex-col gap-3">
+    <div className={`bg-slate-900 border rounded-lg p-4 flex flex-col gap-3 transition-colors ${dirty ? 'border-amber-700/50' : 'border-slate-800'}`}>
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0 flex-1">
           <input
-            value={m.name}
-            onChange={(e) => onUpdate({ name: e.target.value })}
+            value={draft.name}
+            onChange={(e) => apply({ name: e.target.value })}
             readOnly={!editable}
             className="w-full bg-transparent font-serif text-xl text-sky-200 outline-none truncate"
           />
           <input
-            value={m.classSummary}
-            onChange={(e) => onUpdate({ classSummary: e.target.value })}
+            value={draft.classSummary}
+            onChange={(e) => apply({ classSummary: e.target.value })}
             readOnly={!editable}
             className="w-full bg-transparent text-xs text-slate-400 outline-none truncate"
           />
           <input
-            value={m.race}
-            onChange={(e) => onUpdate({ race: e.target.value })}
+            value={draft.race}
+            onChange={(e) => apply({ race: e.target.value })}
             readOnly={!editable}
             className="w-full bg-transparent text-[11px] text-slate-500 outline-none truncate"
           />
         </div>
-        <div className="flex gap-1 items-start">
-          {m.ddbUrl && (
+        <div className="flex gap-1 items-start shrink-0">
+          {editable && dirty && (
+            <button
+              onClick={save}
+              disabled={saving}
+              className="px-2 py-1 text-[11px] bg-amber-700 hover:bg-amber-600 disabled:opacity-50 text-white font-semibold rounded flex items-center gap-1"
+            >
+              <Save size={11} />
+              {saving ? 'Saving…' : 'Save'}
+            </button>
+          )}
+          {draft.ddbUrl && (
             <a
-              href={m.ddbUrl}
+              href={draft.ddbUrl}
               target="_blank"
               rel="noreferrer"
               title="Open on D&D Beyond"
@@ -251,9 +285,9 @@ function CharCard({
       </div>
 
       <div className="grid grid-cols-3 gap-2 text-center">
-        <Stat icon={<Shield size={12} />} label="AC" value={m.ac} onChange={(v) => onUpdate({ ac: v })} readOnly={!editable} />
-        <Stat icon={null} label="Init" value={m.initiativeBonus} onChange={(v) => onUpdate({ initiativeBonus: v })} signed readOnly={!editable} />
-        <Stat icon={null} label="Lvl" value={m.level} onChange={(v) => onUpdate({ level: v })} readOnly={!editable} />
+        <Stat icon={<Shield size={12} />} label="AC" value={draft.ac} onChange={(v) => apply({ ac: v })} readOnly={!editable} />
+        <Stat icon={null} label="Init" value={draft.initiativeBonus} onChange={(v) => apply({ initiativeBonus: v })} signed readOnly={!editable} />
+        <Stat icon={null} label="Lvl" value={draft.level} onChange={(v) => apply({ level: v })} readOnly={!editable} />
       </div>
 
       <div>
@@ -261,26 +295,26 @@ function CharCard({
           <Heart size={12} className="text-rose-400" /> HP
           <input
             type="number"
-            value={m.hp}
-            onChange={(e) => onUpdate({ hp: Math.max(0, parseInt(e.target.value) || 0) })}
+            value={draft.hp}
+            onChange={(e) => apply({ hp: Math.max(0, parseInt(e.target.value) || 0) })}
             readOnly={!editable}
             className="w-14 bg-slate-800 rounded px-1 text-right font-mono"
           />
           <span className="text-slate-500">/</span>
           <input
             type="number"
-            value={m.maxHp}
-            onChange={(e) => onUpdate({ maxHp: Math.max(0, parseInt(e.target.value) || 0) })}
+            value={draft.maxHp}
+            onChange={(e) => apply({ maxHp: Math.max(0, parseInt(e.target.value) || 0) })}
             readOnly={!editable}
             className="w-14 bg-slate-800 rounded px-1 font-mono"
           />
-          {m.tempHp > 0 && (
+          {draft.tempHp > 0 && (
             <span className="ml-1 text-sky-300">
               +
               <input
                 type="number"
-                value={m.tempHp}
-                onChange={(e) => onUpdate({ tempHp: Math.max(0, parseInt(e.target.value) || 0) })}
+                value={draft.tempHp}
+                onChange={(e) => apply({ tempHp: Math.max(0, parseInt(e.target.value) || 0) })}
                 readOnly={!editable}
                 className="w-10 bg-slate-800 rounded px-1 text-right font-mono"
               />
@@ -298,9 +332,9 @@ function CharCard({
       </div>
 
       <div className="grid grid-cols-3 gap-2 text-center text-xs">
-        <Passive icon={<Eye size={11} />} label="Perception" value={m.passivePerception} onChange={(v) => onUpdate({ passivePerception: v })} readOnly={!editable} />
-        <Passive icon={<Search size={11} />} label="Investigation" value={m.passiveInvestigation} onChange={(v) => onUpdate({ passiveInvestigation: v })} readOnly={!editable} />
-        <Passive icon={<Brain size={11} />} label="Insight" value={m.passiveInsight} onChange={(v) => onUpdate({ passiveInsight: v })} readOnly={!editable} />
+        <Passive icon={<Eye size={11} />} label="Perception" value={draft.passivePerception} onChange={(v) => apply({ passivePerception: v })} readOnly={!editable} />
+        <Passive icon={<Search size={11} />} label="Investigation" value={draft.passiveInvestigation} onChange={(v) => apply({ passiveInvestigation: v })} readOnly={!editable} />
+        <Passive icon={<Brain size={11} />} label="Insight" value={draft.passiveInsight} onChange={(v) => apply({ passiveInsight: v })} readOnly={!editable} />
       </div>
 
       <button
@@ -318,37 +352,47 @@ function CharCard({
                 <div className="text-[9px] uppercase tracking-wider text-slate-500 text-center">{a}</div>
                 <input
                   type="number"
-                  value={m[a]}
-                  onChange={(e) => onUpdate({ [a]: parseInt(e.target.value) || 0 } as Partial<PartyMember>)}
+                  value={draft[a]}
+                  onChange={(e) => apply({ [a]: parseInt(e.target.value) || 0 } as Partial<PartyMember>)}
                   readOnly={!editable}
                   className="w-full bg-transparent text-center font-mono outline-none"
                 />
-                <div className="text-center text-[10px] text-sky-300">{modifier(m[a])}</div>
+                <div className="text-center text-[10px] text-sky-300">{modifier(draft[a])}</div>
               </div>
             ))}
           </div>
-          <Detail label="Speed" value={m.speed} onChange={(v) => onUpdate({ speed: v })} readOnly={!editable} />
-          <Detail label="Saves" value={m.saves} onChange={(v) => onUpdate({ saves: v })} readOnly={!editable} />
-          <Detail label="Skills" value={m.skills} onChange={(v) => onUpdate({ skills: v })} readOnly={!editable} />
-          <Detail label="Languages" value={m.languages} onChange={(v) => onUpdate({ languages: v })} readOnly={!editable} />
-          {m.player && <Detail label="Player" value={m.player} onChange={(v) => onUpdate({ player: v })} readOnly={!editable} />}
+          <Detail label="Speed" value={draft.speed} onChange={(v) => apply({ speed: v })} readOnly={!editable} />
+          <Detail label="Saves" value={draft.saves} onChange={(v) => apply({ saves: v })} readOnly={!editable} />
+          <Detail label="Skills" value={draft.skills} onChange={(v) => apply({ skills: v })} readOnly={!editable} />
+          <Detail label="Languages" value={draft.languages} onChange={(v) => apply({ languages: v })} readOnly={!editable} />
+          {draft.player !== undefined && <Detail label="Player" value={draft.player ?? ''} onChange={(v) => apply({ player: v })} readOnly={!editable} />}
           <div>
             <div className="text-[10px] uppercase tracking-wider text-slate-500">Notes</div>
             <textarea
-              value={m.notes ?? ''}
-              onChange={(e) => onUpdate({ notes: e.target.value })}
+              value={draft.notes ?? ''}
+              onChange={(e) => apply({ notes: e.target.value })}
               readOnly={!editable}
               rows={2}
               className="w-full mt-0.5 bg-slate-800 border border-slate-700 rounded px-2 py-1 resize-none"
             />
           </div>
           <input
-            value={m.ddbUrl ?? ''}
-            onChange={(e) => onUpdate({ ddbUrl: e.target.value })}
+            value={draft.ddbUrl ?? ''}
+            onChange={(e) => apply({ ddbUrl: e.target.value })}
             readOnly={!editable}
             placeholder="D&D Beyond URL (optional)"
             className="w-full bg-slate-800 border border-slate-700 rounded px-2 py-1 text-[11px]"
           />
+          {editable && dirty && (
+            <button
+              onClick={save}
+              disabled={saving}
+              className="w-full py-1.5 text-xs bg-amber-700 hover:bg-amber-600 disabled:opacity-50 text-white font-semibold rounded flex items-center justify-center gap-1.5"
+            >
+              <Save size={12} />
+              {saving ? 'Saving…' : 'Save changes'}
+            </button>
+          )}
         </div>
       )}
     </div>

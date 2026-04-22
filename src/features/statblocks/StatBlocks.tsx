@@ -1,9 +1,9 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import PageHeader from '../../components/PageHeader';
 import { useStore, StatBlock, StatBlockAction } from '../../store';
 import { MONSTERS } from '../../data/srd';
 import { modifier } from '../../data/srd';
-import { Plus, Trash2, Copy, Download, Search, X, BookOpenCheck } from 'lucide-react';
+import { Plus, Trash2, Copy, Download, Search, X, BookOpenCheck, Save } from 'lucide-react';
 
 const ABILITIES = ['str', 'dex', 'con', 'int', 'wis', 'cha'] as const;
 type Ability = (typeof ABILITIES)[number];
@@ -37,31 +37,49 @@ export default function StatBlocks() {
   } = useStore();
 
   const [importOpen, setImportOpen] = useState(false);
+  const [draft, setDraft] = useState<StatBlock | null>(null);
+  const [dirty, setDirty] = useState(false);
 
   const active = statBlocks.find((s) => s.id === activeStatBlockId) ?? null;
 
+  // Reset draft when switching stat blocks
+  useEffect(() => {
+    setDraft(active);
+    setDirty(false);
+  }, [activeStatBlockId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const current = draft ?? active;
+
   const updateField = <K extends keyof StatBlock>(key: K, value: StatBlock[K]) => {
-    if (!active) return;
-    updateStatBlock(active.id, { [key]: value } as Partial<StatBlock>);
+    if (!current) return;
+    setDraft((d) => (d ? { ...d, [key]: value } : d));
+    setDirty(true);
   };
 
   const updateList = (
     list: 'traits' | 'actions' | 'bonusActions' | 'reactions' | 'legendaryActions',
     next: StatBlockAction[]
   ) => {
-    if (!active) return;
-    updateStatBlock(active.id, { [list]: next } as Partial<StatBlock>);
+    if (!current) return;
+    setDraft((d) => (d ? { ...d, [list]: next } : d));
+    setDirty(true);
   };
 
   const addRow = (list: 'traits' | 'actions' | 'bonusActions' | 'reactions' | 'legendaryActions') => {
-    if (!active) return;
-    updateList(list, [...active[list], { id: uid(), name: '', desc: '' }]);
+    if (!current) return;
+    updateList(list, [...current[list], { id: uid(), name: '', desc: '' }]);
+  };
+
+  const saveDraft = () => {
+    if (!draft) return;
+    updateStatBlock(draft.id, draft);
+    setDirty(false);
   };
 
   const cloneActive = () => {
-    if (!active) return;
+    if (!current) return;
     const id = uid();
-    const copy: StatBlock = { ...active, id, name: `${active.name} (copy)` };
+    const copy: StatBlock = { ...current, id, name: `${current.name} (copy)` };
     useStore.setState((s) => ({
       statBlocks: [...s.statBlocks, copy],
       activeStatBlockId: id,
@@ -69,19 +87,20 @@ export default function StatBlocks() {
   };
 
   const exportJson = () => {
-    if (!active) return;
-    const blob = new Blob([JSON.stringify(active, null, 2)], { type: 'application/json' });
+    if (!current) return;
+    const blob = new Blob([JSON.stringify(current, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `${active.name.replace(/\s+/g, '-').toLowerCase()}.json`;
+    a.download = `${current.name.replace(/\s+/g, '-').toLowerCase()}.json`;
     a.click();
     URL.revokeObjectURL(url);
   };
 
   const handleCrChange = (cr: string) => {
-    updateField('cr', cr);
-    if (CR_XP[cr]) updateField('xp', CR_XP[cr]);
+    if (!current) return;
+    setDraft((d) => (d ? { ...d, cr, ...(CR_XP[cr] ? { xp: CR_XP[cr] } : {}) } : d));
+    setDirty(true);
   };
 
   return (
@@ -131,25 +150,27 @@ export default function StatBlocks() {
         </aside>
 
         <section className="flex-1 min-w-0 overflow-y-auto">
-          {!active ? (
+          {!current ? (
             <div className="h-full flex items-center justify-center text-slate-500 text-center px-8">
               Create a 2014 or 2024 stat block to begin, or import one from the SRD.
             </div>
           ) : (
             <div className="grid grid-cols-1 2xl:grid-cols-2 gap-6 px-6 py-6">
               <StatBlockEditor
-                sb={active}
+                sb={current}
+                dirty={dirty}
                 updateField={updateField}
                 updateList={updateList}
                 addRow={addRow}
                 onClone={cloneActive}
                 onExport={exportJson}
+                onSave={saveDraft}
                 onDelete={() => {
-                  if (confirm('Delete this stat block?')) deleteStatBlock(active.id);
+                  if (confirm('Delete this stat block?')) deleteStatBlock(current.id);
                 }}
                 onCr={handleCrChange}
               />
-              <StatBlockPreview sb={active} />
+              <StatBlockPreview sb={current} />
             </div>
           )}
         </section>
@@ -281,15 +302,18 @@ function SrdImport({
 
 function StatBlockEditor({
   sb,
+  dirty,
   updateField,
   updateList,
   addRow,
   onClone,
   onExport,
+  onSave,
   onDelete,
   onCr,
 }: {
   sb: StatBlock;
+  dirty: boolean;
   updateField: <K extends keyof StatBlock>(k: K, v: StatBlock[K]) => void;
   updateList: (
     list: 'traits' | 'actions' | 'bonusActions' | 'reactions' | 'legendaryActions',
@@ -298,6 +322,7 @@ function StatBlockEditor({
   addRow: (list: 'traits' | 'actions' | 'bonusActions' | 'reactions' | 'legendaryActions') => void;
   onClone: () => void;
   onExport: () => void;
+  onSave: () => void;
   onDelete: () => void;
   onCr: (cr: string) => void;
 }) {
@@ -314,6 +339,15 @@ function StatBlockEditor({
       <div className="flex items-center justify-between">
         <div className="text-xs uppercase tracking-wider text-slate-500">Editor · {sb.edition}</div>
         <div className="flex gap-1">
+          {dirty && (
+            <button
+              onClick={onSave}
+              className="px-2 py-1 text-xs bg-amber-700 hover:bg-amber-600 text-white font-semibold rounded flex items-center gap-1"
+              title="Save changes"
+            >
+              <Save size={13} /> Save
+            </button>
+          )}
           <button
             onClick={onClone}
             className="p-1.5 text-xs bg-slate-900 hover:bg-slate-800 rounded"
