@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { NavLink, Route, Routes, Navigate } from 'react-router-dom';
-import { Dice6, Swords, NotebookPen, Map as MapIcon, BookOpen, Sparkles, Coins, Package, ScrollText, Users, FlaskConical, Dices, LogOut, Copy, Mic, Palette, Eye, EyeOff, Settings, Wand2 } from 'lucide-react';
+import { Dice6, Swords, NotebookPen, Map as MapIcon, BookOpen, Sparkles, Coins, Package, ScrollText, Users, FlaskConical, Dices, LogOut, Copy, Mic, Palette, Eye, EyeOff, Settings, Wand2, BookMarked } from 'lucide-react';
 import DiceRoller from './features/dice/DiceRoller';
 import { QuickDice } from './features/dice/QuickDice';
 import { useQuickDice } from './features/dice/quickDiceStore';
@@ -15,6 +15,7 @@ import Rules from './features/rules/Rules';
 import Party from './features/party/Party';
 import Homebrew from './features/homebrew/Homebrew';
 import Transcription from './features/transcription/Transcription';
+import NPCs from './features/npcs/NPCs';
 import CampaignPicker from './features/session/CampaignPicker';
 import { useSession } from './features/session/sessionStore';
 import { useCampaignSettings } from './features/notes/campaignSettingsStore';
@@ -32,6 +33,7 @@ const nav: NavItem[] = [
   { to: '/initiative', label: 'Initiative', icon: Swords, gmOnly: true },
   { to: '/party', label: 'Party', icon: Users },
   { to: '/notes', label: 'Notes', icon: NotebookPen },
+  { to: '/npcs',  label: 'NPCs',  icon: BookMarked },
   { to: '/map', label: 'Map', icon: MapIcon },
   { to: '/spells', label: 'Spells', icon: Sparkles },
   { to: '/items', label: 'Items', icon: Package },
@@ -303,6 +305,7 @@ function AppShell() {
           <Route path="/dice" element={<DiceRoller />} />
           {role === 'gm' && <Route path="/initiative" element={<Initiative />} />}
           <Route path="/notes" element={<Notes />} />
+          <Route path="/npcs" element={<NPCs />} />
           <Route path="/map" element={<MapBoard />} />
           <Route path="/party" element={<Party />} />
           <Route path="/spells" element={<Spells />} />
