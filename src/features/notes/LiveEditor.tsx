@@ -49,18 +49,8 @@ function tokenClass(token: string): string | null {
   return null;
 }
 
-// ─── Decorator token marks ────────────────────────────────────────────────────
-// Returns [openLen, closeLen] for each token type's syntax markers.
-function markerLens(token: string): [number, number] {
-  if (token.startsWith('%%'))                               return [2, 2]; // %%…%%
-  if (token.startsWith('[['))                               return [2, 2]; // [[…]]
-  if (token.startsWith('$') && !token.startsWith('${'))    return [1, 1]; // $…$  dice
-  return [2, 1]; // &{…}  @{…}  ?{…}  !{…}  ${…}
-}
-
 function buildMarkDecos(view: EditorView): DecorationSet {
   const builder = new RangeSetBuilder<Decoration>();
-
   for (const { from, to } of view.visibleRanges) {
     const text = view.state.doc.sliceString(from, to);
     DECO_RE.lastIndex = 0;
@@ -68,18 +58,7 @@ function buildMarkDecos(view: EditorView): DecorationSet {
     while ((m = DECO_RE.exec(text)) !== null) {
       const cls = tokenClass(m[0]);
       if (!cls) continue;
-      const absFrom = from + m.index;
-      const absTo   = absFrom + m[0].length;
-      const [openLen, closeLen] = markerLens(m[0]);
-      const contentFrom = absFrom + openLen;
-      const contentTo   = absTo   - closeLen;
-      if (contentFrom < contentTo) {
-        builder.add(absFrom,     contentFrom, HIDDEN);
-        builder.add(contentFrom, contentTo,   Decoration.mark({ class: cls }));
-        builder.add(contentTo,   absTo,       HIDDEN);
-      } else {
-        builder.add(absFrom, absTo, Decoration.mark({ class: cls }));
-      }
+      builder.add(from + m.index, from + m.index + m[0].length, Decoration.mark({ class: cls }));
     }
   }
   return builder.finish();
@@ -106,10 +85,7 @@ function buildHeadingDecos(view: EditorView): DecorationSet {
     while (pos <= to) {
       const line = view.state.doc.lineAt(pos);
       const m = H_RE.exec(line.text);
-      if (m) {
-        builder.add(line.from, line.from, Decoration.line({ class: `cm-heading cm-h${m[1].length}` }));
-        builder.add(line.from, line.from + m[0].length, HIDDEN);
-      }
+      if (m) builder.add(line.from, line.from, Decoration.line({ class: `cm-heading cm-h${m[1].length}` }));
       if (line.to >= to) break;
       pos = line.to + 1;
     }
@@ -129,23 +105,12 @@ const headingPlugin = ViewPlugin.fromClass(
 );
 
 // ─── Inline markdown: bold, italic, code ─────────────────────────────────────
-// Separate regexes so there are no ordering conflicts in the builder.
-const BOLD_RE      = /\*\*([^*\n]+?)\*\*/g;
-const ITALIC_RE    = /(?<!\*)\*(?!\*)([^*\n]+?)(?<!\*)\*(?!\*)/g;
-const CODE_INL_RE  = /`([^`\n]+?)`/g;
+const BOLD_RE     = /\*\*([^*\n]+?)\*\*/g;
+const ITALIC_RE   = /(?<!\*)\*(?!\*)([^*\n]+?)(?<!\*)\*(?!\*)/g;
+const CODE_INL_RE = /`([^`\n]+?)`/g;
 
-// Hides markdown syntax markers via CSS — simpler and more reliable than Decoration.replace().
-const HIDDEN = Decoration.mark({ class: 'cm-syn-hidden' });
-
-/** Build decorations for ONE inline pattern. Ranges always in ascending order. */
-function buildInlineDecos(
-  view: EditorView,
-  re: RegExp,
-  markerLen: number,
-  contentCls: string,
-): DecorationSet {
+function buildInlineDecos(view: EditorView, re: RegExp, markerLen: number, cls: string): DecorationSet {
   const builder = new RangeSetBuilder<Decoration>();
-
   for (const { from, to } of view.visibleRanges) {
     const text = view.state.doc.sliceString(from, to);
     re.lastIndex = 0;
@@ -153,13 +118,9 @@ function buildInlineDecos(
     while ((m = re.exec(text)) !== null) {
       const abs = from + m.index;
       const absEnd = abs + m[0].length;
-      const openTo    = abs + markerLen;
-      const closeFrom = absEnd - markerLen;
-      if (openTo <= closeFrom) {
-        builder.add(abs,       openTo,    HIDDEN);
-        builder.add(openTo,    closeFrom, Decoration.mark({ class: contentCls }));
-        builder.add(closeFrom, absEnd,    HIDDEN);
-      }
+      const inner = abs + markerLen;
+      const innerEnd = absEnd - markerLen;
+      if (inner <= innerEnd) builder.add(inner, innerEnd, Decoration.mark({ class: cls }));
     }
   }
   return builder.finish();
@@ -210,41 +171,17 @@ const codeInlinePlugin = ViewPlugin.fromClass(
   { decorations: (v) => v.decorations },
 );
 
-// ─── Lists and blockquotes ────────────────────────────────────────────────────
-const LIST_RE      = /^(\s*)([-*+]|\d+\.) /;
+// ─── Blockquotes ─────────────────────────────────────────────────────────────
 const BLOCKQUOTE_RE = /^(\s*)> /;
-
-class BulletWidget extends WidgetType {
-  constructor(readonly bullet: string) { super(); }
-  toDOM(): HTMLElement {
-    const el = document.createElement('span');
-    el.className = 'cm-bullet-widget';
-    el.textContent = /^\d/.test(this.bullet) ? this.bullet + ' ' : '• ';
-    return el;
-  }
-  eq(other: BulletWidget) { return other.bullet === this.bullet; }
-  ignoreEvent() { return true; }
-}
 
 function buildListDecos(view: EditorView): DecorationSet {
   const builder = new RangeSetBuilder<Decoration>();
-
   for (const { from, to } of view.visibleRanges) {
     let pos = from;
     while (pos <= to) {
       const line = view.state.doc.lineAt(pos);
-      const lm = LIST_RE.exec(line.text);
-      if (lm) {
-        const indent    = lm[1].length;
-        const markerStart = line.from + indent;
-        const markerEnd   = markerStart + lm[2].length + 1;
-        builder.add(markerStart, markerEnd, Decoration.replace({ widget: new BulletWidget(lm[2]) }));
-      }
-      if (BLOCKQUOTE_RE.test(line.text)) {
+      if (BLOCKQUOTE_RE.test(line.text))
         builder.add(line.from, line.from, Decoration.line({ class: 'cm-blockquote-line' }));
-        const bqEnd = line.from + line.text.match(/^(\s*> )/)![0].length;
-        builder.add(line.from, bqEnd, HIDDEN);
-      }
       if (line.to >= to) break;
       pos = line.to + 1;
     }
@@ -409,7 +346,6 @@ const noteTheme = EditorView.theme(
     '.cm-h3': { fontSize: '1.15em !important' },
 
     // ── Inline markdown ───────────────────────────────────────────────────────
-    '.cm-syn-hidden':  { display: 'none' },
     '.cm-bold':        { fontWeight: '700' },
     '.cm-italic':      { fontStyle: 'italic' },
     '.cm-code-inline': {
@@ -427,10 +363,6 @@ const noteTheme = EditorView.theme(
       paddingLeft: '0.75em',
       color: '#94a3b8',
       fontStyle: 'italic',
-    },
-    '.cm-bullet-widget': {
-      color: '#94a3b8',
-      userSelect: 'none',
     },
 
     // ── Decorator tokens ──────────────────────────────────────────────────────
@@ -499,30 +431,6 @@ const noteTheme = EditorView.theme(
   },
   { dark: true },
 );
-
-// ─── Auto-pair ────────────────────────────────────────────────────────────────
-const autoPairExt = EditorView.inputHandler.of((view, from, to, text) => {
-  const before = view.state.doc.sliceString(Math.max(0, from - 1), from);
-  if (text === '{') {
-    if ('@?!$'.includes(before)) {
-      view.dispatch({ changes: { from, to, insert: '{}' }, selection: { anchor: from + 1 } });
-      return true;
-    }
-    if (before === '{') {
-      view.dispatch({ changes: { from, to, insert: '}}' }, selection: { anchor: from + 1 } });
-      return true;
-    }
-  }
-  if (text === '[' && before === '[') {
-    view.dispatch({ changes: { from, to, insert: '[]' }, selection: { anchor: from + 1 } });
-    return true;
-  }
-  if (text === '%' && before === '%') {
-    view.dispatch({ changes: { from, to, insert: '%%' }, selection: { anchor: from + 1 } });
-    return true;
-  }
-  return false;
-});
 
 // ─── Wiki suggestion state ────────────────────────────────────────────────────
 type SuggestState = {
@@ -658,7 +566,6 @@ export function LiveEditor({ body, onChange, wikiIndex, onNavigate, rollFormula,
           codeInlinePlugin,
           markPlugin,
           clickExt,
-          autoPairExt,
           noteTheme,
           EditorView.lineWrapping,
           EditorView.updateListener.of((update) => {
