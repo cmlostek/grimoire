@@ -113,6 +113,7 @@ function CampaignScreen() {
   const error = useSession((s) => s.error);
   const loading = useSession((s) => s.loading);
   const refreshMyCampaigns = useSession((s) => s.refreshMyCampaigns);
+  const signOut = useSession((s) => s.signOut);
 
   useEffect(() => {
     refreshMyCampaigns();
@@ -143,6 +144,14 @@ function CampaignScreen() {
                 className="w-full px-4 py-3 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 flex items-center justify-center gap-2"
               >
                 <LogIn size={16} /> Join with a code
+              </button>
+            </div>
+            <div className="text-center">
+              <button
+                onClick={() => signOut()}
+                className="text-xs text-slate-500 hover:text-slate-300 underline underline-offset-2"
+              >
+                Sign out
               </button>
             </div>
           </>
