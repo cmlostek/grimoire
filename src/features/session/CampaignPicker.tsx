@@ -32,7 +32,7 @@ function AuthScreen() {
       <div className="w-full max-w-sm space-y-6">
         <div className="text-center space-y-1">
           <div className="font-serif text-3xl tracking-wide flex items-center justify-center gap-3">
-            <Swords className="text-sky-400" size={28} /> GM Screen
+            <Swords style={{ color: 'var(--ac-400)' }} size={28} /> Grimoire
           </div>
           <div className="text-sm text-slate-500">D&amp;D 5e campaign companion</div>
         </div>
@@ -41,13 +41,15 @@ function AuthScreen() {
           <div className="flex gap-1 rounded overflow-hidden border border-slate-800 text-xs">
             <button
               onClick={() => setMode('signin')}
-              className={`flex-1 py-1.5 ${mode === 'signin' ? 'bg-sky-900/40 text-sky-200' : 'bg-slate-900 text-slate-400 hover:bg-slate-800'}`}
+              className={`flex-1 py-1.5 ${mode !== 'signin' ? 'bg-slate-900 text-slate-400 hover:bg-slate-800' : ''}`}
+              style={mode === 'signin' ? { background: 'color-mix(in srgb, var(--ac-900) 40%, transparent)', color: 'var(--ac-200)' } : undefined}
             >
               Sign in
             </button>
             <button
               onClick={() => setMode('signup')}
-              className={`flex-1 py-1.5 ${mode === 'signup' ? 'bg-sky-900/40 text-sky-200' : 'bg-slate-900 text-slate-400 hover:bg-slate-800'}`}
+              className={`flex-1 py-1.5 ${mode !== 'signup' ? 'bg-slate-900 text-slate-400 hover:bg-slate-800' : ''}`}
+              style={mode === 'signup' ? { background: 'color-mix(in srgb, var(--ac-900) 40%, transparent)', color: 'var(--ac-200)' } : undefined}
             >
               Create account
             </button>
@@ -86,7 +88,7 @@ function AuthScreen() {
           <button
             onClick={submit}
             disabled={!email.trim() || !password.trim() || loading}
-            className="w-full px-3 py-2 rounded bg-sky-700 hover:bg-sky-600 disabled:bg-slate-800 disabled:text-slate-600 text-slate-950 font-semibold text-sm flex items-center justify-center gap-2"
+            className="ac-btn w-full px-3 py-2 rounded disabled:bg-slate-800 disabled:text-slate-600 font-semibold text-sm flex items-center justify-center gap-2"
           >
             <LogIn size={14} />
             {mode === 'signin' ? 'Sign in' : 'Create account'}
@@ -124,7 +126,7 @@ function CampaignScreen() {
       <div className="w-full max-w-md space-y-6">
         <div className="text-center space-y-1">
           <div className="font-serif text-3xl tracking-wide flex items-center justify-center gap-3">
-            <Swords className="text-sky-400" size={28} /> GM Screen
+            <Swords style={{ color: 'var(--ac-400)' }} size={28} /> Grimoire
           </div>
           <div className="text-sm text-slate-500">D&amp;D 5e campaign companion</div>
         </div>
@@ -135,7 +137,7 @@ function CampaignScreen() {
             <div className="space-y-3">
               <button
                 onClick={() => setMode('create')}
-                className="w-full px-4 py-3 rounded-lg bg-sky-700 hover:bg-sky-600 text-slate-950 font-semibold flex items-center justify-center gap-2"
+                className="ac-btn w-full px-4 py-3 rounded-lg font-semibold flex items-center justify-center gap-2"
               >
                 <Plus size={16} /> Create a new campaign
               </button>
@@ -243,7 +245,7 @@ function CreateForm({ onBack }: { onBack: () => void }) {
         <button
           onClick={submit}
           disabled={!name.trim() || !displayName.trim()}
-          className="flex-1 px-3 py-2 rounded bg-sky-700 hover:bg-sky-600 disabled:bg-slate-800 disabled:text-slate-600 text-slate-950 font-semibold text-sm"
+          className="ac-btn flex-1 px-3 py-2 rounded disabled:bg-slate-800 disabled:text-slate-600 font-semibold text-sm"
         >
           Create
         </button>
@@ -290,7 +292,7 @@ function JoinForm({ onBack }: { onBack: () => void }) {
         <button
           onClick={submit}
           disabled={!code.trim() || !displayName.trim()}
-          className="flex-1 px-3 py-2 rounded bg-sky-700 hover:bg-sky-600 disabled:bg-slate-800 disabled:text-slate-600 text-slate-950 font-semibold text-sm"
+          className="ac-btn flex-1 px-3 py-2 rounded disabled:bg-slate-800 disabled:text-slate-600 font-semibold text-sm"
         >
           Join
         </button>

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { NavLink, Route, Routes, Navigate } from 'react-router-dom';
-import { Dice6, Swords, NotebookPen, Map as MapIcon, BookOpen, Sparkles, Coins, Package, ScrollText, Users, FlaskConical, Dices, LogOut, Copy, Mic, Palette, Eye, EyeOff, Settings } from 'lucide-react';
+import { Dice6, Swords, NotebookPen, Map as MapIcon, BookOpen, Sparkles, Coins, Package, ScrollText, Users, FlaskConical, Dices, LogOut, Copy, Mic, Palette, Eye, EyeOff, Settings, Wand2 } from 'lucide-react';
 import DiceRoller from './features/dice/DiceRoller';
 import { QuickDice } from './features/dice/QuickDice';
 import { useQuickDice } from './features/dice/quickDiceStore';
@@ -18,6 +18,7 @@ import Transcription from './features/transcription/Transcription';
 import CampaignPicker from './features/session/CampaignPicker';
 import { useSession } from './features/session/sessionStore';
 import { useCampaignSettings } from './features/notes/campaignSettingsStore';
+import { useTheme, THEMES, type Theme } from './features/session/themeStore';
 
 type NavItem = {
   to: string;
@@ -97,6 +98,8 @@ function AppShell() {
   const [bgColor, setBgColor] = useBgColor();
   const [showBgPicker, setShowBgPicker] = useState(false);
   const [showPagePicker, setShowPagePicker] = useState(false);
+  const [showThemePicker, setShowThemePicker] = useState(false);
+  const { theme, setTheme } = useTheme();
   const isGM = role === 'gm';
 
   const loadSettings = useCampaignSettings((s) => s.load);
@@ -126,7 +129,7 @@ function AppShell() {
         <div className="px-4 py-3 border-b border-slate-800 flex items-start justify-between gap-2">
           <div className="min-w-0">
             <div className="font-serif text-lg tracking-wide truncate" title={campaignName ?? ''}>
-              {campaignName ?? 'GM Screen'}
+              {campaignName ?? 'Grimoire'}
             </div>
             <div className="text-[11px] text-slate-500 flex items-center gap-1 truncate">
               <span className={role === 'gm' ? 'text-emerald-400' : 'text-sky-400'}>
@@ -141,9 +144,10 @@ function AppShell() {
             title="Quick dice roller"
             className={`p-1.5 rounded border shrink-0 ${
               quickDiceOpen
-                ? 'bg-sky-900/50 border-sky-700 text-sky-200'
+                ? 'bg-slate-900'
                 : 'bg-slate-800 border-slate-700 hover:bg-slate-700 text-slate-300'
             }`}
+            style={quickDiceOpen ? { color: 'var(--ac-200)', borderColor: 'var(--ac-700)' } : undefined}
           >
             <Dices size={14} />
           </button>
@@ -167,12 +171,13 @@ function AppShell() {
               key={to}
               to={to}
               className={({ isActive }) =>
-                `flex items-center gap-3 px-4 py-2 text-sm transition-colors ${
+                `flex items-center gap-3 px-4 py-2 text-sm transition-colors border-l-2 ${
                   isActive
-                    ? 'bg-slate-800 text-sky-200 border-l-2 border-sky-400'
-                    : 'text-slate-300 hover:bg-slate-900 hover:text-slate-100 border-l-2 border-transparent'
+                    ? 'bg-slate-800'
+                    : 'text-slate-300 hover:bg-slate-900 hover:text-slate-100 border-transparent'
                 }`
               }
+              style={({ isActive }) => isActive ? { color: 'var(--ac-200)', borderLeftColor: 'var(--ac-400)' } : undefined}
             >
               <Icon size={16} />
               {label}
@@ -180,6 +185,25 @@ function AppShell() {
           ))}
         </nav>
         <div className="border-t border-slate-800">
+          {showThemePicker && (
+            <div className="px-4 py-2 border-b border-slate-800">
+              <div className="text-[10px] uppercase tracking-wider text-slate-500 mb-2">Accent theme</div>
+              <div className="flex gap-1.5 flex-wrap">
+                {(Object.entries(THEMES) as [Theme, typeof THEMES[Theme]][]).map(([key, t]) => (
+                  <button
+                    key={key}
+                    onClick={() => setTheme(key)}
+                    title={t.label}
+                    className="w-6 h-6 rounded-full border-none transition-all"
+                    style={{
+                      backgroundColor: t.swatch,
+                      boxShadow: theme === key ? `0 0 0 2px #0f172a, 0 0 0 4px ${t.swatch}` : 'none',
+                    }}
+                  />
+                ))}
+              </div>
+            </div>
+          )}
           {showBgPicker && (
             <div className="px-4 py-2 border-b border-slate-800">
               <div className="text-[10px] uppercase tracking-wider text-slate-500 mb-2">Background</div>
@@ -189,8 +213,8 @@ function AppShell() {
                     key={p.value}
                     onClick={() => setBgColor(p.value)}
                     title={p.label}
-                    className={`w-6 h-6 rounded-full border-2 ${bgColor === p.value ? 'border-sky-400' : 'border-slate-700 hover:border-slate-500'}`}
-                    style={{ backgroundColor: p.value }}
+                    className={`w-6 h-6 rounded-full border-2 ${bgColor !== p.value ? 'border-slate-700 hover:border-slate-500' : ''}`}
+                    style={{ backgroundColor: p.value, ...(bgColor === p.value ? { borderColor: 'var(--ac-400)' } : {}) }}
                   />
                 ))}
                 <input
@@ -246,6 +270,12 @@ function AppShell() {
               <Settings size={12} /> Player visibility
             </button>
           )}
+          <button
+            onClick={() => setShowThemePicker((v) => !v)}
+            className="w-full px-4 py-2 text-xs text-slate-500 hover:text-slate-300 hover:bg-slate-900 flex items-center gap-2"
+          >
+            <Wand2 size={12} /> Accent theme
+          </button>
           <button
             onClick={() => setShowBgPicker((v) => !v)}
             className="w-full px-4 py-2 text-xs text-slate-500 hover:text-slate-300 hover:bg-slate-900 flex items-center gap-2"

@@ -2,8 +2,24 @@
 @tailwind components;
 @tailwind utilities;
 
+:root {
+  --ac-200: #ddd6fe;
+  --ac-400: #a78bfa;
+  --ac-600: #7c3aed;
+  --ac-700: #6d28d9;
+  --ac-900: #2e1065;
+}
+
 html, body, #root { height: 100%; }
 body { margin: 0; }
+
+.ac-btn {
+  background-color: var(--ac-700);
+  color: white;
+}
+.ac-btn:hover:not(:disabled) {
+  background-color: var(--ac-600);
+}
 
 /* Hide spinner arrows on number inputs (they eat space in narrow stat fields) */
 input[type="number"]::-webkit-outer-spin-button,
