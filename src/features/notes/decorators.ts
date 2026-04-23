@@ -14,9 +14,10 @@ const S_WCLOSE = '\uE006'; // ]]
 
 // Note: \$(?!\{) matches $ NOT followed by { so it doesn't swallow ${artifact}
 const TOKEN =
-  /(@\{[^}\n]+\}|\?\{[^}\n]+\}|!\{[^}\n]+\}|\$\{[^}\n]+\}|\$(?!\{)[^$\n]+\$|%%[^%\n]+?%%|\{\{[^}\n]+\}\}|\uE005[^\uE006\n]+\uE006)/g;
+  /(&\{[^}\n]+\}|@\{[^}\n]+\}|\?\{[^}\n]+\}|!\{[^}\n]+\}|\$\{[^}\n]+\}|\$(?!\{)[^$\n]+\$|%%[^%\n]+?%%|\{\{[^}\n]+\}\}|\uE005[^\uE006\n]+\uE006)/g;
 
 const MULTILINE_TRANSFORMS: Array<[RegExp, string, string]> = [
+  [/&\{([\s\S]*?)\}/g,  '&{', '}'],
   [/@\{([\s\S]*?)\}/g,  '@{', '}'],
   [/\?\{([\s\S]*?)\}/g, '?{', '}'],
   [/!\{([\s\S]*?)\}/g,  '!{', '}'],
@@ -136,8 +137,24 @@ function classify(
   wiki: WikiEntry[],
   secretCounter: () => number
 ): PhrasingContent | null {
+  if (raw.startsWith('&{') && raw.endsWith('}')) {
+    const name = restore(raw.slice(2, -1));
+    const hit = findWiki(wiki, name);
+    if (hit) {
+      return {
+        type: 'html',
+        value: '',
+        data: {
+          hName: 'span',
+          hProperties: { className: 'note-deco note-loc note-loc-link', 'data-wiki-route': hit.route },
+          hChildren: [{ type: 'text', value: name }],
+        },
+      } as unknown as PhrasingContent;
+    }
+    return makeSpan('note-deco note-loc', name);
+  }
   if (raw.startsWith('@{') && raw.endsWith('}')) {
-    return makeSpan('note-deco note-loc', restore(raw.slice(2, -1)));
+    return makeSpan('note-deco note-player', restore(raw.slice(2, -1)));
   }
   if (raw.startsWith('?{') && raw.endsWith('}')) {
     return makeSpan('note-deco note-dep', restore(raw.slice(2, -1)));

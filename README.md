@@ -246,7 +246,8 @@ The note editor supports custom inline syntax on top of standard markdown. Synta
 
 | Syntax | Renders as | Use for |
 |--------|-----------|---------|
-| `@{The Hall of Noon}` | 🟠 Orange badge | Locations & places |
+| `&{The Hall of Noon}` | 🟠 Orange badge | Locations — click to open the matching note |
+| `@{Aria Swiftwind}` | 🟢 Green badge | Player refs — hover to see character stats |
 | `?{The heir must be found}` | 🔴 Pink badge | Plot dependencies / conditions |
 | `!{The Siege Begins}` | 🔵 Blue badge | Milestone events |
 | `${The Sunblade}` | 🟢 Green badge | Artifacts & key items |

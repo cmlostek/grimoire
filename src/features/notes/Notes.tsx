@@ -323,8 +323,11 @@ export default function Notes() {
               <div className="text-[10px] uppercase tracking-wider text-slate-500 mb-1">
                 Note decorators
               </div>
-              <LegendRow syntax="@{Waterdeep}" label="location">
+              <LegendRow syntax="&{Waterdeep}" label="location (click → note)">
                 <span className="note-deco note-loc">Waterdeep</span>
+              </LegendRow>
+              <LegendRow syntax="@{Aria}" label="player ref (hover → stats)">
+                <span className="note-deco note-player">Aria</span>
               </LegendRow>
               <LegendRow syntax="?{retrieve key}" label="dependency">
                 <span className="note-deco note-dep">retrieve key</span>
@@ -681,6 +684,16 @@ export default function Notes() {
                             );
                           }
                           if (className.includes('note-loc')) {
+                            const route = p['data-wiki-route'] as string | undefined;
+                            if (route) {
+                              return (
+                                <span className={className} onClick={() => onWikiClick(route)} style={{ cursor: 'pointer' }}>
+                                  {children}
+                                </span>
+                              );
+                            }
+                          }
+                          if (className.includes('note-player')) {
                             const text = extractText(children);
                             const member = party.find(
                               (m) => m.name.trim().toLowerCase() === text.trim().toLowerCase()

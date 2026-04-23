@@ -33,12 +33,13 @@ import { Shield, Heart } from 'lucide-react';
 
 // ─── Decorator token regex (secrets excluded — handled by secretPlugin) ───────
 const DECO_RE =
-  /(@\{[^}\n]+\}|\?\{[^}\n]+\}|!\{[^}\n]+\}|\$\{[^}\n]+\}|\$(?!\{)[^$\n]+\$|%%[^%\n]+?%%|\[\[[^\]\n]+\]\])/g;
+  /(&\{[^}\n]+\}|@\{[^}\n]+\}|\?\{[^}\n]+\}|!\{[^}\n]+\}|\$\{[^}\n]+\}|\$(?!\{)[^$\n]+\$|%%[^%\n]+?%%|\[\[[^\]\n]+\]\])/g;
 
 const SECRET_RE = /\{\{(!?[^}\n]*?)\}\}/g;
 
 function tokenClass(token: string): string | null {
-  if (token.startsWith('@{'))  return 'cm-d-loc';
+  if (token.startsWith('&{'))  return 'cm-d-loc';
+  if (token.startsWith('@{'))  return 'cm-d-player';
   if (token.startsWith('?{'))  return 'cm-d-dep';
   if (token.startsWith('!{'))  return 'cm-d-milestone';
   if (token.startsWith('${'))  return 'cm-d-artifact';
@@ -54,7 +55,7 @@ function markerLens(token: string): [number, number] {
   if (token.startsWith('%%'))                               return [2, 2]; // %%…%%
   if (token.startsWith('[['))                               return [2, 2]; // [[…]]
   if (token.startsWith('$') && !token.startsWith('${'))    return [1, 1]; // $…$  dice
-  return [2, 1]; // @{…}  ?{…}  !{…}  ${…}
+  return [2, 1]; // &{…}  @{…}  ?{…}  !{…}  ${…}
 }
 
 function buildMarkDecos(view: EditorView): DecorationSet {
@@ -433,7 +434,8 @@ const noteTheme = EditorView.theme(
     },
 
     // ── Decorator tokens ──────────────────────────────────────────────────────
-    '.cm-d-loc':       { background: 'rgba(251,146,60,.18)',  color: '#fdba74', borderRadius: '0.25em', padding: '0.05em 0.25em' },
+    '.cm-d-loc':       { background: 'rgba(251,146,60,.18)',  color: '#fdba74', borderRadius: '0.25em', padding: '0.05em 0.25em', cursor: 'pointer' },
+    '.cm-d-player':    { background: 'rgba(34,197,94,.18)',   color: '#86efac', borderRadius: '0.25em', padding: '0.05em 0.25em' },
     '.cm-d-dep':       { background: 'rgba(244,63,94,.18)',   color: '#fda4af', borderRadius: '0.25em', padding: '0.05em 0.25em' },
     '.cm-d-milestone': { background: 'rgba(56,189,248,.18)',  color: '#7dd3fc', borderRadius: '0.25em', padding: '0.05em 0.25em' },
     '.cm-d-artifact':  { background: 'rgba(34,197,94,.18)',   color: '#86efac', borderRadius: '0.25em', padding: '0.05em 0.25em' },
@@ -624,6 +626,13 @@ export function LiveEditor({ body, onChange, wikiIndex, onNavigate, rollFormula,
           if (hit) navRef.current(hit.route);
           return true;
         }
+        if (token.startsWith('&{') && token.endsWith('}')) {
+          event.preventDefault();
+          const name = token.slice(2, -1).trim();
+          const hit  = wikiRef.current.find((e) => e.name === name);
+          if (hit) navRef.current(hit.route);
+          return true;
+        }
       }
       return false;
     },
@@ -713,7 +722,7 @@ export function LiveEditor({ body, onChange, wikiIndex, onNavigate, rollFormula,
       style={{ minHeight: 0 }}
       onMouseOver={(e) => {
         const target = e.target as HTMLElement;
-        const locEl = target.closest('.cm-d-loc') as HTMLElement | null;
+        const locEl = target.closest('.cm-d-player') as HTMLElement | null;
         if (hoverTimerRef.current) { clearTimeout(hoverTimerRef.current); hoverTimerRef.current = null; }
         if (locEl) {
           const text = locEl.textContent?.trim() ?? '';
@@ -727,7 +736,7 @@ export function LiveEditor({ body, onChange, wikiIndex, onNavigate, rollFormula,
       }}
       onMouseOut={(e) => {
         const related = e.relatedTarget as HTMLElement | null;
-        if (!related?.closest('.cm-d-loc') && !related?.closest('[data-party-tooltip]')) {
+        if (!related?.closest('.cm-d-player') && !related?.closest('[data-party-tooltip]')) {
           if (hoverTimerRef.current) clearTimeout(hoverTimerRef.current);
           hoverTimerRef.current = setTimeout(() => setHoverTooltip(null), 150);
         }
