@@ -27,6 +27,9 @@ import {
   indentWithTab,
 } from '@codemirror/commands';
 import { searchWiki, kindLabel, type WikiEntry } from './wikiIndex';
+import { modifier } from '../../data/srd';
+import type { PartyMember } from '../party/partyStore';
+import { Shield, Heart } from 'lucide-react';
 
 // ─── Decorator token regex (secrets excluded — handled by secretPlugin) ───────
 const DECO_RE =
@@ -535,10 +538,16 @@ type Props = {
   wikiIndex: WikiEntry[];
   onNavigate: (path: string) => void;
   rollFormula: (formula: string) => void;
+  party: PartyMember[];
 };
 
+// ─── Abilities for party tooltip ─────────────────────────────────────────────
+const PARTY_ABILITIES = ['str', 'dex', 'con', 'int', 'wis', 'cha'] as const;
+
+type HoverTooltip = { member: PartyMember; rect: DOMRect };
+
 // ─── Component ────────────────────────────────────────────────────────────────
-export function LiveEditor({ body, onChange, wikiIndex, onNavigate, rollFormula }: Props) {
+export function LiveEditor({ body, onChange, wikiIndex, onNavigate, rollFormula, party }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const viewRef      = useRef<EditorView | null>(null);
 
@@ -546,10 +555,14 @@ export function LiveEditor({ body, onChange, wikiIndex, onNavigate, rollFormula 
   const wikiRef      = useRef(wikiIndex); wikiRef.current      = wikiIndex;
   const navRef       = useRef(onNavigate); navRef.current      = onNavigate;
   const rollRef      = useRef(rollFormula); rollRef.current    = rollFormula;
+  const partyRef     = useRef(party);     partyRef.current     = party;
 
   const [suggest, setSuggest] = useState<SuggestState | null>(null);
   const suggestRef = useRef(suggest);
   suggestRef.current = suggest;
+
+  const [hoverTooltip, setHoverTooltip] = useState<HoverTooltip | null>(null);
+  const hoverTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const acceptSuggestion = useCallback((entry: WikiEntry) => {
     const view = viewRef.current;
@@ -695,8 +708,86 @@ export function LiveEditor({ body, onChange, wikiIndex, onNavigate, rollFormula 
   }, [body]);
 
   return (
-    <div className="relative h-full" style={{ minHeight: 0 }}>
+    <div
+      className="relative h-full"
+      style={{ minHeight: 0 }}
+      onMouseOver={(e) => {
+        const target = e.target as HTMLElement;
+        const locEl = target.closest('.cm-d-loc') as HTMLElement | null;
+        if (hoverTimerRef.current) { clearTimeout(hoverTimerRef.current); hoverTimerRef.current = null; }
+        if (locEl) {
+          const text = locEl.textContent?.trim() ?? '';
+          const member = partyRef.current.find(
+            (m) => m.name.trim().toLowerCase() === text.toLowerCase()
+          );
+          if (member) setHoverTooltip({ member, rect: locEl.getBoundingClientRect() });
+        } else if (!target.closest('[data-party-tooltip]')) {
+          hoverTimerRef.current = setTimeout(() => setHoverTooltip(null), 150);
+        }
+      }}
+      onMouseOut={(e) => {
+        const related = e.relatedTarget as HTMLElement | null;
+        if (!related?.closest('.cm-d-loc') && !related?.closest('[data-party-tooltip]')) {
+          if (hoverTimerRef.current) clearTimeout(hoverTimerRef.current);
+          hoverTimerRef.current = setTimeout(() => setHoverTooltip(null), 150);
+        }
+      }}
+    >
       <div ref={containerRef} className="h-full" />
+
+      {hoverTooltip && createPortal(
+        (() => {
+          const m = hoverTooltip.member;
+          const rect = hoverTooltip.rect;
+          const tooltipW = 264;
+          const tooltipH = 190;
+          const above = rect.bottom + tooltipH + 10 > window.innerHeight;
+          const top  = above ? rect.top - tooltipH - 6 : rect.bottom + 6;
+          const left = Math.max(8, Math.min(rect.left, window.innerWidth - tooltipW - 8));
+          const hpPct = m.maxHp > 0 ? Math.min(100, (m.hp / m.maxHp) * 100) : 0;
+          const hpColor = hpPct > 50 ? '#10b981' : hpPct > 25 ? '#38bdf8' : '#f87171';
+          return (
+            <div
+              data-party-tooltip="true"
+              className="party-tooltip"
+              style={{ position: 'fixed', top, left, zIndex: 9999, width: tooltipW }}
+              onMouseEnter={() => { if (hoverTimerRef.current) { clearTimeout(hoverTimerRef.current); hoverTimerRef.current = null; } }}
+              onMouseLeave={() => { hoverTimerRef.current = setTimeout(() => setHoverTooltip(null), 150); }}
+            >
+              <div className="party-tooltip-name">{m.name}</div>
+              <div className="party-tooltip-sub">
+                {m.classSummary} · {m.race}
+                {m.owner_user_id && <span className="party-tooltip-owned"> · Lv {m.level}</span>}
+              </div>
+              <div className="party-tooltip-stats">
+                <span><Shield size={11} /> AC {m.ac}</span>
+                <span><Heart size={11} className="text-rose-400" /> {m.hp}/{m.maxHp}</span>
+                <span>Init {m.initiativeBonus >= 0 ? '+' : ''}{m.initiativeBonus}</span>
+              </div>
+              <div className="party-tooltip-hp-bar">
+                <div style={{ width: `${hpPct}%`, background: hpColor }} />
+              </div>
+              <div className="party-tooltip-abilities">
+                {PARTY_ABILITIES.map((a) => (
+                  <div key={a} className="party-tooltip-ability">
+                    <div className="party-tooltip-ability-label">{a.toUpperCase()}</div>
+                    <div className="party-tooltip-ability-score">{m[a]}</div>
+                    <div className="party-tooltip-ability-mod">{modifier(m[a])}</div>
+                  </div>
+                ))}
+              </div>
+              {(m.passivePerception || m.passiveInvestigation || m.passiveInsight) ? (
+                <div className="party-tooltip-passives">
+                  <span>Perc {m.passivePerception}</span>
+                  <span>Inv {m.passiveInvestigation}</span>
+                  <span>Ins {m.passiveInsight}</span>
+                </div>
+              ) : null}
+            </div>
+          );
+        })(),
+        document.body,
+      )}
 
       {suggest && createPortal(
         <div

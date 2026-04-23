@@ -219,12 +219,20 @@ export const useParty = create<PartyState>((set, get) => ({
     const optimistic = { ...prev, ...patch };
     set((s) => ({ party: s.party.map((p) => (p.id === id ? optimistic : p)) }));
     const update = patchToUpdate(prev, patch);
-    const { error } = await supabase.from('party_members').update(update).eq('id', id);
+    const { data, error } = await supabase
+      .from('party_members')
+      .update(update)
+      .eq('id', id)
+      .select()
+      .single();
     if (error) {
       set((s) => ({
         party: s.party.map((p) => (p.id === id ? prev : p)),
         error: error.message,
       }));
+    } else if (data) {
+      const saved = rowToMember(data as Row);
+      set((s) => ({ party: s.party.map((p) => (p.id === id ? saved : p)) }));
     }
   },
 

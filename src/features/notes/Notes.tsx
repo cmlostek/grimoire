@@ -638,6 +638,7 @@ export default function Notes() {
                     wikiIndex={wikiIndex}
                     onNavigate={onWikiClick}
                     rollFormula={rollFormula}
+                    party={party}
                   />
                 ) : (
                   /* Read-only rendered view for players / non-owners */

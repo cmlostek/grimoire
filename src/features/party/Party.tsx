@@ -3,6 +3,7 @@ import PageHeader from '../../components/PageHeader';
 import { useParty, type PartyMember } from './partyStore';
 import { useSession } from '../session/sessionStore';
 import { useVisibilityReload } from '../../hooks/useVisibilityReload';
+import { supabase } from '../../lib/supabase';
 import { parseDdb, parseGenericJson, isLikelyDdb, isDdbWrapper } from './ddb';
 import { modifier } from '../../data/srd';
 import {
@@ -56,11 +57,23 @@ export default function Party() {
   const unclaim = useParty((s) => s.unclaim);
 
   const [addMode, setAddMode] = useState<AddMode>(null);
+  const [memberNames, setMemberNames] = useState<Record<string, string>>({});
 
   useEffect(() => {
     if (!campaignId) return;
     loadForCampaign(campaignId);
     const unsub = subscribe(campaignId);
+    supabase
+      .from('campaign_members')
+      .select('user_id, display_name')
+      .eq('campaign_id', campaignId)
+      .then(({ data }) => {
+        if (data) {
+          const map: Record<string, string> = {};
+          data.forEach((row) => { map[row.user_id] = row.display_name; });
+          setMemberNames(map);
+        }
+      });
     return unsub;
   }, [campaignId, loadForCampaign, subscribe]);
 
@@ -114,6 +127,7 @@ export default function Party() {
               userId={userId}
               isGM={isGM}
               editable={canEdit(m)}
+              memberNames={memberNames}
               onUpdate={(p) => updatePartyMember(m.id, p) as Promise<void>}
               onRemove={() => removePartyMember(m.id)}
               onClaim={() => claim(m.id)}
@@ -141,6 +155,7 @@ function CharCard({
   userId,
   isGM,
   editable,
+  memberNames,
   onUpdate,
   onRemove,
   onClaim,
@@ -150,6 +165,7 @@ function CharCard({
   userId: string | null;
   isGM: boolean;
   editable: boolean;
+  memberNames: Record<string, string>;
   onUpdate: (p: Partial<PartyMember>) => Promise<void>;
   onRemove: () => void;
   onClaim: () => void;
@@ -264,7 +280,12 @@ function CharCard({
             <UserCheck size={11} /> Yours
           </span>
         ) : owned ? (
-          <span className="flex items-center gap-1 text-slate-500">
+          <span
+            className="flex items-center gap-1 text-slate-500 cursor-default"
+            title={m.owner_user_id && memberNames[m.owner_user_id]
+              ? `Claimed by ${memberNames[m.owner_user_id]}`
+              : 'Claimed'}
+          >
             <UserIcon size={11} /> Claimed
           </span>
         ) : (
