@@ -1,3 +1,4 @@
+import { createPortal } from 'react-dom';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -791,6 +792,8 @@ type FolderNodeProps = {
 function FolderNode(props: FolderNodeProps) {
   const { folder, depth, folders, notes, matching, isGM, isExpanded, hiddenFolderIds } = props;
   const [showColorPicker, setShowColorPicker] = useState(false);
+  const [pickerPos, setPickerPos] = useState<{ top: number; left: number } | null>(null);
+  const colorBtnRef = useRef<HTMLButtonElement>(null);
 
   // Campaign settings (folder color & visibility)
   const toggleFolder = useCampaignSettings((s) => s.toggleFolder);
@@ -899,20 +902,29 @@ function FolderNode(props: FolderNodeProps) {
               </button>
             )}
             {isGM && (
-              /* Folder color picker */
+              /* Folder color picker — rendered via portal so it escapes overflow-y-auto clipping */
               <div className="relative">
                 <button
-                  onClick={(e) => { e.stopPropagation(); setShowColorPicker((v) => !v); }}
+                  ref={colorBtnRef}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    if (colorBtnRef.current) {
+                      const r = colorBtnRef.current.getBoundingClientRect();
+                      setPickerPos({ top: r.bottom + 4, left: r.left });
+                    }
+                    setShowColorPicker((v) => !v);
+                  }}
                   title="Folder colour"
                   className="p-0.5 text-slate-500 hover:text-sky-300"
                 >
                   <Palette size={11} />
                 </button>
-                {showColorPicker && (
+                {showColorPicker && pickerPos && createPortal(
                   <>
                     <div className="fixed inset-0 z-30" onClick={(e) => { e.stopPropagation(); setShowColorPicker(false); }} />
                     <div
-                      className="absolute left-0 top-full mt-1 z-40 bg-slate-900 border border-slate-700 rounded shadow-lg p-1.5 flex gap-1"
+                      className="fixed z-40 bg-slate-900 border border-slate-700 rounded shadow-lg p-1.5 flex gap-1"
+                      style={{ top: pickerPos.top, left: pickerPos.left }}
                       onClick={(e) => e.stopPropagation()}
                     >
                       {FOLDER_COLORS.map(({ color, label }) => (
@@ -931,7 +943,8 @@ function FolderNode(props: FolderNodeProps) {
                         />
                       ))}
                     </div>
-                  </>
+                  </>,
+                  document.body
                 )}
               </div>
             )}

@@ -35,7 +35,7 @@ import { Shield, Heart } from 'lucide-react';
 const DECO_RE =
   /(&\{[^}\n]+\}|@\{[^}\n]+\}|\?\{[^}\n]+\}|!\{[^}\n]+\}|\$\{[^}\n]+\}|\$(?!\{)[^$\n]+\$|%%[^%\n]+?%%|\[\[[^\]\n]+\]\])/g;
 
-const SECRET_RE = /\{\{(!?[^}\n]*?)\}\}/g;
+const SECRET_RE = /\{\{(!?[\s\S]*?)\}\}/g;
 
 function tokenClass(token: string): string | null {
   if (token.startsWith('&{'))  return 'cm-d-loc';

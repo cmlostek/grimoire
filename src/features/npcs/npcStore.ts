@@ -98,7 +98,7 @@ export const useNpcStore = create<NpcState>((set, get) => ({
   clear: () => set({ npcs: [], loaded: false, activeNpcId: null }),
 
   create: async (campaignId, data) => {
-    const { data: row } = await supabase
+    const { data: row, error } = await supabase
       .from('npcs')
       .insert({
         campaign_id: campaignId,
@@ -114,6 +114,7 @@ export const useNpcStore = create<NpcState>((set, get) => ({
       })
       .select()
       .single();
+    if (error) { console.error('NPC create failed:', error); alert(`Failed to add NPC: ${error.message}`); return; }
     if (row) {
       const npc = rowTo(row as Row);
       set((s) => ({ npcs: [...s.npcs, npc], activeNpcId: npc.id }));

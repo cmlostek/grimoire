@@ -70,7 +70,7 @@ interface InitiativeState {
   remove(id: string): Promise<void>;
   next(): void;
   reset(): Promise<void>;
-  sort(): void;
+  sort(): Promise<void>;
   addCondition(combatantId: string, cond: Condition): Promise<void>;
   removeCondition(combatantId: string, name: string): Promise<void>;
 }
@@ -112,7 +112,7 @@ export const useInitiativeStore = create<InitiativeState>((set, get) => ({
   add: async (c) => {
     const { campaignId, combatants } = get();
     if (!campaignId) return;
-    const { data } = await supabase
+    const { data, error } = await supabase
       .from('initiative_entries')
       .insert({
         campaign_id: campaignId,
@@ -127,6 +127,7 @@ export const useInitiativeStore = create<InitiativeState>((set, get) => ({
       })
       .select()
       .single();
+    if (error) { console.error('Initiative add failed:', error); alert(`Failed to add combatant: ${error.message}`); return; }
     if (data) set((s) => ({ combatants: [...s.combatants, rowTo(data as Row)] }));
   },
 
@@ -178,10 +179,10 @@ export const useInitiativeStore = create<InitiativeState>((set, get) => ({
     set({ combatants: [], round: 1, turnIndex: 0 });
   },
 
-  sort: () => {
+  sort: async () => {
     const { combatants } = get();
     const sorted = [...combatants].sort((a, b) => b.initiative - a.initiative);
-    sorted.forEach((c, i) => supabase.from('initiative_entries').update({ turn_order: i }).eq('id', c.id));
+    await Promise.all(sorted.map((c, i) => supabase.from('initiative_entries').update({ turn_order: i }).eq('id', c.id)));
     localStorage.setItem(TURN_KEY, '0');
     set({ combatants: sorted.map((c, i) => ({ ...c, turnOrder: i })), turnIndex: 0 });
   },
