@@ -1,5 +1,6 @@
 # ⚔️ GM Screen
--- Built with Claude Opus 4.6 and Opus 4.7
+-- Built with Claude Opus 4.6 and Opus 4.7.
+
 A real-time, multiplayer GM companion for running **D&D 5e** campaigns in the browser. Built for game masters who want a single, fast screen that handles everything — notes, party tracking, combat, maps, spells, shops, and more — with live sync across all players at the table.
 
 > **Live demo:** [your-deployment.vercel.app](https://your-deployment.vercel.app)
