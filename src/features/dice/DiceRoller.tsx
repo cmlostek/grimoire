@@ -2,6 +2,32 @@ import { useState } from 'react';
 import PageHeader from '../../components/PageHeader';
 import { Dices, Trash2 } from 'lucide-react';
 
+function playDiceSound() {
+  try {
+    const ctx = new AudioContext();
+    const count = 3 + Math.floor(Math.random() * 3);
+    for (let i = 0; i < count; i++) {
+      const t = ctx.currentTime + i * 0.055 + Math.random() * 0.02;
+      const bufLen = Math.floor(ctx.sampleRate * 0.028);
+      const buf = ctx.createBuffer(1, bufLen, ctx.sampleRate);
+      const d = buf.getChannelData(0);
+      const vol = (1 - i / count) * 0.45;
+      for (let j = 0; j < bufLen; j++) {
+        d[j] = (Math.random() * 2 - 1) * vol * Math.pow(1 - j / bufLen, 2);
+      }
+      const src = ctx.createBufferSource();
+      src.buffer = buf;
+      const hp = ctx.createBiquadFilter();
+      hp.type = 'highpass';
+      hp.frequency.value = 900;
+      src.connect(hp);
+      hp.connect(ctx.destination);
+      src.start(t);
+    }
+    setTimeout(() => { try { ctx.close(); } catch (_) { /* ignore */ } }, 600);
+  } catch (_) { /* audio unavailable */ }
+}
+
 type Die = 4 | 6 | 8 | 10 | 12 | 20 | 100;
 const DICE: Die[] = [4, 6, 8, 10, 12, 20, 100];
 
@@ -89,6 +115,7 @@ export default function DiceRoller() {
       ts: Date.now(),
       crit,
     };
+    playDiceSound();
     setHistory((h) => [entry, ...h].slice(0, 50));
   };
 
@@ -105,6 +132,7 @@ export default function DiceRoller() {
       ts: Date.now(),
       crit,
     };
+    playDiceSound();
     setHistory((h) => [entry, ...h].slice(0, 50));
   };
 

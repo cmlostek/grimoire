@@ -131,6 +131,7 @@ export default function MapBoard() {
         owner_user_id: null,
         hidden_from_players: false,
       });
+      setTool('select');
     }
   };
 
@@ -184,7 +185,7 @@ export default function MapBoard() {
           shape = { id: uid(), kind: 'cone', x: drafting.x, y: drafting.y, dx, dy, color: selectedShapeColor };
         }
       }
-      if (shape) addShape(campaignId, shape);
+      if (shape) { addShape(campaignId, shape); setTool('select'); }
       setDrafting(null);
     }
   };

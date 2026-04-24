@@ -90,6 +90,8 @@ export type Shop = {
   name: string;
   description: string;
   items: ShopItem[];
+  icon: string;
+  hidden: boolean;
 };
 
 type State = {
@@ -348,7 +350,7 @@ export const useStore = create<State>()(
       activeShopId: null,
       createShop: (name) => {
         const id = uid();
-        const shop: Shop = { id, name: name || 'New Shop', description: '', items: [] };
+        const shop: Shop = { id, name: name || 'New Shop', description: '', items: [], icon: 'store', hidden: false };
         set((s) => ({ shops: [...s.shops, shop], activeShopId: id }));
         return id;
       },

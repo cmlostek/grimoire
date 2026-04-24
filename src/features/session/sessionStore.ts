@@ -34,6 +34,7 @@ type SessionState = {
   createCampaign: (name: string, displayName: string) => Promise<void>;
   joinCampaign: (code: string, displayName: string) => Promise<void>;
   switchToCampaign: (campaignId: string) => Promise<void>;
+  deleteCampaign: (campaignId: string) => Promise<void>;
   leaveCurrent: () => void;
 };
 
@@ -285,6 +286,23 @@ export const useSession = create<SessionState>((set, get) => ({
         loading: false,
       });
       get().refreshMyCampaigns();
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : (e as { message?: string })?.message ?? String(e);
+      set({ error: msg, loading: false });
+    }
+  },
+
+  deleteCampaign: async (campaignId) => {
+    set({ loading: true, error: null });
+    try {
+      const { error } = await supabase.from('campaigns').delete().eq('id', campaignId);
+      if (error) throw error;
+      // If deleting the currently active campaign, leave it
+      if (get().campaignId === campaignId) {
+        localStorage.removeItem(STORAGE_KEY);
+        set({ campaignId: null, campaignName: null, joinCode: null, role: null, displayName: null });
+      }
+      set((s) => ({ myCampaigns: s.myCampaigns.filter((c) => c.id !== campaignId), loading: false }));
     } catch (e) {
       const msg = e instanceof Error ? e.message : (e as { message?: string })?.message ?? String(e);
       set({ error: msg, loading: false });

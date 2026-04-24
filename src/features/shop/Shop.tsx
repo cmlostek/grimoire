@@ -2,7 +2,24 @@ import { useMemo, useState } from 'react';
 import PageHeader from '../../components/PageHeader';
 import { useStore, ShopItem } from '../../store';
 import { EQUIPMENT, MAGIC_ITEMS, costToGp } from '../../data/srd';
-import { Plus, Trash2, Search, Store, X, Shuffle } from 'lucide-react';
+import { Plus, Trash2, Search, Store, X, Shuffle, Swords, FlaskConical, Coins, BookOpen, Shield, Gem, Package, Eye, EyeOff } from 'lucide-react';
+
+const SHOP_ICONS = {
+  store:         { Icon: Store,         label: 'General' },
+  swords:        { Icon: Swords,        label: 'Weapons' },
+  flask:         { Icon: FlaskConical,  label: 'Alchemy' },
+  coins:         { Icon: Coins,         label: 'Exchange' },
+  book:          { Icon: BookOpen,      label: 'Scrolls' },
+  shield:        { Icon: Shield,        label: 'Armor' },
+  gem:           { Icon: Gem,           label: 'Jeweler' },
+  package:       { Icon: Package,       label: 'Goods' },
+} as const;
+type ShopIconKey = keyof typeof SHOP_ICONS;
+
+function ShopIcon({ icon, size = 14, className = '' }: { icon: string; size?: number; className?: string }) {
+  const def = SHOP_ICONS[(icon as ShopIconKey)] ?? SHOP_ICONS.store;
+  return <def.Icon size={size} className={className} />;
+}
 
 type PickerKind = 'gear' | 'magic' | null;
 
@@ -22,6 +39,8 @@ export default function Shop() {
   const [picker, setPicker] = useState<PickerKind>(null);
   const [pickerQuery, setPickerQuery] = useState('');
   const [shopQuery, setShopQuery] = useState('');
+  const [showHidden, setShowHidden] = useState(false);
+  const [showIconPicker, setShowIconPicker] = useState<string | null>(null);
 
   const active = shops.find((s) => s.id === activeShopId) ?? null;
 
@@ -76,23 +95,70 @@ export default function Shop() {
       </PageHeader>
 
       <div className="flex-1 min-h-0 flex">
-        <aside className="w-60 border-r border-slate-800 overflow-y-auto">
-          {shops.length === 0 && <div className="p-4 text-xs text-slate-600 italic">No shops yet.</div>}
-          {shops.map((s) => (
+        <aside className="w-60 border-r border-slate-800 flex flex-col">
+          <div className="px-3 py-1.5 border-b border-slate-800 flex items-center justify-between">
+            <span className="text-[10px] uppercase tracking-wider text-slate-500">Shops</span>
             <button
-              key={s.id}
-              onClick={() => setActiveShop(s.id)}
-              className={`w-full text-left px-3 py-2 border-b border-slate-900 ${
-                s.id === activeShopId ? 'bg-slate-800' : 'hover:bg-slate-900'
-              }`}
+              onClick={() => setShowHidden((v) => !v)}
+              title={showHidden ? 'Hiding archived shops' : 'Showing archived shops'}
+              className="p-0.5 text-slate-600 hover:text-slate-300"
             >
-              <div className="flex items-center gap-2">
-                <Store size={14} className="text-sky-400/70" />
-                <div className="text-sm font-medium truncate">{s.name}</div>
-              </div>
-              <div className="text-[11px] text-slate-500 mt-0.5">{s.items.length} items</div>
+              {showHidden ? <Eye size={11} /> : <EyeOff size={11} />}
             </button>
-          ))}
+          </div>
+          <div className="flex-1 overflow-y-auto">
+            {shops.length === 0 && <div className="p-4 text-xs text-slate-600 italic">No shops yet.</div>}
+            {shops.filter((s) => showHidden || !s.hidden).map((s) => (
+              <div key={s.id} className={`group relative border-b border-slate-900 ${s.id === activeShopId ? 'bg-slate-800' : 'hover:bg-slate-900'}`}>
+                <button
+                  onClick={() => setActiveShop(s.id)}
+                  className="w-full text-left px-3 py-2"
+                >
+                  <div className="flex items-center gap-2">
+                    <ShopIcon icon={s.icon ?? 'store'} size={14} className={`${s.hidden ? 'text-slate-600' : 'text-sky-400/70'}`} />
+                    <div className={`text-sm font-medium truncate ${s.hidden ? 'text-slate-500 italic' : ''}`}>{s.name}</div>
+                  </div>
+                  <div className="text-[11px] text-slate-500 mt-0.5">{s.items.length} items</div>
+                </button>
+                {/* Icon picker (shown for active shop) */}
+                {s.id === activeShopId && showIconPicker === s.id && (
+                  <>
+                    <div className="fixed inset-0 z-20" onClick={() => setShowIconPicker(null)} />
+                    <div className="absolute left-full top-0 ml-1 z-30 bg-slate-900 border border-slate-700 rounded-lg p-2 grid grid-cols-4 gap-1 shadow-xl">
+                      {(Object.entries(SHOP_ICONS) as [ShopIconKey, typeof SHOP_ICONS[ShopIconKey]][]).map(([key, { Icon, label }]) => (
+                        <button
+                          key={key}
+                          onClick={() => { updateShop(s.id, { icon: key }); setShowIconPicker(null); }}
+                          title={label}
+                          className={`flex flex-col items-center gap-0.5 p-1.5 rounded transition-colors hover:bg-slate-800 ${(s.icon ?? 'store') === key ? 'bg-slate-700' : ''}`}
+                        >
+                          <Icon size={14} className="text-sky-400" />
+                          <span className="text-[8px] text-slate-500">{label}</span>
+                        </button>
+                      ))}
+                    </div>
+                  </>
+                )}
+                {/* Hover actions */}
+                <div className="absolute right-1 top-1/2 -translate-y-1/2 flex gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                  <button
+                    onClick={(e) => { e.stopPropagation(); setShowIconPicker(showIconPicker === s.id ? null : s.id); }}
+                    title="Change icon"
+                    className="p-1 text-slate-600 hover:text-slate-300 hover:bg-slate-800 rounded"
+                  >
+                    <ShopIcon icon={s.icon ?? 'store'} size={10} />
+                  </button>
+                  <button
+                    onClick={(e) => { e.stopPropagation(); updateShop(s.id, { hidden: !s.hidden }); }}
+                    title={s.hidden ? 'Restore shop' : 'Archive shop'}
+                    className="p-1 text-slate-600 hover:text-amber-400 hover:bg-slate-800 rounded"
+                  >
+                    {s.hidden ? <Eye size={10} /> : <EyeOff size={10} />}
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
         </aside>
 
         <section className="flex-1 min-w-0 overflow-y-auto">

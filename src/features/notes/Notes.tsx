@@ -87,9 +87,17 @@ function getNoteIconDef(iconId: string | null | undefined): NoteIconDef {
   return NOTE_ICONS.find((i) => i.id === iconId) ?? NOTE_ICONS[0];
 }
 
-function NoteIconDisplay({ iconId, size = 11 }: { iconId: string | null | undefined; size?: number }) {
+const ICON_COLOR_PALETTE = [
+  '#64748b', '#60a5fa', '#c2863b', '#f87171', '#a78bfa',
+  '#34d399', '#fb923c', '#f472b6', '#e2e8f0', '#fbbf24',
+  '#2dd4bf', '#818cf8',
+];
+
+function NoteIconDisplay({
+  iconId, iconColor, size = 11,
+}: { iconId: string | null | undefined; iconColor?: string | null; size?: number }) {
   const { Icon, color } = getNoteIconDef(iconId);
-  return <Icon size={size} style={{ color }} className="shrink-0" />;
+  return <Icon size={size} style={{ color: iconColor ?? color }} className="shrink-0" />;
 }
 // ─── Note permission helpers ─────────────────────────────────────────────────
 type PermLevel = 'private' | 'read' | 'edit';
@@ -224,6 +232,7 @@ export default function Notes() {
   const [dragOverId, setDragOverId] = useState<string | 'root' | null>(null);
   const [showLegend, setShowLegend] = useState(false);
   const [showIconPicker, setShowIconPicker] = useState(false);
+  const [showIconColorPicker, setShowIconColorPicker] = useState(false);
   const [sortMode, setSortMode] = useState<'updated' | 'alpha'>(() => {
     const stored = localStorage.getItem('dnd-gm:noteSortMode');
     return stored === 'alpha' ? 'alpha' : 'updated';
@@ -526,23 +535,27 @@ export default function Notes() {
           {active && (
             <>
               <div className="px-6 py-3 border-b border-slate-800 flex items-center gap-3">
-                {/* Icon picker button */}
+                {/* Icon + color picker */}
                 {canEditNote(active) ? (
-                  <div className="relative shrink-0">
+                  <div className="relative shrink-0 flex flex-col items-center gap-1">
+                    {/* Icon type button */}
                     <button
-                      onClick={() => setShowIconPicker((p) => !p)}
+                      onClick={() => { setShowIconPicker((p) => !p); setShowIconColorPicker(false); }}
                       title="Change note icon"
                       className="p-1.5 rounded hover:bg-slate-800 transition-colors"
                     >
-                      <NoteIconDisplay iconId={active.icon} size={18} />
+                      <NoteIconDisplay iconId={active.icon} iconColor={active.icon_color} size={18} />
                     </button>
+                    {/* Color dot */}
+                    <button
+                      onClick={() => { setShowIconColorPicker((p) => !p); setShowIconPicker(false); }}
+                      title="Change icon color"
+                      className="w-3 h-3 rounded-full border border-slate-600 hover:border-slate-400 transition-colors"
+                      style={{ backgroundColor: active.icon_color ?? getNoteIconDef(active.icon).color }}
+                    />
                     {showIconPicker && (
                       <>
-                        {/* Backdrop to close picker */}
-                        <div
-                          className="fixed inset-0 z-20"
-                          onClick={() => setShowIconPicker(false)}
-                        />
+                        <div className="fixed inset-0 z-20" onClick={() => setShowIconPicker(false)} />
                         <div className="absolute top-full left-0 mt-1 z-30 bg-slate-900 border border-slate-700 rounded-lg shadow-xl p-2 grid grid-cols-6 gap-1 w-56">
                           {NOTE_ICONS.map(({ id, Icon, color, label }) => (
                             <button
@@ -553,12 +566,10 @@ export default function Notes() {
                                 setShowIconPicker(false);
                               }}
                               className={`flex flex-col items-center gap-0.5 rounded p-1.5 transition-colors hover:bg-slate-800 ${
-                                (active.icon ?? 'note') === id
-                                  ? 'bg-slate-700 ring-1 ring-sky-500'
-                                  : ''
+                                (active.icon ?? 'note') === id ? 'bg-slate-700 ring-1 ring-sky-500' : ''
                               }`}
                             >
-                              <Icon size={14} style={{ color }} />
+                              <Icon size={14} style={{ color: active.icon_color ?? color }} />
                               <span className="text-[8px] text-slate-500 leading-none truncate w-full text-center">
                                 {label}
                               </span>
@@ -567,10 +578,40 @@ export default function Notes() {
                         </div>
                       </>
                     )}
+                    {showIconColorPicker && (
+                      <>
+                        <div className="fixed inset-0 z-20" onClick={() => setShowIconColorPicker(false)} />
+                        <div className="absolute top-full left-0 mt-1 z-30 bg-slate-900 border border-slate-700 rounded-lg shadow-xl p-2 flex flex-wrap gap-1.5 w-40">
+                          {ICON_COLOR_PALETTE.map((c) => (
+                            <button
+                              key={c}
+                              onClick={() => {
+                                updateNote(active.id, { icon_color: c });
+                                setShowIconColorPicker(false);
+                              }}
+                              className="w-5 h-5 rounded-full transition-all"
+                              style={{
+                                backgroundColor: c,
+                                boxShadow: active.icon_color === c ? `0 0 0 2px #0f172a, 0 0 0 3.5px ${c}` : 'none',
+                              }}
+                            />
+                          ))}
+                          {active.icon_color && (
+                            <button
+                              onClick={() => { updateNote(active.id, { icon_color: null }); setShowIconColorPicker(false); }}
+                              className="text-[9px] text-slate-500 hover:text-slate-300 px-1"
+                              title="Reset to default color"
+                            >
+                              reset
+                            </button>
+                          )}
+                        </div>
+                      </>
+                    )}
                   </div>
                 ) : (
                   <div className="shrink-0 p-1.5">
-                    <NoteIconDisplay iconId={active.icon} size={18} />
+                    <NoteIconDisplay iconId={active.icon} iconColor={active.icon_color} size={18} />
                   </div>
                 )}
                 <input
@@ -1065,7 +1106,7 @@ function NoteRow({
       } ${dimmed ? 'opacity-30' : ''}`}
       style={{ paddingLeft: 16 + depth * 12 }}
     >
-      <NoteIconDisplay iconId={note.icon} size={11} />
+      <NoteIconDisplay iconId={note.icon} iconColor={note.icon_color} size={11} />
       <span className="flex-1 min-w-0 truncate">{note.title || 'Untitled'}</span>
       {isGM && !active && (() => {
         const level = getPermLevel(note);

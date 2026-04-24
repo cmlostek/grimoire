@@ -78,10 +78,19 @@ const BG_PRESETS = [
   { label: 'Maroon', value: '#150509' },
 ];
 
+function applyBg(color: string) {
+  document.documentElement.style.setProperty('--bg', color);
+}
+
 function useBgColor() {
-  const [color, setColor] = useState(() => localStorage.getItem(BG_KEY) ?? BG_PRESETS[0].value);
+  const [color, setColor] = useState(() => {
+    const stored = localStorage.getItem(BG_KEY) ?? BG_PRESETS[0].value;
+    applyBg(stored);
+    return stored;
+  });
   const update = (c: string) => {
     localStorage.setItem(BG_KEY, c);
+    applyBg(c);
     setColor(c);
   };
   return [color, update] as const;

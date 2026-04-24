@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useSession, rememberedDisplayName } from './sessionStore';
-import { Swords, LogIn, Plus, ChevronRight, Mail, KeyRound } from 'lucide-react';
+import { Swords, LogIn, Plus, ChevronRight, Mail, KeyRound, Trash2 } from 'lucide-react';
 
 type Mode = 'choose' | 'create' | 'join';
 type AuthMode = 'signin' | 'signup';
@@ -176,31 +176,48 @@ function CampaignScreen() {
 function MyCampaignsList() {
   const myCampaigns = useSession((s) => s.myCampaigns);
   const switchToCampaign = useSession((s) => s.switchToCampaign);
+  const deleteCampaign = useSession((s) => s.deleteCampaign);
   if (myCampaigns.length === 0) return null;
   return (
     <div className="space-y-2">
       <div className="text-xs uppercase tracking-wider text-slate-500">Your campaigns</div>
       <div className="space-y-2">
         {myCampaigns.map((c) => (
-          <button
-            key={c.id}
-            onClick={() => switchToCampaign(c.id)}
-            className="w-full px-3 py-2.5 rounded-lg bg-slate-900 hover:bg-slate-800 border border-slate-800 flex items-center justify-between text-left"
-          >
-            <div className="min-w-0">
-              <div className="text-sm text-slate-100 truncate">{c.name}</div>
-              <div className="text-[11px] text-slate-500 flex items-center gap-1">
-                <span className={c.role === 'gm' ? 'text-emerald-400' : 'text-sky-400'}>
-                  {c.role === 'gm' ? 'GM' : 'Player'}
-                </span>
-                <span className="opacity-50">·</span>
-                <span className="truncate">{c.display_name}</span>
-                <span className="opacity-50">·</span>
-                <span className="font-mono tracking-widest">{c.join_code}</span>
+          <div key={c.id} className="group relative">
+            <button
+              onClick={() => switchToCampaign(c.id)}
+              className="w-full px-3 py-2.5 rounded-lg bg-slate-900 hover:bg-slate-800 border border-slate-800 flex items-center justify-between text-left"
+            >
+              <div className="min-w-0 pr-6">
+                <div className="text-sm text-slate-100 truncate">{c.name}</div>
+                <div className="text-[11px] text-slate-500 flex items-center gap-1">
+                  <span className={c.role === 'gm' ? 'text-emerald-400' : 'text-sky-400'}>
+                    {c.role === 'gm' ? 'GM' : 'Player'}
+                  </span>
+                  <span className="opacity-50">·</span>
+                  <span className="truncate">{c.display_name}</span>
+                  <span className="opacity-50">·</span>
+                  <span className="font-mono tracking-widest">{c.join_code}</span>
+                </div>
               </div>
-            </div>
-            <ChevronRight size={16} className="text-slate-600 shrink-0" />
-          </button>
+              <ChevronRight size={16} className="text-slate-600 shrink-0" />
+            </button>
+            {/* GMs can permanently delete the campaign */}
+            {c.role === 'gm' && (
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  if (confirm(`Delete "${c.name}"? This permanently removes all campaign data and cannot be undone.`)) {
+                    deleteCampaign(c.id);
+                  }
+                }}
+                title="Delete campaign"
+                className="absolute right-8 top-1/2 -translate-y-1/2 p-1.5 text-slate-600 hover:text-rose-400 hover:bg-rose-950/30 rounded opacity-0 group-hover:opacity-100 transition-all"
+              >
+                <Trash2 size={13} />
+              </button>
+            )}
+          </div>
         ))}
       </div>
     </div>

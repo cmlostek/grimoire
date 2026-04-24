@@ -8,7 +8,18 @@
   --ac-600: #7c3aed;
   --ac-700: #6d28d9;
   --ac-900: #2e1065;
+
+  /* Background color — set by JS; all structural colors derived from it */
+  --bg: #020617;
 }
+
+/* Structural surface and border colors tinted by the chosen background */
+.bg-slate-950 { background-color: color-mix(in srgb, black 25%, var(--bg)) !important; }
+.bg-slate-900 { background-color: color-mix(in srgb, white 3%, var(--bg)) !important; }
+.bg-slate-800 { background-color: color-mix(in srgb, white 8%, var(--bg)) !important; }
+.border-slate-900 { border-color: color-mix(in srgb, white 4%, var(--bg)) !important; }
+.border-slate-800 { border-color: color-mix(in srgb, white 10%, var(--bg)) !important; }
+.border-slate-700 { border-color: color-mix(in srgb, white 17%, var(--bg)) !important; }
 
 html, body, #root { height: 100%; }
 body { margin: 0; }

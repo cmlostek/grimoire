@@ -12,6 +12,8 @@ export type Note = {
   player_editable: boolean | null;
   owner_user_id: string | null;
   icon: string | null;
+  /** Separate color for the note icon — stored locally until DB migration adds the column */
+  icon_color: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -25,10 +27,11 @@ export type Folder = {
   expanded?: boolean;
 };
 
-const EXPANDED_KEY = 'dnd-gm:expandedFolders';
+const EXPANDED_KEY   = 'dnd-gm:expandedFolders';
 const ACTIVE_NOTE_KEY = 'dnd-gm:activeNoteId';
-const ICON_KEY = 'dnd-gm:noteIcons';
-const EDITABLE_KEY = 'dnd-gm:noteEditable';
+const ICON_KEY        = 'dnd-gm:noteIcons';
+const ICON_COLOR_KEY  = 'dnd-gm:noteIconColors';
+const EDITABLE_KEY    = 'dnd-gm:noteEditable';
 
 function loadExpanded(): Record<string, boolean> {
   try {
@@ -75,8 +78,25 @@ function mergeEditable(note: Note): Note {
   return local !== undefined ? { ...note, player_editable: local } : note;
 }
 
+/** icon_color persisted locally until DB column exists. */
+function readLocalIconColors(): Record<string, string> {
+  try { return JSON.parse(localStorage.getItem(ICON_COLOR_KEY) ?? '{}'); }
+  catch { return {}; }
+}
+function writeLocalIconColor(noteId: string, color: string | null) {
+  const map = readLocalIconColors();
+  if (color) map[noteId] = color;
+  else delete map[noteId];
+  localStorage.setItem(ICON_COLOR_KEY, JSON.stringify(map));
+}
+function mergeIconColor(note: Note): Note {
+  if (note.icon_color) return note; // DB value wins
+  const local = readLocalIconColors()[note.id];
+  return local ? { ...note, icon_color: local } : note;
+}
+
 function mergeAll(note: Note): Note {
-  return mergeEditable(mergeIcon(note));
+  return mergeIconColor(mergeEditable(mergeIcon(note)));
 }
 
 type NotesState = {
@@ -93,7 +113,7 @@ type NotesState = {
   setActiveNote: (id: string | null) => void;
 
   createNote: (campaignId: string, folderId: string | null, ownerId?: string | null) => Promise<string | null>;
-  updateNote: (id: string, patch: Partial<Pick<Note, 'title' | 'body' | 'folder_id' | 'visible_to_players' | 'icon' | 'player_editable'>>) => Promise<void>;
+  updateNote: (id: string, patch: Partial<Pick<Note, 'title' | 'body' | 'folder_id' | 'visible_to_players' | 'icon' | 'icon_color' | 'player_editable'>>) => Promise<void>;
   deleteNote: (id: string) => Promise<void>;
   moveNote: (id: string, folderId: string | null) => Promise<void>;
 
@@ -219,6 +239,7 @@ export const useNotes = create<NotesState>((set, get) => ({
   updateNote: async (id, patch) => {
     // Persist locally-only fields first so they survive DB errors / missing columns
     if ('icon' in patch) writeLocalIcon(id, patch.icon ?? null);
+    if ('icon_color' in patch) writeLocalIconColor(id, patch.icon_color ?? null);
     if ('player_editable' in patch) writeLocalEditable(id, patch.player_editable ?? null);
 
     const prev = get().notes.find((n) => n.id === id);
@@ -228,7 +249,7 @@ export const useNotes = create<NotesState>((set, get) => ({
 
     const { error } = await supabase.from('notes').update(patch).eq('id', id);
     if (error) {
-      if ('icon' in patch || 'player_editable' in patch) {
+      if ('icon' in patch || 'icon_color' in patch || 'player_editable' in patch) {
         // Already saved to localStorage — don't revert visual state.
         // DB columns may not exist yet; local values used until migrations run.
         set({ error: error.message });
