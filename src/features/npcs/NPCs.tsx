@@ -5,7 +5,7 @@ import {
 } from 'lucide-react';
 import PageHeader from '../../components/PageHeader';
 import { useSession } from '../session/sessionStore';
-import { useNpcStore, STATUS_COLORS, FACTION_COLORS, type NPC, type NPCStatus } from './npcStore';
+import { useNpcStore, STATUS_COLORS, FACTION_COLORS, type NPC, type NPCStatus, type NpcStatBlock } from './npcStore';
 
 const NPC_ICONS = {
   user:     User,
@@ -357,11 +357,320 @@ function NpcDetail({
         )}
       </div>
 
+      {/* Stat block */}
+      <StatBlockSection
+        statBlock={local.statBlock}
+        visible={local.statBlockVisible}
+        isGM={isGM}
+        showToPlayers={local.visibleToPlayers && local.statBlockVisible}
+        onStatBlockChange={(sb) => save({ statBlock: sb })}
+        onVisibilityChange={(v) => save({ statBlockVisible: v })}
+      />
+
       {/* GM-only hint */}
       {isGM && !npc.visibleToPlayers && (
         <div className="flex items-center gap-2 text-xs text-slate-600 border border-slate-800 rounded-lg p-3">
           <EyeOff size={12} className="shrink-0" />
           This NPC is hidden from players. Click <strong className="text-slate-500">"GM only"</strong> above to reveal them.
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ─── Stat block section ────────────────────────────────────────────────── */
+
+/**
+ * Renders a 5e-style stat block. GM gets an editable form; players see a
+ * read-only formatted card. If the GM hasn't toggled stat_block_visible,
+ * players don't see this section at all.
+ */
+function StatBlockSection({
+  statBlock,
+  visible,
+  isGM,
+  showToPlayers,
+  onStatBlockChange,
+  onVisibilityChange,
+}: {
+  statBlock: NpcStatBlock;
+  visible: boolean;
+  isGM: boolean;
+  showToPlayers: boolean;
+  onStatBlockChange: (sb: NpcStatBlock) => void;
+  onVisibilityChange: (v: boolean) => void;
+}) {
+  const [local, setLocal] = useState(statBlock);
+  useEffect(() => setLocal(statBlock), [statBlock]);
+
+  // Players see nothing if the GM hasn't revealed the stat block.
+  if (!isGM && !showToPlayers) return null;
+
+  const setField = <K extends keyof NpcStatBlock>(k: K, v: NpcStatBlock[K]) => {
+    setLocal((p) => ({ ...p, [k]: v }));
+  };
+  const flush = () => onStatBlockChange(local);
+
+  if (!isGM) {
+    // Player read-only view
+    return <StatBlockDisplay statBlock={statBlock} />;
+  }
+
+  // GM editor
+  return (
+    <div className="border border-slate-800 rounded-lg">
+      <div className="flex items-center justify-between px-4 py-2 border-b border-slate-800">
+        <div className="text-xs uppercase tracking-wider text-slate-500">Stat block</div>
+        <button
+          onClick={() => onVisibilityChange(!visible)}
+          title={visible ? 'Visible to players when NPC is revealed' : 'Hidden — players see the NPC but not the stat block'}
+          className={`flex items-center gap-1.5 px-2 py-1 text-[11px] rounded border transition-colors ${
+            visible
+              ? 'bg-emerald-900/30 border-emerald-700/40 text-emerald-300'
+              : 'bg-slate-800 border-slate-700 text-slate-500 hover:text-slate-300'
+          }`}
+        >
+          {visible ? <Eye size={11} /> : <EyeOff size={11} />}
+          {visible ? 'Visible' : 'Hidden'}
+        </button>
+      </div>
+
+      <div className="p-4 space-y-3 text-sm">
+        <FormRow label="Creature type">
+          <input
+            value={local.creatureType ?? ''}
+            onChange={(e) => setField('creatureType', e.target.value)}
+            onBlur={flush}
+            placeholder="Medium humanoid (elf), neutral good"
+            className="w-full bg-slate-800 border border-slate-700 rounded px-2 py-1"
+          />
+        </FormRow>
+
+        <div className="grid grid-cols-4 gap-2">
+          <FormRow label="AC">
+            <input
+              type="number"
+              value={local.ac ?? ''}
+              onChange={(e) => setField('ac', e.target.value === '' ? undefined : parseInt(e.target.value, 10))}
+              onBlur={flush}
+              className="w-full bg-slate-800 border border-slate-700 rounded px-2 py-1"
+            />
+          </FormRow>
+          <FormRow label="HP">
+            <input
+              type="number"
+              value={local.hpCurrent ?? ''}
+              onChange={(e) => setField('hpCurrent', e.target.value === '' ? undefined : parseInt(e.target.value, 10))}
+              onBlur={flush}
+              className="w-full bg-slate-800 border border-slate-700 rounded px-2 py-1"
+            />
+          </FormRow>
+          <FormRow label="Max HP">
+            <input
+              type="number"
+              value={local.hpMax ?? ''}
+              onChange={(e) => setField('hpMax', e.target.value === '' ? undefined : parseInt(e.target.value, 10))}
+              onBlur={flush}
+              className="w-full bg-slate-800 border border-slate-700 rounded px-2 py-1"
+            />
+          </FormRow>
+          <FormRow label="CR">
+            <input
+              value={local.cr ?? ''}
+              onChange={(e) => setField('cr', e.target.value || undefined)}
+              onBlur={flush}
+              placeholder="1/4"
+              className="w-full bg-slate-800 border border-slate-700 rounded px-2 py-1"
+            />
+          </FormRow>
+        </div>
+
+        <div className="grid grid-cols-2 gap-2">
+          <FormRow label="Hit dice">
+            <input
+              value={local.hitDice ?? ''}
+              onChange={(e) => setField('hitDice', e.target.value || undefined)}
+              onBlur={flush}
+              placeholder="3d8 + 3"
+              className="w-full bg-slate-800 border border-slate-700 rounded px-2 py-1"
+            />
+          </FormRow>
+          <FormRow label="Speed">
+            <input
+              value={local.speed ?? ''}
+              onChange={(e) => setField('speed', e.target.value || undefined)}
+              onBlur={flush}
+              placeholder="30 ft., fly 60 ft."
+              className="w-full bg-slate-800 border border-slate-700 rounded px-2 py-1"
+            />
+          </FormRow>
+        </div>
+
+        <div>
+          <div className="text-[10px] uppercase tracking-wider text-slate-500 mb-1">Ability scores</div>
+          <div className="grid grid-cols-6 gap-2">
+            {(['str', 'dex', 'con', 'int', 'wis', 'cha'] as const).map((a) => (
+              <div key={a}>
+                <div className="text-[10px] uppercase text-center text-slate-500">{a}</div>
+                <input
+                  type="number"
+                  value={local[a] ?? ''}
+                  onChange={(e) => setField(a, e.target.value === '' ? undefined : parseInt(e.target.value, 10))}
+                  onBlur={flush}
+                  className="w-full bg-slate-800 border border-slate-700 rounded px-1 py-1 text-center"
+                  placeholder="10"
+                />
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <FormRow label="Skills">
+          <input
+            value={local.skills ?? ''}
+            onChange={(e) => setField('skills', e.target.value || undefined)}
+            onBlur={flush}
+            placeholder="Perception +5, Stealth +6"
+            className="w-full bg-slate-800 border border-slate-700 rounded px-2 py-1"
+          />
+        </FormRow>
+
+        <FormRow label="Senses">
+          <input
+            value={local.senses ?? ''}
+            onChange={(e) => setField('senses', e.target.value || undefined)}
+            onBlur={flush}
+            placeholder="Darkvision 60 ft., passive Perception 15"
+            className="w-full bg-slate-800 border border-slate-700 rounded px-2 py-1"
+          />
+        </FormRow>
+
+        <FormRow label="Languages">
+          <input
+            value={local.languages ?? ''}
+            onChange={(e) => setField('languages', e.target.value || undefined)}
+            onBlur={flush}
+            placeholder="Common, Elvish"
+            className="w-full bg-slate-800 border border-slate-700 rounded px-2 py-1"
+          />
+        </FormRow>
+
+        <div className="grid grid-cols-3 gap-2">
+          <FormRow label="Damage resistances">
+            <input
+              value={local.damageResistances ?? ''}
+              onChange={(e) => setField('damageResistances', e.target.value || undefined)}
+              onBlur={flush}
+              className="w-full bg-slate-800 border border-slate-700 rounded px-2 py-1"
+            />
+          </FormRow>
+          <FormRow label="Damage immunities">
+            <input
+              value={local.damageImmunities ?? ''}
+              onChange={(e) => setField('damageImmunities', e.target.value || undefined)}
+              onBlur={flush}
+              className="w-full bg-slate-800 border border-slate-700 rounded px-2 py-1"
+            />
+          </FormRow>
+          <FormRow label="Condition immunities">
+            <input
+              value={local.conditionImmunities ?? ''}
+              onChange={(e) => setField('conditionImmunities', e.target.value || undefined)}
+              onBlur={flush}
+              className="w-full bg-slate-800 border border-slate-700 rounded px-2 py-1"
+            />
+          </FormRow>
+        </div>
+
+        <FormRow label="Traits">
+          <textarea
+            value={local.traits ?? ''}
+            onChange={(e) => setField('traits', e.target.value || undefined)}
+            onBlur={flush}
+            placeholder="Pack Tactics. The NPC has advantage on attack rolls…"
+            rows={3}
+            className="w-full bg-slate-800 border border-slate-700 rounded px-2 py-1.5 text-sm resize-none leading-relaxed"
+          />
+        </FormRow>
+
+        <FormRow label="Actions">
+          <textarea
+            value={local.actions ?? ''}
+            onChange={(e) => setField('actions', e.target.value || undefined)}
+            onBlur={flush}
+            placeholder="Longsword. Melee Weapon Attack: +5 to hit, reach 5 ft., one target. Hit: 7 (1d8 + 3) slashing damage."
+            rows={4}
+            className="w-full bg-slate-800 border border-slate-700 rounded px-2 py-1.5 text-sm resize-none leading-relaxed"
+          />
+        </FormRow>
+      </div>
+    </div>
+  );
+}
+
+function FormRow({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div>
+      <div className="text-[10px] uppercase tracking-wider text-slate-500 mb-1">{label}</div>
+      {children}
+    </div>
+  );
+}
+
+/**
+ * Read-only player view of an NPC stat block. Empty fields are skipped so
+ * the card stays compact.
+ */
+function StatBlockDisplay({ statBlock: sb }: { statBlock: NpcStatBlock }) {
+  const abilityMod = (n: number | undefined) => {
+    if (n === undefined) return '';
+    const m = Math.floor((n - 10) / 2);
+    return `${n} (${m >= 0 ? '+' : ''}${m})`;
+  };
+  const hasAbilities = sb.str || sb.dex || sb.con || sb.int || sb.wis || sb.cha;
+  return (
+    <div className="border border-slate-800 rounded-lg p-4 space-y-2 text-sm bg-slate-900/40">
+      {sb.creatureType && <div className="italic text-slate-400">{sb.creatureType}</div>}
+      <div className="border-t border-slate-800 pt-2 space-y-1 text-slate-300">
+        {sb.ac !== undefined && <div><span className="font-semibold text-slate-200">Armor Class</span> {sb.ac}</div>}
+        {(sb.hpMax !== undefined || sb.hpCurrent !== undefined || sb.hitDice) && (
+          <div>
+            <span className="font-semibold text-slate-200">Hit Points</span>{' '}
+            {sb.hpCurrent !== undefined ? sb.hpCurrent : sb.hpMax ?? ''}
+            {sb.hpMax !== undefined && sb.hpCurrent !== undefined && sb.hpCurrent !== sb.hpMax ? ` / ${sb.hpMax}` : ''}
+            {sb.hitDice ? ` (${sb.hitDice})` : ''}
+          </div>
+        )}
+        {sb.speed && <div><span className="font-semibold text-slate-200">Speed</span> {sb.speed}</div>}
+      </div>
+      {hasAbilities && (
+        <div className="border-t border-slate-800 pt-2 grid grid-cols-6 gap-2 text-center text-xs">
+          {(['str', 'dex', 'con', 'int', 'wis', 'cha'] as const).map((a) => (
+            <div key={a}>
+              <div className="text-[10px] uppercase text-slate-500">{a}</div>
+              <div className="text-slate-200">{abilityMod(sb[a])}</div>
+            </div>
+          ))}
+        </div>
+      )}
+      <div className="border-t border-slate-800 pt-2 space-y-1 text-slate-300 text-[13px]">
+        {sb.skills && <div><span className="font-semibold text-slate-200">Skills</span> {sb.skills}</div>}
+        {sb.damageResistances && <div><span className="font-semibold text-slate-200">Damage Resistances</span> {sb.damageResistances}</div>}
+        {sb.damageImmunities && <div><span className="font-semibold text-slate-200">Damage Immunities</span> {sb.damageImmunities}</div>}
+        {sb.conditionImmunities && <div><span className="font-semibold text-slate-200">Condition Immunities</span> {sb.conditionImmunities}</div>}
+        {sb.senses && <div><span className="font-semibold text-slate-200">Senses</span> {sb.senses}</div>}
+        {sb.languages && <div><span className="font-semibold text-slate-200">Languages</span> {sb.languages}</div>}
+        {sb.cr && <div><span className="font-semibold text-slate-200">Challenge</span> {sb.cr}</div>}
+      </div>
+      {sb.traits && (
+        <div className="border-t border-slate-800 pt-2 whitespace-pre-wrap text-slate-300 text-[13px] leading-relaxed">
+          {sb.traits}
+        </div>
+      )}
+      {sb.actions && (
+        <div className="pt-1">
+          <div className="text-xs uppercase tracking-wider text-slate-500 mb-1">Actions</div>
+          <div className="whitespace-pre-wrap text-slate-300 text-[13px] leading-relaxed">{sb.actions}</div>
         </div>
       )}
     </div>

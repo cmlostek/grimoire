@@ -3,6 +3,36 @@ import { supabase } from '../../lib/supabase';
 
 export type NPCStatus = 'alive' | 'dead' | 'captured' | 'unknown' | 'missing';
 
+/**
+ * Stat block — modeled after the 5e SRD monster format. Every field is
+ * optional so the GM can scaffold an NPC quickly without filling everything.
+ * Free-form text fields (traits, actions, skills, senses) hold short
+ * markdown-ish strings rather than a structured array.
+ */
+export type NpcStatBlock = {
+  creatureType?: string;
+  ac?: number;
+  hpCurrent?: number;
+  hpMax?: number;
+  hitDice?: string;
+  speed?: string;
+  str?: number;
+  dex?: number;
+  con?: number;
+  int?: number;
+  wis?: number;
+  cha?: number;
+  skills?: string;
+  senses?: string;
+  damageResistances?: string;
+  damageImmunities?: string;
+  conditionImmunities?: string;
+  languages?: string;
+  cr?: string;
+  traits?: string;
+  actions?: string;
+};
+
 export type NPC = {
   id: string;
   campaignId: string;
@@ -15,6 +45,8 @@ export type NPC = {
   visibleToPlayers: boolean;
   icon: string;
   linkedNoteId: string | null;
+  statBlock: NpcStatBlock;
+  statBlockVisible: boolean;
 };
 
 export const STATUS_COLORS: Record<NPCStatus, string> = {
@@ -45,6 +77,10 @@ function rowTo(r: Row): NPC {
     visibleToPlayers: r.visible_to_players as boolean,
     icon: r.icon as string,
     linkedNoteId: r.linked_note_id as string | null,
+    // stat_block / stat_block_visible were added in 20260521_npc_stat_blocks.sql.
+    // Fall back to safe defaults for older rows or pre-migration runs.
+    statBlock: (r.stat_block as NpcStatBlock | null) ?? {},
+    statBlockVisible: (r.stat_block_visible as boolean | null) ?? false,
   };
 }
 
@@ -131,6 +167,8 @@ export const useNpcStore = create<NpcState>((set, get) => ({
     if (patch.visibleToPlayers  !== undefined) dbPatch.visible_to_players = patch.visibleToPlayers;
     if (patch.icon              !== undefined) dbPatch.icon               = patch.icon;
     if (patch.linkedNoteId      !== undefined) dbPatch.linked_note_id     = patch.linkedNoteId;
+    if (patch.statBlock         !== undefined) dbPatch.stat_block         = patch.statBlock;
+    if (patch.statBlockVisible  !== undefined) dbPatch.stat_block_visible = patch.statBlockVisible;
     set((s) => ({ npcs: s.npcs.map((n) => n.id === id ? { ...n, ...patch } : n) }));
     await supabase.from('npcs').update(dbPatch).eq('id', id);
   },
