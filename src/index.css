@@ -243,3 +243,21 @@ input[type="number"] { -moz-appearance: textfield; appearance: textfield; }
   padding-top: 0.2em;
   border-top: 1px solid #1e293b;
 }
+
+/* Map ping pulse — animation runs ~2s, then JS removes the element. */
+@keyframes map-ping-dot {
+  0%   { transform: scale(0.6); opacity: 1; }
+  100% { transform: scale(1.6); opacity: 0; }
+}
+@keyframes map-ping-ring {
+  0%   { r: 6;  opacity: 0.9; }
+  100% { r: 40; opacity: 0; }
+}
+.map-ping-dot {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: map-ping-dot 2s ease-out forwards;
+}
+.map-ping-ring {
+  animation: map-ping-ring 2s ease-out forwards;
+}

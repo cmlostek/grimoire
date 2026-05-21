@@ -17,9 +17,13 @@ import {
   Eraser,
   Eye,
   EyeOff,
+  Radio,
 } from 'lucide-react';
 
-type Tool = 'select' | 'ruler' | 'circle' | 'square' | 'cone' | 'token';
+type Tool = 'select' | 'ruler' | 'circle' | 'square' | 'cone' | 'token' | 'ping';
+
+type Ping = { id: string; x: number; y: number; color: string };
+type Presence = { user_id: string; display_name: string; role: 'gm' | 'player' };
 
 const TOKEN_COLORS = ['#f59e0b', '#10b981', '#3b82f6', '#ef4444', '#a855f7', '#ec4899', '#f97316', '#14b8a6'];
 const SHAPE_COLORS = ['#f59e0b80', '#10b98180', '#3b82f680', '#ef444480', '#a855f780'];
@@ -65,12 +69,72 @@ export default function MapBoard() {
 
   const [members, setMembers] = useState<Member[]>([]);
 
+  // Ephemeral overlays — not persisted to DB.
+  const [pings, setPings] = useState<Ping[]>([]);
+  const [viewers, setViewers] = useState<Presence[]>([]);
+  const presenceChannelRef = useRef<ReturnType<typeof supabase.channel> | null>(null);
+  const displayName = useSession((s) => s.displayName);
+
   useEffect(() => {
     if (!campaignId) return;
     loadForCampaign(campaignId);
     const unsub = subscribe(campaignId);
     return unsub;
   }, [campaignId, loadForCampaign, subscribe]);
+
+  // Realtime channel for ping broadcasts + presence (separate from the
+  // postgres_changes subscription so events don't collide with row sync).
+  useEffect(() => {
+    if (!campaignId || !userId) return;
+    const channel = supabase.channel(`map-presence:${campaignId}`, {
+      config: { presence: { key: userId } },
+    });
+    presenceChannelRef.current = channel;
+
+    channel.on('broadcast', { event: 'ping' }, (payload) => {
+      const p = payload.payload as { id: string; x: number; y: number; color: string };
+      setPings((curr) => [...curr, p]);
+      // Auto-clear after the animation completes.
+      window.setTimeout(() => {
+        setPings((curr) => curr.filter((x) => x.id !== p.id));
+      }, 2200);
+    });
+
+    channel.on('presence', { event: 'sync' }, () => {
+      const state = channel.presenceState();
+      const next: Presence[] = [];
+      for (const userKey of Object.keys(state)) {
+        const entries = state[userKey] as unknown as Array<{ user_id?: string; display_name?: string; role?: 'gm' | 'player' }>;
+        const e = entries[0];
+        if (!e?.user_id || !e?.display_name || !e?.role) continue;
+        next.push({ user_id: e.user_id, display_name: e.display_name, role: e.role });
+      }
+      setViewers(next);
+    });
+
+    channel.subscribe(async (status) => {
+      if (status === 'SUBSCRIBED' && role && displayName) {
+        await channel.track({ user_id: userId, display_name: displayName, role });
+      }
+    });
+
+    return () => {
+      supabase.removeChannel(channel);
+      presenceChannelRef.current = null;
+    };
+  }, [campaignId, userId, role, displayName]);
+
+  const broadcastPing = (x: number, y: number) => {
+    const channel = presenceChannelRef.current;
+    if (!channel || !userId) return;
+    const ping: Ping = { id: crypto.randomUUID(), x, y, color: selectedColor };
+    channel.send({ type: 'broadcast', event: 'ping', payload: ping });
+    // Also render locally so the sender sees their own ping immediately.
+    setPings((curr) => [...curr, ping]);
+    window.setTimeout(() => {
+      setPings((curr) => curr.filter((x) => x.id !== ping.id));
+    }, 2200);
+  };
 
   // Re-fetch when the tab becomes visible again (stale realtime guard)
   useVisibilityReload(() => {
@@ -108,9 +172,15 @@ export default function MapBoard() {
 
   const onMouseDown = (e: React.MouseEvent) => {
     if (draggingTokenId) return;
-    if (!isGM) return;
     if (!campaignId) return;
     const p = getPoint(e);
+    // Ping is available to everyone — drop and return.
+    if (tool === 'ping') {
+      broadcastPing(p.x, p.y);
+      return;
+    }
+    // The remaining tools are GM-only authoring tools.
+    if (!isGM) return;
     if (tool === 'ruler') {
       setRuler({ x1: p.x, y1: p.y, x2: p.x, y2: p.y });
       return;
@@ -284,6 +354,7 @@ export default function MapBoard() {
             <div className="text-xs uppercase tracking-wider text-slate-500 mb-2">Tools</div>
             <div className="grid grid-cols-3 gap-1">
               {toolButton('select', MousePointer2, 'Select / drag')}
+              {toolButton('ping', Radio, 'Ping — click anywhere to flash a marker for everyone')}
               {toolButton('ruler', Ruler, 'Ruler', true)}
               {toolButton('token', User, 'Place token', true)}
               {toolButton('circle', CircleIcon, 'Circle', true)}
@@ -445,16 +516,36 @@ export default function MapBoard() {
           )}
         </aside>
 
-        <div className="flex-1 min-w-0 relative bg-slate-900 overflow-auto">
+        <div className="flex-1 min-w-0 relative bg-slate-900 overflow-hidden">
           {ruler && tool === 'ruler' && (
             <div className="absolute top-3 left-3 z-10 px-3 py-1.5 bg-slate-950/80 border border-slate-700 rounded font-mono text-xs text-sky-200">
               {rulerDistance} ft
             </div>
           )}
+          {/* Avatar stack — who else has the map open right now */}
+          <div className="absolute top-3 right-3 z-10 flex -space-x-2">
+            {viewers.map((v) => {
+              const initials = (v.display_name || '?').split(/\s+/).map((p) => p[0]).join('').slice(0, 2).toUpperCase();
+              const isMe = v.user_id === userId;
+              return (
+                <div
+                  key={v.user_id}
+                  title={`${v.display_name}${v.role === 'gm' ? ' (GM)' : ''}${isMe ? ' — you' : ''}`}
+                  className={`w-7 h-7 rounded-full border-2 flex items-center justify-center text-[10px] font-semibold ${
+                    v.role === 'gm'
+                      ? 'bg-amber-600 border-amber-300 text-amber-50'
+                      : 'bg-sky-700 border-sky-300 text-sky-50'
+                  } ${isMe ? 'ring-2 ring-white' : ''}`}
+                >
+                  {initials}
+                </div>
+              );
+            })}
+          </div>
           <svg
             ref={svgRef}
-            className="block w-full h-full select-none"
-            style={{ cursor: tool === 'select' || !isGM ? 'default' : 'crosshair' }}
+            className="absolute inset-0 w-full h-full select-none"
+            style={{ cursor: tool === 'select' ? 'default' : tool === 'ping' ? 'crosshair' : isGM ? 'crosshair' : 'default' }}
             onMouseDown={onMouseDown}
             onMouseMove={onMouseMove}
             onMouseUp={onMouseUp}
@@ -603,9 +694,19 @@ export default function MapBoard() {
                 </g>
               );
             })}
+
+            {/* Ping pulses — rendered on top of everything else. */}
+            {pings.map((p) => (
+              <g key={p.id} pointerEvents="none">
+                <circle cx={p.x} cy={p.y} r={6} fill={p.color} className="map-ping-dot" />
+                <circle cx={p.x} cy={p.y} r={6} fill="none" stroke={p.color} strokeWidth="3" className="map-ping-ring" />
+              </g>
+            ))}
           </svg>
           <div className="absolute bottom-3 left-3 text-[10px] text-slate-500 bg-slate-950/70 px-2 py-1 rounded">
-            {isGM
+            {tool === 'ping'
+              ? 'Click anywhere to ping — everyone viewing the map will see it flash.'
+              : isGM
               ? 'Double-click a token or shape to remove · Grid cell = 5 ft · Dashed outline = hidden from players'
               : 'Drag your own token · Grid cell = 5 ft'}
           </div>
