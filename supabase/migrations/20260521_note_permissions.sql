@@ -18,9 +18,9 @@ CREATE INDEX IF NOT EXISTS note_permissions_user_idx ON note_permissions(user_id
 
 ALTER TABLE note_permissions ENABLE ROW LEVEL SECURITY;
 
--- Helper: campaign for a note (used in policies below).
--- SECURITY DEFINER so RLS on `notes` doesn't recursively block the lookup
--- (a user we're sharing TO may not yet have row access to the note itself).
+-- Helpers used by the policies below. Both are SECURITY DEFINER so they
+-- bypass the calling user's RLS — critical to avoid infinite recursion
+-- between notes_select and note_permissions_select.
 CREATE OR REPLACE FUNCTION public.note_campaign(p_note UUID)
 RETURNS UUID
 LANGUAGE SQL
@@ -31,18 +31,27 @@ AS $func$
   SELECT campaign_id FROM notes WHERE id = p_note;
 $func$;
 
+CREATE OR REPLACE FUNCTION public.note_author(p_note UUID)
+RETURNS UUID
+LANGUAGE SQL
+STABLE
+SECURITY DEFINER
+SET search_path = public
+AS $func$
+  SELECT owner_user_id FROM notes WHERE id = p_note;
+$func$;
+
 -- Members of the campaign can read permission rows that name them, plus
 -- the GM and the note's author can read all rows for their notes.
+-- NOTE: must NOT contain a subquery on `notes` — that recurses through
+-- notes_select (which itself queries note_permissions) and returns 500.
 DROP POLICY IF EXISTS note_permissions_select ON note_permissions;
 CREATE POLICY note_permissions_select ON note_permissions
   FOR SELECT TO authenticated
   USING (
     user_id = auth.uid()
     OR is_gm(note_campaign(note_id))
-    OR EXISTS (
-      SELECT 1 FROM notes n
-      WHERE n.id = note_id AND n.owner_user_id = auth.uid()
-    )
+    OR note_author(note_id) = auth.uid()
   );
 
 -- Only the note's author or a GM can write permission rows.
@@ -51,17 +60,11 @@ CREATE POLICY note_permissions_write ON note_permissions
   FOR ALL TO authenticated
   USING (
     is_gm(note_campaign(note_id))
-    OR EXISTS (
-      SELECT 1 FROM notes n
-      WHERE n.id = note_id AND n.owner_user_id = auth.uid()
-    )
+    OR note_author(note_id) = auth.uid()
   )
   WITH CHECK (
     is_gm(note_campaign(note_id))
-    OR EXISTS (
-      SELECT 1 FROM notes n
-      WHERE n.id = note_id AND n.owner_user_id = auth.uid()
-    )
+    OR note_author(note_id) = auth.uid()
   );
 
 ALTER PUBLICATION supabase_realtime ADD TABLE note_permissions;
