@@ -59,7 +59,8 @@ export function SharePopover({ note, onClose }: Props) {
     return () => { cancelled = true; };
   }, [campaignId]);
 
-  // Close when clicking outside.
+  // Close when clicking outside. Listener is attached on the next tick so
+  // the same mousedown that opens the popover doesn't immediately close it.
   const ref = useRef<HTMLDivElement>(null);
   useEffect(() => {
     function onDocClick(e: MouseEvent) {
@@ -67,8 +68,13 @@ export function SharePopover({ note, onClose }: Props) {
       if (ref.current.contains(e.target as Node)) return;
       onClose();
     }
-    document.addEventListener('mousedown', onDocClick);
-    return () => document.removeEventListener('mousedown', onDocClick);
+    const id = window.setTimeout(() => {
+      document.addEventListener('mousedown', onDocClick);
+    }, 0);
+    return () => {
+      window.clearTimeout(id);
+      document.removeEventListener('mousedown', onDocClick);
+    };
   }, [onClose]);
 
   // Players to show in the matrix: everyone in the campaign except the GM
