@@ -152,13 +152,20 @@ export const useInitiativeStore = create<InitiativeState>((set, get) => ({
     if (!combatants.length) return;
     const ni = turnIndex + 1;
     if (ni >= combatants.length) {
-      // End of round — decrement timed conditions on every combatant
+      // End of round — decrement timed conditions on every combatant.
+      // We persist whenever ANY timed condition actually changed (either
+      // counted down or expired). Comparing lengths only catches expiries
+      // and silently drops the visible decrement for still-active conditions.
       for (const c of combatants) {
         if (!c.conditions.length) continue;
-        const next = c.conditions
-          .map((cd) => cd.rounds === null ? cd : { ...cd, rounds: cd.rounds - 1 })
-          .filter((cd) => cd.rounds === null || cd.rounds > 0);
-        if (next.length !== c.conditions.length) update(c.id, { conditions: next });
+        const decremented = c.conditions.map((cd) =>
+          cd.rounds === null ? cd : { ...cd, rounds: cd.rounds - 1 }
+        );
+        const next = decremented.filter((cd) => cd.rounds === null || cd.rounds > 0);
+        const changed =
+          next.length !== c.conditions.length ||
+          next.some((cd, i) => cd.rounds !== c.conditions[i].rounds);
+        if (changed) update(c.id, { conditions: next });
       }
       const newRound = round + 1;
       localStorage.setItem(ROUND_KEY, String(newRound));
