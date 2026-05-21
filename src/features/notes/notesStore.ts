@@ -8,12 +8,19 @@ export type Note = {
   body: string;
   folder_id: string | null;
   visible_to_players: boolean;
-  /** null = read-only for players; true = any player may edit (DB col added by migration) */
+  /** Legacy: kept in sync with note_permissions for older clients. */
   player_editable: boolean | null;
   owner_user_id: string | null;
   icon: string | null;
   created_at: string;
   updated_at: string;
+};
+
+export type NotePermission = {
+  note_id: string;
+  user_id: string;
+  can_view: boolean;
+  can_edit: boolean;
 };
 
 export type Folder = {
@@ -29,6 +36,7 @@ const EXPANDED_KEY = 'dnd-gm:expandedFolders';
 const ACTIVE_NOTE_KEY = 'dnd-gm:activeNoteId';
 const ICON_KEY = 'dnd-gm:noteIcons';
 const EDITABLE_KEY = 'dnd-gm:noteEditable';
+const PERMS_KEY = 'dnd-gm:notePermissions';
 
 function loadExpanded(): Record<string, boolean> {
   try {
@@ -79,9 +87,28 @@ function mergeAll(note: Note): Note {
   return mergeEditable(mergeIcon(note));
 }
 
+// ─── note_permissions localStorage fallback ────────────────────────────────
+// Same pattern as icons/editables: persisted locally so the UI works even
+// before the supabase migration is run.
+type LocalPermsMap = Record<string, NotePermission[]>; // note_id -> rows
+function readLocalPerms(): LocalPermsMap {
+  try { return JSON.parse(localStorage.getItem(PERMS_KEY) ?? '{}'); }
+  catch { return {}; }
+}
+function writeLocalPerms(noteId: string, rows: NotePermission[]) {
+  const map = readLocalPerms();
+  if (rows.length === 0) delete map[noteId];
+  else map[noteId] = rows;
+  localStorage.setItem(PERMS_KEY, JSON.stringify(map));
+}
+
 type NotesState = {
   notes: Note[];
   folders: Folder[];
+  /** Per-note draft buffer for title/body. Save flushes to Supabase. */
+  drafts: Record<string, { title?: string; body?: string }>;
+  /** Per-note permission matrix loaded from note_permissions. */
+  permissions: Record<string, NotePermission[]>;
   activeNoteId: string | null;
   loaded: boolean;
   error: string | null;
@@ -94,8 +121,17 @@ type NotesState = {
 
   createNote: (campaignId: string, folderId: string | null, ownerId?: string | null) => Promise<string | null>;
   updateNote: (id: string, patch: Partial<Pick<Note, 'title' | 'body' | 'folder_id' | 'visible_to_players' | 'icon' | 'player_editable'>>) => Promise<void>;
+  /** Buffer title/body locally without hitting the DB. Call saveNote to flush. */
+  updateDraft: (id: string, patch: { title?: string; body?: string }) => void;
+  /** Flush draft buffer to Supabase; broadcasts via realtime. */
+  saveNote: (id: string) => Promise<void>;
+  isDirty: (id: string) => boolean;
   deleteNote: (id: string) => Promise<void>;
   moveNote: (id: string, folderId: string | null) => Promise<void>;
+
+  /** Replace the full permission matrix for a note. */
+  setNotePermissions: (noteId: string, rows: NotePermission[]) => Promise<void>;
+  getNotePermissions: (noteId: string) => NotePermission[];
 
   createFolder: (campaignId: string, name: string, parentId: string | null) => Promise<string | null>;
   renameFolder: (id: string, name: string) => Promise<void>;
@@ -110,6 +146,8 @@ const expandedMap = loadExpanded();
 export const useNotes = create<NotesState>((set, get) => ({
   notes: [],
   folders: [],
+  drafts: {},
+  permissions: {},
   activeNoteId: localStorage.getItem(ACTIVE_NOTE_KEY),
   loaded: false,
   error: null,
@@ -131,9 +169,31 @@ export const useNotes = create<NotesState>((set, get) => ({
       ]);
       if (notesRes.error) throw notesRes.error;
       if (foldersRes.error) throw foldersRes.error;
+      const loadedNotes = ((notesRes.data ?? []) as Note[]).map(mergeAll);
+
+      // Try to load note_permissions for these notes. Falls back to
+      // localStorage if the table doesn't exist yet (pre-migration).
+      let permsByNote: Record<string, NotePermission[]> = {};
+      const noteIds = loadedNotes.map((n) => n.id);
+      if (noteIds.length > 0) {
+        const { data: permRows, error: permErr } = await supabase
+          .from('note_permissions')
+          .select('*')
+          .in('note_id', noteIds);
+        if (!permErr && permRows) {
+          for (const row of permRows as NotePermission[]) {
+            (permsByNote[row.note_id] ??= []).push(row);
+          }
+        } else {
+          // Table missing — fall back to local cache.
+          permsByNote = readLocalPerms();
+        }
+      }
+
       set({
-        notes: ((notesRes.data ?? []) as Note[]).map(mergeAll),
+        notes: loadedNotes,
         folders: (foldersRes.data ?? []) as Folder[],
+        permissions: permsByNote,
         loaded: true,
       });
     } catch (e) {
@@ -179,13 +239,33 @@ export const useNotes = create<NotesState>((set, get) => ({
           }
         }
       )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'note_permissions' },
+        (payload) => {
+          // No campaign filter is safe — only rows for notes in our campaign
+          // pass RLS, so the subscription naturally scopes to us.
+          const { permissions } = get();
+          if (payload.eventType === 'DELETE') {
+            const old = payload.old as Partial<NotePermission>;
+            if (!old.note_id || !old.user_id) return;
+            const rows = (permissions[old.note_id] ?? []).filter((r) => r.user_id !== old.user_id);
+            set({ permissions: { ...permissions, [old.note_id]: rows } });
+          } else {
+            const row = payload.new as NotePermission;
+            const existing = permissions[row.note_id] ?? [];
+            const next = existing.filter((r) => r.user_id !== row.user_id).concat(row);
+            set({ permissions: { ...permissions, [row.note_id]: next } });
+          }
+        }
+      )
       .subscribe();
     return () => {
       supabase.removeChannel(channel);
     };
   },
 
-  clear: () => set({ notes: [], folders: [], activeNoteId: null, loaded: false, error: null }),
+  clear: () => set({ notes: [], folders: [], drafts: {}, permissions: {}, activeNoteId: null, loaded: false, error: null }),
 
   setActiveNote: (id) => {
     if (id) localStorage.setItem(ACTIVE_NOTE_KEY, id);
@@ -241,12 +321,122 @@ export const useNotes = create<NotesState>((set, get) => ({
     }
   },
 
+  updateDraft: (id, patch) => {
+    set((s) => {
+      const cur = s.drafts[id] ?? {};
+      const note = s.notes.find((n) => n.id === id);
+      const next: { title?: string; body?: string } = { ...cur };
+      if (patch.title !== undefined) {
+        if (note && patch.title === note.title) delete next.title;
+        else next.title = patch.title;
+      }
+      if (patch.body !== undefined) {
+        if (note && patch.body === note.body) delete next.body;
+        else next.body = patch.body;
+      }
+      const drafts = { ...s.drafts };
+      if (next.title === undefined && next.body === undefined) {
+        delete drafts[id];
+      } else {
+        drafts[id] = next;
+      }
+      return { drafts };
+    });
+  },
+
+  saveNote: async (id) => {
+    const { drafts, notes } = get();
+    const draft = drafts[id];
+    if (!draft) return;
+    const note = notes.find((n) => n.id === id);
+    if (!note) return;
+    const patch: { title?: string; body?: string } = {};
+    if (draft.title !== undefined && draft.title !== note.title) patch.title = draft.title;
+    if (draft.body !== undefined && draft.body !== note.body) patch.body = draft.body;
+    if (Object.keys(patch).length === 0) {
+      set((s) => {
+        const d = { ...s.drafts };
+        delete d[id];
+        return { drafts: d };
+      });
+      return;
+    }
+    // Optimistic: commit draft into the note and clear it.
+    set((s) => {
+      const d = { ...s.drafts };
+      delete d[id];
+      return {
+        notes: s.notes.map((n) => (n.id === id ? { ...n, ...patch } : n)),
+        drafts: d,
+      };
+    });
+    const { error } = await supabase.from('notes').update(patch).eq('id', id);
+    if (error) {
+      // Roll back and restore draft.
+      set((s) => ({
+        notes: s.notes.map((n) => (n.id === id ? note : n)),
+        drafts: { ...s.drafts, [id]: draft },
+        error: error.message,
+      }));
+    }
+  },
+
+  isDirty: (id) => {
+    const d = get().drafts[id];
+    return !!d && (d.title !== undefined || d.body !== undefined);
+  },
+
+  getNotePermissions: (noteId) => get().permissions[noteId] ?? [],
+
+  setNotePermissions: async (noteId, rows) => {
+    // Normalise: drop rows where neither flag is set.
+    const cleaned = rows.filter((r) => r.can_view || r.can_edit);
+    const prev = get().permissions[noteId] ?? [];
+
+    // Optimistic update.
+    set((s) => ({ permissions: { ...s.permissions, [noteId]: cleaned } }));
+    writeLocalPerms(noteId, cleaned);
+
+    // Sync to DB: delete all existing rows for this note, then upsert new.
+    // Wrapped so a missing table (pre-migration) falls back silently.
+    const delRes = await supabase.from('note_permissions').delete().eq('note_id', noteId);
+    if (delRes.error && !/relation .* does not exist/i.test(delRes.error.message)) {
+      set({ permissions: { ...get().permissions, [noteId]: prev }, error: delRes.error.message });
+      return;
+    }
+    if (cleaned.length > 0) {
+      const insRes = await supabase.from('note_permissions').insert(cleaned);
+      if (insRes.error && !/relation .* does not exist/i.test(insRes.error.message)) {
+        set({ permissions: { ...get().permissions, [noteId]: prev }, error: insRes.error.message });
+        return;
+      }
+    }
+
+    // Keep the legacy boolean pair roughly in sync so older clients still see
+    // the right thing. visible_to_players = any can_view; player_editable =
+    // every can_view row also has can_edit. (Approximation; new clients ignore.)
+    const anyView = cleaned.some((r) => r.can_view);
+    const allEdit = cleaned.length > 0 && cleaned.every((r) => r.can_edit);
+    await supabase
+      .from('notes')
+      .update({ visible_to_players: anyView, player_editable: allEdit })
+      .eq('id', noteId);
+  },
+
   deleteNote: async (id) => {
     const prev = get().notes;
-    set((s) => ({
-      notes: s.notes.filter((n) => n.id !== id),
-      activeNoteId: s.activeNoteId === id ? null : s.activeNoteId,
-    }));
+    set((s) => {
+      const drafts = { ...s.drafts };
+      delete drafts[id];
+      const permissions = { ...s.permissions };
+      delete permissions[id];
+      return {
+        notes: s.notes.filter((n) => n.id !== id),
+        activeNoteId: s.activeNoteId === id ? null : s.activeNoteId,
+        drafts,
+        permissions,
+      };
+    });
     if (localStorage.getItem(ACTIVE_NOTE_KEY) === id) localStorage.removeItem(ACTIVE_NOTE_KEY);
     const { error } = await supabase.from('notes').delete().eq('id', id);
     if (error) set({ notes: prev, error: error.message });
@@ -330,3 +520,37 @@ export const useNotes = create<NotesState>((set, get) => ({
 
   isFolderExpanded: (id) => expandedMap[id] ?? true,
 }));
+
+// ─── Permission selectors (pure helpers) ───────────────────────────────────
+// The new per-user matrix is the source of truth. Legacy boolean fields are
+// still honoured so notes created before the migration keep working.
+
+export function canViewNote(
+  note: Note,
+  userId: string | null,
+  role: 'gm' | 'player' | null,
+  perms: NotePermission[],
+): boolean {
+  if (!userId) return false;
+  if (role === 'gm') return true;
+  if (note.owner_user_id === userId) return true;
+  if (perms.some((p) => p.user_id === userId && p.can_view)) return true;
+  // Legacy fallback for notes not migrated to the matrix yet.
+  if (note.visible_to_players) return true;
+  return false;
+}
+
+export function canEditNote(
+  note: Note,
+  userId: string | null,
+  role: 'gm' | 'player' | null,
+  perms: NotePermission[],
+): boolean {
+  if (!userId) return false;
+  if (role === 'gm') return true;
+  if (note.owner_user_id === userId) return true;
+  if (perms.some((p) => p.user_id === userId && p.can_edit)) return true;
+  // Legacy fallback.
+  if (note.visible_to_players && note.player_editable === true) return true;
+  return false;
+}

@@ -3,9 +3,10 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { useNavigate } from 'react-router-dom';
 import { useStore } from '../../store';
-import { useNotes, type Folder, type Note } from './notesStore';
+import { useNotes, canViewNote, canEditNote, type Folder, type Note } from './notesStore';
 import { useSession } from '../session/sessionStore';
 import PageHeader from '../../components/PageHeader';
+import { SharePopover } from './SharePopover';
 import {
   ChevronRight,
   FileText,
@@ -37,6 +38,8 @@ import {
   ArrowUpAZ,
   Clock,
   Palette,
+  Share2,
+  Save,
 } from 'lucide-react';
 import { useVisibilityReload } from '../../hooks/useVisibilityReload';
 import { useCampaignSettings } from './campaignSettingsStore';
@@ -90,34 +93,19 @@ function NoteIconDisplay({ iconId, size = 11 }: { iconId: string | null | undefi
   const { Icon, color } = getNoteIconDef(iconId);
   return <Icon size={size} style={{ color }} className="shrink-0" />;
 }
-// ─── Note permission helpers ─────────────────────────────────────────────────
-type PermLevel = 'private' | 'read' | 'edit';
-function getPermLevel(n: { visible_to_players: boolean; player_editable: boolean | null }): PermLevel {
-  if (!n.visible_to_players) return 'private';
-  if (n.player_editable) return 'edit';
-  return 'read';
-}
-const PERM_META: Record<PermLevel, { label: string; title: string; cls: string }> = {
-  private: {
-    label: 'GM Only',
-    title: 'Only GM can see — click to share with players',
-    cls: 'bg-slate-800 border border-slate-700 text-slate-400 hover:bg-slate-700',
-  },
-  read: {
-    label: 'View Only',
-    title: 'Players can view (read-only) — click to let them edit',
-    cls: 'bg-sky-900/40 border border-sky-800 text-sky-200 hover:bg-sky-900/60',
-  },
-  edit: {
-    label: 'Editable',
-    title: 'Players can edit — click to make read-only',
-    cls: 'bg-emerald-900/40 border border-emerald-800 text-emerald-200 hover:bg-emerald-900/60',
-  },
-};
-function permIcon(level: PermLevel) {
-  if (level === 'private') return <EyeOff size={13} className="text-slate-500" />;
-  if (level === 'edit')    return <Eye    size={13} className="text-emerald-400" />;
-  return                          <Eye    size={13} className="text-sky-400" />;
+// ─── Note share status (sidebar icon only) ────────────────────────────────
+// Header uses the SharePopover for control; sidebar shows a single glanceable
+// dot derived from the permission matrix.
+type ShareStatus = 'private' | 'shared_view' | 'shared_edit';
+function getShareStatus(
+  note: { visible_to_players: boolean; player_editable: boolean | null },
+  perms: { can_view: boolean; can_edit: boolean }[],
+): ShareStatus {
+  const anyEdit = perms.some((p) => p.can_edit) || (note.visible_to_players && note.player_editable === true);
+  const anyView = perms.some((p) => p.can_view) || note.visible_to_players;
+  if (anyEdit) return 'shared_edit';
+  if (anyView) return 'shared_view';
+  return 'private';
 }
 
 import { buildWikiIndex } from './wikiIndex';
@@ -173,17 +161,23 @@ export default function Notes() {
   const userId = useSession((s) => s.userId);
   const role = useSession((s) => s.role);
   const isGM = role === 'gm';
-  const canEditNote = (n: Note) => isGM || n.owner_user_id === userId || n.player_editable === true;
 
   const notes = useNotes((s) => s.notes);
   const folders = useNotes((s) => s.folders);
+  const drafts = useNotes((s) => s.drafts);
+  const permissions = useNotes((s) => s.permissions);
   const activeNoteId = useNotes((s) => s.activeNoteId);
   const loadForCampaign = useNotes((s) => s.loadForCampaign);
   const subscribe = useNotes((s) => s.subscribe);
   const setActiveNote = useNotes((s) => s.setActiveNote);
   const createNote = useNotes((s) => s.createNote);
   const updateNote = useNotes((s) => s.updateNote);
+  const updateDraft = useNotes((s) => s.updateDraft);
+  const saveNote = useNotes((s) => s.saveNote);
   const deleteNote = useNotes((s) => s.deleteNote);
+
+  const canEdit = (n: Note) => canEditNote(n, userId, role, permissions[n.id] ?? []);
+  const canView = (n: Note) => canViewNote(n, userId, role, permissions[n.id] ?? []);
   const createFolder = useNotes((s) => s.createFolder);
   const renameFolder = useNotes((s) => s.renameFolder);
   const deleteFolder = useNotes((s) => s.deleteFolder);
@@ -223,17 +217,15 @@ export default function Notes() {
   const [dragOverId, setDragOverId] = useState<string | 'root' | null>(null);
   const [showLegend, setShowLegend] = useState(false);
   const [showIconPicker, setShowIconPicker] = useState(false);
+  const [showSharePopover, setShowSharePopover] = useState(false);
   const [sortMode, setSortMode] = useState<'updated' | 'alpha'>(() => {
     const stored = localStorage.getItem('dnd-gm:noteSortMode');
     return stored === 'alpha' ? 'alpha' : 'updated';
   });
 
   const visibleNotes = useMemo(
-    () =>
-      isGM
-        ? notes
-        : notes.filter((n) => n.visible_to_players || n.owner_user_id === userId),
-    [isGM, notes, userId]
+    () => (isGM ? notes : notes.filter((n) => canViewNote(n, userId, role, permissions[n.id] ?? []))),
+    [isGM, notes, userId, role, permissions]
   );
 
   // Apply sort order to notes and folders for the sidebar
@@ -526,7 +518,7 @@ export default function Notes() {
             <>
               <div className="px-6 py-3 border-b border-slate-800 flex items-center gap-3">
                 {/* Icon picker button */}
-                {canEditNote(active) ? (
+                {canEdit(active) ? (
                   <div className="relative shrink-0">
                     <button
                       onClick={() => setShowIconPicker((p) => !p)}
@@ -573,37 +565,49 @@ export default function Notes() {
                   </div>
                 )}
                 <input
-                  value={active.title}
-                  onChange={(e) => updateNote(active.id, { title: e.target.value })}
-                  readOnly={!canEditNote(active)}
+                  value={drafts[active.id]?.title ?? active.title}
+                  onChange={(e) => updateDraft(active.id, { title: e.target.value })}
+                  readOnly={!canEdit(active)}
                   className="flex-1 bg-transparent font-serif text-xl outline-none"
                   placeholder="Title"
                 />
-                {/* Permission-level cycle: GM Only → View Only → Editable → … */}
-                {(isGM || active.owner_user_id === userId) && (() => {
-                  const level = getPermLevel(active);
-                  const meta = PERM_META[level];
-                  const cycleNext = () => {
-                    if (level === 'private') {
-                      updateNote(active.id, { visible_to_players: true, player_editable: false });
-                    } else if (level === 'read') {
-                      updateNote(active.id, { visible_to_players: true, player_editable: true });
-                    } else {
-                      updateNote(active.id, { visible_to_players: false, player_editable: false });
-                    }
-                  };
+                {/* Save button — appears when local draft has unsaved changes */}
+                {canEdit(active) && (() => {
+                  const dirty = !!drafts[active.id];
                   return (
                     <button
-                      onClick={cycleNext}
-                      title={meta.title}
-                      className={`px-2 py-1 text-xs rounded flex items-center gap-1 ${meta.cls}`}
+                      onClick={() => saveNote(active.id)}
+                      disabled={!dirty}
+                      title={dirty ? 'Save (broadcasts to other viewers)' : 'No unsaved changes'}
+                      className={`px-2 py-1 text-xs rounded flex items-center gap-1 transition-colors ${
+                        dirty
+                          ? 'bg-emerald-700 hover:bg-emerald-600 text-white'
+                          : 'bg-slate-800 text-slate-500 cursor-not-allowed'
+                      }`}
                     >
-                      {permIcon(level)}
-                      {meta.label}
+                      <Save size={13} />
+                      {dirty ? 'Save' : 'Saved'}
+                      {dirty && <span className="w-1.5 h-1.5 rounded-full bg-amber-300" />}
                     </button>
                   );
                 })()}
-                {canEditNote(active) && (confirmingId === active.id ? (
+                {/* Share popover — replaces the old tri-state cycle */}
+                {(isGM || active.owner_user_id === userId) && (
+                  <div className="relative">
+                    <button
+                      onClick={() => setShowSharePopover((p) => !p)}
+                      title="Share note with players"
+                      className="px-2 py-1 text-xs rounded flex items-center gap-1 bg-slate-800 border border-slate-700 text-slate-300 hover:bg-slate-700"
+                    >
+                      <Share2 size={13} />
+                      Share
+                    </button>
+                    {showSharePopover && (
+                      <SharePopover note={active} onClose={() => setShowSharePopover(false)} />
+                    )}
+                  </div>
+                )}
+                {canEdit(active) && (confirmingId === active.id ? (
                   <div className="flex items-center gap-1">
                     <span className="text-xs text-slate-400 mr-1">Delete this note?</span>
                     <button
@@ -632,12 +636,12 @@ export default function Notes() {
                 ))}
               </div>
               <div className="flex-1 min-h-0 overflow-hidden">
-                {canEditNote(active) ? (
+                {canEdit(active) ? (
                   /* Live editor — highlights decorators inline as you type */
                   <LiveEditor
                     key={active.id}
-                    body={active.body}
-                    onChange={(v) => updateNote(active.id, { body: v })}
+                    body={drafts[active.id]?.body ?? active.body}
+                    onChange={(v) => updateDraft(active.id, { body: v })}
                     wikiIndex={wikiIndex}
                     onNavigate={onWikiClick}
                     rollFormula={rollFormula}
@@ -1038,6 +1042,9 @@ function NoteRow({
   onCancelDelete,
   onDragStart,
 }: NoteRowProps) {
+  // Status icon needs the permission rows to know "is this shared?"
+  const perms = useNotes((s) => s.permissions[note.id] ?? []);
+  const dirty = useNotes((s) => !!s.drafts[note.id]);
   return (
     <div
       draggable={isGM}
@@ -1053,11 +1060,14 @@ function NoteRow({
       style={{ paddingLeft: 16 + depth * 12 }}
     >
       <NoteIconDisplay iconId={note.icon} size={11} />
-      <span className="flex-1 min-w-0 truncate">{note.title || 'Untitled'}</span>
+      <span className="flex-1 min-w-0 truncate">
+        {note.title || 'Untitled'}
+        {dirty && <span className="ml-1 text-amber-400" title="Unsaved changes">●</span>}
+      </span>
       {isGM && !active && (() => {
-        const level = getPermLevel(note);
-        if (level === 'edit')    return <Eye size={10} className="text-emerald-400 shrink-0" />;
-        if (level === 'read')    return <Eye size={10} className="text-sky-400 shrink-0" />;
+        const status = getShareStatus(note, perms);
+        if (status === 'shared_edit') return <Eye size={10} className="text-emerald-400 shrink-0" />;
+        if (status === 'shared_view') return <Eye size={10} className="text-sky-400 shrink-0" />;
         return null;
       })()}
       {isGM && (confirming ? (
