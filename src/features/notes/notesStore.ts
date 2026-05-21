@@ -23,6 +23,13 @@ export type NotePermission = {
   can_edit: boolean;
 };
 
+/**
+ * Stable reference for "no permission rows" — used by Zustand selectors so
+ * they don't return a fresh `[]` every call. useSyncExternalStore would
+ * detect the new reference as a state change and infinite-loop (React #185).
+ */
+export const EMPTY_PERMS: readonly NotePermission[] = Object.freeze([]);
+
 export type Folder = {
   id: string;
   campaign_id: string;

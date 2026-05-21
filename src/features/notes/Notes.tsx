@@ -3,7 +3,7 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { useNavigate } from 'react-router-dom';
 import { useStore } from '../../store';
-import { useNotes, canViewNote, canEditNote, type Folder, type Note } from './notesStore';
+import { useNotes, canViewNote, canEditNote, EMPTY_PERMS, type Folder, type Note } from './notesStore';
 import { useSession } from '../session/sessionStore';
 import PageHeader from '../../components/PageHeader';
 import { SharePopover } from './SharePopover';
@@ -1043,7 +1043,9 @@ function NoteRow({
   onDragStart,
 }: NoteRowProps) {
   // Status icon needs the permission rows to know "is this shared?"
-  const perms = useNotes((s) => s.permissions[note.id] ?? []);
+  // EMPTY_PERMS is a stable reference — `?? []` here would infinite-loop
+  // useSyncExternalStore (React #185).
+  const perms = useNotes((s) => s.permissions[note.id] ?? EMPTY_PERMS);
   const dirty = useNotes((s) => !!s.drafts[note.id]);
   return (
     <div

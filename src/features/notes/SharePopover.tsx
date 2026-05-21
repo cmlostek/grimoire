@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Eye, EyeOff, Pencil, Share2, Users, UserCheck, Lock } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { useSession } from '../session/sessionStore';
-import { useNotes, type Note, type NotePermission } from './notesStore';
+import { useNotes, EMPTY_PERMS, type Note, type NotePermission } from './notesStore';
 
 type Member = {
   user_id: string;
@@ -24,7 +24,8 @@ export function SharePopover({ note, onClose }: Props) {
   const campaignId = useSession((s) => s.campaignId);
   const myUserId = useSession((s) => s.userId);
   const myRole = useSession((s) => s.role);
-  const perms = useNotes((s) => s.permissions[note.id] ?? []);
+  // Stable reference — `?? []` would infinite-loop useSyncExternalStore.
+  const perms = useNotes((s) => s.permissions[note.id] ?? EMPTY_PERMS);
   const setNotePermissions = useNotes((s) => s.setNotePermissions);
 
   const [members, setMembers] = useState<Member[]>([]);
