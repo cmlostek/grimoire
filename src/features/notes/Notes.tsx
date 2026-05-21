@@ -189,6 +189,11 @@ export default function Notes() {
   const homebrewItems = useStore((s) => s.homebrewItems);
   const homebrewSpells = useStore((s) => s.homebrewSpells);
   const party = useParty((s) => s.party);
+  // Notes references party members via @{Name} mentions, so it needs the
+  // party data loaded even when the user lands directly on /notes (instead
+  // of relying on the Party page to have been visited first).
+  const loadParty = useParty((s) => s.loadForCampaign);
+  const subscribeParty = useParty((s) => s.subscribe);
   const rollFormula = useQuickDice((s) => s.rollFormula);
 
   const loadSettings = useCampaignSettings((s) => s.load);
@@ -201,8 +206,10 @@ export default function Notes() {
     const unsub = subscribe(campaignId);
     loadSettings(campaignId);
     const unsubSettings = subscribeSettings(campaignId);
-    return () => { unsub(); unsubSettings(); };
-  }, [campaignId, loadForCampaign, subscribe, loadSettings, subscribeSettings]);
+    loadParty(campaignId);
+    const unsubParty = subscribeParty(campaignId);
+    return () => { unsub(); unsubSettings(); unsubParty(); };
+  }, [campaignId, loadForCampaign, subscribe, loadSettings, subscribeSettings, loadParty, subscribeParty]);
 
   // Re-fetch when the tab becomes visible again (stale realtime guard)
   useVisibilityReload(() => {

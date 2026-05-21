@@ -632,9 +632,14 @@ export function LiveEditor({ body, onChange, wikiIndex, onNavigate, rollFormula,
         const locEl = target.closest('.cm-d-player') as HTMLElement | null;
         if (hoverTimerRef.current) { clearTimeout(hoverTimerRef.current); hoverTimerRef.current = null; }
         if (locEl) {
-          const text = locEl.textContent?.trim() ?? '';
+          // The decorator marks the whole `@{Name}` token, so textContent is
+          // `@{Name}` — strip the wrapper before looking up the party member.
+          const raw = locEl.textContent?.trim() ?? '';
+          const inner = raw.startsWith('@{') && raw.endsWith('}')
+            ? raw.slice(2, -1).trim()
+            : raw;
           const member = partyRef.current.find(
-            (m) => m.name.trim().toLowerCase() === text.toLowerCase()
+            (m) => m.name.trim().toLowerCase() === inner.toLowerCase()
           );
           if (member) setHoverTooltip({ member, rect: locEl.getBoundingClientRect() });
         } else if (!target.closest('[data-party-tooltip]')) {
