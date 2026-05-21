@@ -1,40 +1,61 @@
 import { create } from 'zustand';
 
-export type Theme = 'grimoire' | 'arcane' | 'ember' | 'thornwood' | 'bloodmoon';
+/**
+ * v1.0.1: replaced the previous 5-accent / 6-background picker matrix with a
+ * single dark/light mode toggle. Both modes share a blue accent — dark uses
+ * the saturated Arcane blue (the original default), light uses a pale,
+ * desaturated variant that pairs with off-white surfaces.
+ */
+export type Mode = 'dark' | 'light';
 
-const THEME_KEY = 'grimoire:theme';
+const MODE_KEY = 'grimoire:mode';
 
-export const THEMES: Record<Theme, { label: string; swatch: string; ac200: string; ac400: string; ac600: string; ac700: string; ac900: string }> = {
-  grimoire:  { label: 'Grimoire',  swatch: '#a78bfa', ac200: '#ddd6fe', ac400: '#a78bfa', ac600: '#7c3aed', ac700: '#6d28d9', ac900: '#2e1065' },
-  arcane:    { label: 'Arcane',    swatch: '#38bdf8', ac200: '#bae6fd', ac400: '#38bdf8', ac600: '#0284c7', ac700: '#0369a1', ac900: '#0c4a6e' },
-  ember:     { label: 'Ember',     swatch: '#fbbf24', ac200: '#fde68a', ac400: '#fbbf24', ac600: '#d97706', ac700: '#b45309', ac900: '#451a03' },
-  thornwood: { label: 'Thornwood', swatch: '#34d399', ac200: '#a7f3d0', ac400: '#34d399', ac600: '#059669', ac700: '#047857', ac900: '#064e3b' },
-  bloodmoon: { label: 'Bloodmoon', swatch: '#fb7185', ac200: '#fecdd3', ac400: '#fb7185', ac600: '#e11d48', ac700: '#be123c', ac900: '#4c0519' },
+/** Accent ramp consumed by inline styles (var(--ac-*)) across the app. */
+const ACCENTS: Record<Mode, { ac200: string; ac400: string; ac600: string; ac700: string; ac900: string }> = {
+  dark:  { ac200: '#bae6fd', ac400: '#38bdf8', ac600: '#0284c7', ac700: '#0369a1', ac900: '#0c4a6e' },
+  light: { ac200: '#1e3a8a', ac400: '#2563eb', ac600: '#3b82f6', ac700: '#60a5fa', ac900: '#dbeafe' },
 };
 
-function applyTheme(theme: Theme) {
-  const t = THEMES[theme];
-  const s = document.documentElement.style;
-  s.setProperty('--ac-200', t.ac200);
-  s.setProperty('--ac-400', t.ac400);
-  s.setProperty('--ac-600', t.ac600);
-  s.setProperty('--ac-700', t.ac700);
-  s.setProperty('--ac-900', t.ac900);
+function applyMode(mode: Mode) {
+  const root = document.documentElement;
+  const a = ACCENTS[mode];
+  root.style.setProperty('--ac-200', a.ac200);
+  root.style.setProperty('--ac-400', a.ac400);
+  root.style.setProperty('--ac-600', a.ac600);
+  root.style.setProperty('--ac-700', a.ac700);
+  root.style.setProperty('--ac-900', a.ac900);
+  // Toggle `light` class so CSS surface overrides in index.css can match.
+  root.classList.toggle('light', mode === 'light');
+  root.classList.toggle('dark', mode === 'dark');
 }
 
-const _init = (localStorage.getItem(THEME_KEY) as Theme | null) ?? 'grimoire';
-applyTheme(_init);
+// Migrate the old `grimoire:theme` key (which named one of five color themes)
+// into the new binary mode. Any prior value collapses to 'dark' — the only
+// real change is removing the picker UI from the sidebar.
+function readInitialMode(): Mode {
+  const v = localStorage.getItem(MODE_KEY);
+  if (v === 'light' || v === 'dark') return v;
+  return 'dark';
+}
+
+const _init = readInitialMode();
+applyMode(_init);
 
 interface ThemeState {
-  theme: Theme;
-  setTheme: (t: Theme) => void;
+  mode: Mode;
+  setMode: (m: Mode) => void;
+  toggle: () => void;
 }
 
-export const useTheme = create<ThemeState>((set) => ({
-  theme: _init,
-  setTheme: (theme) => {
-    localStorage.setItem(THEME_KEY, theme);
-    applyTheme(theme);
-    set({ theme });
+export const useTheme = create<ThemeState>((set, get) => ({
+  mode: _init,
+  setMode: (mode) => {
+    localStorage.setItem(MODE_KEY, mode);
+    applyMode(mode);
+    set({ mode });
+  },
+  toggle: () => {
+    const next: Mode = get().mode === 'dark' ? 'light' : 'dark';
+    get().setMode(next);
   },
 }));

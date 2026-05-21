@@ -3,12 +3,39 @@
 @tailwind utilities;
 
 :root {
-  --ac-200: #ddd6fe;
-  --ac-400: #a78bfa;
-  --ac-600: #7c3aed;
-  --ac-700: #6d28d9;
-  --ac-900: #2e1065;
+  --ac-200: #bae6fd;
+  --ac-400: #38bdf8;
+  --ac-600: #0284c7;
+  --ac-700: #0369a1;
+  --ac-900: #0c4a6e;
 }
+
+/* ─── Light mode ──────────────────────────────────────────────────────────
+   Pragmatic overrides for the most prominent slate-* surface classes so the
+   existing dark-themed components flip to a light palette without rewriting
+   every component. The accent ramp (var(--ac-*)) is driven separately by
+   themeStore.applyMode. */
+html.light body { background-color: #f1f5f9; color: #0f172a; }
+html.light .bg-slate-950 { background-color: #f1f5f9 !important; }
+html.light .bg-slate-900 { background-color: #ffffff !important; }
+html.light .bg-slate-800 { background-color: #e2e8f0 !important; }
+html.light .text-slate-100 { color: #0f172a !important; }
+html.light .text-slate-200 { color: #1e293b !important; }
+html.light .text-slate-300 { color: #334155 !important; }
+html.light .text-slate-400 { color: #475569 !important; }
+html.light .text-slate-500 { color: #64748b !important; }
+html.light .border-slate-800 { border-color: #cbd5e1 !important; }
+html.light .border-slate-700 { border-color: #94a3b8 !important; }
+html.light .hover\:bg-slate-900:hover { background-color: #f1f5f9 !important; }
+html.light .hover\:bg-slate-800:hover { background-color: #e2e8f0 !important; }
+html.light .markdown-body { color: #0f172a; }
+html.light .markdown-body h1,
+html.light .markdown-body h2,
+html.light .markdown-body h3,
+html.light .markdown-body h4 { color: #0c4a6e; }
+html.light .markdown-body code { background: #e2e8f0; color: #0f172a; }
+html.light .markdown-body pre { background: #f8fafc; border-color: #cbd5e1; }
+html.light .markdown-body blockquote { color: #475569; border-color: #94a3b8; }
 
 html, body, #root { height: 100%; }
 body { margin: 0; }
