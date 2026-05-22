@@ -34,7 +34,8 @@ A full campaign journal with live Obsidian-style markdown editing. Syntax marker
 
 - **Hierarchical folders** with colour coding and per-folder player visibility controls
 - **Per-note icons** — 16 thematic icons (town, dungeon, ship, skull, crown…) in themed colours
-- **Three permission levels** per note: GM Only · View Only (blue eye) · Editable (green eye)
+- **Per-user permissions** — pick view and/or edit access independently for each player, or use one-click presets (GM only · Party view · Party edit). GM and the author always have full access. *(v1.0.1)*
+- **Explicit Save button** — title and body edits buffer locally and broadcast to other viewers on save. Sidebar shows a dot next to dirty notes. *(v1.0.1)*
 - **Custom decorator syntax** for tagging content inline (locations, milestones, artifacts, secrets — see [Note Syntax Reference](#note-syntax-reference))
 - **Wiki links** `[[Note Name]]` with autocomplete and broken-link indicators
 - **Secrets** `{{hidden text}}` rendered as interactive lock/reveal cards; players only see revealed ones
@@ -55,12 +56,14 @@ A full campaign journal with live Obsidian-style markdown editing. Syntax marker
 - Advance turns with round counter
 - Adjust HP inline during combat
 - PC flag to distinguish players from monsters
-- Condition tracking
+- **Timed conditions** — attach Poisoned, Stunned, Restrained, etc. with a duration; the counter decrements on each round and the condition is removed automatically when it expires *(v1.0.1)*
 
-### 👤 NPC's
-- Add NPC's for your players to add information about what they know of them
-- Track alive / dead, allegiance, etc...
-- Sort by type, or search for a specific NPC. 
+### 👤 NPCs
+- Add NPCs for your players to add information about what they know of them
+- Track alive / dead / captured / unknown / missing, faction, and location
+- Sort or filter by status; search by name or faction
+- **Stat blocks** — every NPC carries a 5e-style stat block (AC, HP, hit dice, speed, ability scores, skills, senses, languages, damage / condition immunities, CR, traits, actions). GM edits inline; players see a formatted read-only card. *(v1.0.1)*
+- **Two-stage visibility** — reveal an NPC's identity to players without exposing their stats, or vice versa *(v1.0.1)*
 
 ### 🗺️ Map Board
 - Upload any background image as a battle map
@@ -69,6 +72,8 @@ A full campaign journal with live Obsidian-style markdown editing. Syntax marker
 - **Area-of-effect shapes** — circles, squares, cones with adjustable size and colour
 - **Ruler** for measuring distances
 - Drag-and-drop token positioning
+- **Ping tool** — click anywhere to drop a 2-second pulse visible to everyone viewing the map, broadcast via realtime. Available to GMs and players. *(v1.0.1)*
+- **Viewer presence** — avatar stack in the corner shows who else has the map open right now, with amber initials for GM and sky for players *(v1.0.1)*
 
 ### 👥 Party
 - Add characters manually or **import from D&D Beyond JSON**
@@ -80,6 +85,7 @@ A full campaign journal with live Obsidian-style markdown editing. Syntax marker
 ### 📚 Rules Reference
 - Full **SRD 5.1** rules browser with search
 - **Conditions** reference (poisoned, charmed, stunned…)
+- **Character-creation chapters** — Step-by-Step Character Creation, Ability Score Generation, Races (Overview), Classes (Overview), Backgrounds, Alignment & Personality, Equipment & Starting Wealth, Levels and Advancement, and Multiclassing *(v1.0.1)*
 - Read-only reference; always available as a sidebar
 
 ### 🧙 Homebrew
@@ -105,6 +111,10 @@ A full campaign journal with live Obsidian-style markdown editing. Syntax marker
 - Link recordings directly to campaign notes
 - Transcript history with timestamps and search
 
+### 🎨 UI *(v1.0.1)*
+- **Collapsible sidebar** — toggle to icons-only at any time; state persisted across reloads
+- **Dark / Light mode** — single Sun/Moon toggle. Dark uses the saturated default blue; light uses a pale blue accent on slate-100 surfaces. (The previous 5-accent and 6-background color pickers were removed.)
+
 ---
 
 ## Tech Stack
@@ -127,7 +137,7 @@ A full campaign journal with live Obsidian-style markdown editing. Syntax marker
 
 - **Feature-store pattern:** each feature (`notes`, `party`, `map`…) has a co-located Zustand store with a `loadForCampaign(campaignId)` action. The active campaign ID is stored in a root session store; switching campaigns triggers all feature stores to reload.
 - **Row-Level Security:** all Supabase tables enforce RLS so players can only read/write data belonging to their campaign and matching their role (`gm` or `player`).
-- **Realtime:** each store subscribes to `postgres_changes` for its table, filtered by `campaign_id`. A `useVisibilityReload` hook re-triggers `loadForCampaign` on tab focus to recover from stale WebSocket connections.
+- **Realtime:** each store subscribes to `postgres_changes` for its table, filtered by `campaign_id`. A `useVisibilityReload` hook re-triggers `loadForCampaign` on tab focus to recover from stale WebSocket connections. The map additionally uses a dedicated `map-presence:` channel with Supabase `broadcast` events for ephemeral pings and Supabase `presence` for the viewer-avatar stack — neither hits the database.
 - **Live editor:** the Notes editor is built on CodeMirror 6 `ViewPlugin` + `WidgetType`. Markdown syntax markers are hidden via `Decoration.replace()` when the cursor is off that line, and custom decorator tokens (`@{…}`, `{{…}}`, `[[…]]`, etc.) are similarly hidden off-cursor, revealing only the rendered content.
 
 ---
@@ -164,20 +174,18 @@ Open the **SQL Editor** in your Supabase dashboard. Paste the contents of [`supa
 | `homebrew_spells` | Custom spells |
 | `transcripts` | Session speech-to-text recordings |
 
-#### 3. Optional: pending migrations
+#### 3. Run the migrations
 
-The file [`supabase/migrations/20260422_campaign_settings_and_note_columns.sql`](supabase/migrations/20260422_campaign_settings_and_note_columns.sql) adds two columns that enable cross-device syncing of features added after the initial schema:
+Apply each file in [`supabase/migrations/`](supabase/migrations/) in the SQL Editor, in filename order. The application falls back gracefully when a column is missing, so you can apply migrations at any time after pulling the matching code release.
 
-```sql
--- Adds per-note icon and player-editable flag
-ALTER TABLE notes ADD COLUMN IF NOT EXISTS icon TEXT;
-ALTER TABLE notes ADD COLUMN IF NOT EXISTS player_editable BOOLEAN DEFAULT FALSE;
-
--- Adds campaign-level settings (folder visibility, page hiding)
-CREATE TABLE IF NOT EXISTS campaign_settings ( … );
-```
-
-Run this migration in the SQL Editor if you are starting from a fresh database (the schema.sql will be updated to include these in a future release).
+| Migration | What it does | Required for |
+|---|---|---|
+| `20260422_campaign_settings_and_note_columns.sql` | `notes.icon`, `notes.player_editable`, `campaign_settings` table | v1.0 features |
+| `20260422_fix_party_unclaim_rls.sql` | Adjusts RLS so players can release a claimed character | v1.0 features |
+| `20260423_initiative_and_npcs.sql` | `initiative_entries` and `npcs` tables | v1.0 features |
+| `20260521_note_permissions.sql` | `note_permissions` table + RLS + backfill from the legacy boolean flags | v1.0.1 per-user note permissions |
+| `20260521_note_permissions_fix_recursion.sql` | Hotfix: replaces a recursive RLS subquery with a SECURITY DEFINER helper | v1.0.1 (run alongside the previous file) |
+| `20260521_npc_stat_blocks.sql` | `npcs.stat_block` JSONB + `npcs.stat_block_visible` boolean | v1.0.1 NPC stat blocks |
 
 #### 4. Enable email auth
 
@@ -292,8 +300,8 @@ Every user belongs to one or more campaigns. Within each campaign they are eithe
 
 | Role | Can do |
 |---|---|
-| **GM** | Everything — create/delete notes & folders, control map, manage party, configure shops, set permissions |
-| **Player** | See notes marked *View Only* or *Editable*, edit notes marked *Editable*, claim and edit their own party character, view the map |
+| **GM** | Everything — create/delete notes & folders, control map, manage party, configure shops, manage NPC stat-block visibility, set per-user note permissions |
+| **Player** | See and edit notes they've been granted access to (independent view and edit flags per user), claim and edit their own party character, ping the map, view NPCs (and their stat blocks) the GM has revealed |
 
 ### Joining a campaign
 
@@ -303,15 +311,21 @@ Every user belongs to one or more campaigns. Within each campaign they are eithe
 
 ### Note permissions
 
-Each note has one of three visibility levels, shown as an icon in the sidebar:
+Permissions are managed per user via the **Share** button in the note header (v1.0.1).
 
-| Icon | Level | Players see | Players can edit |
-|------|-------|------------|-----------------|
-| *(none)* | GM Only | ✗ | ✗ |
-| 🔵 Blue eye | View Only | ✓ | ✗ |
-| 🟢 Green eye | Editable | ✓ | ✓ |
+- The note's **author** and the campaign **GM** always have full view and edit access.
+- For every other player in the campaign, you can independently toggle **view** and **edit** access. Edit implies view.
+- Three quick presets stamp the matrix in one click: **GM only**, **Party view**, **Party edit**.
 
-Click the permission badge in the note header to cycle through levels.
+The sidebar shows a glanceable status icon next to each note:
+
+| Icon | Status |
+|------|--------|
+| *(none)* | GM only — no player has access |
+| 🔵 Blue eye | At least one player can view |
+| 🟢 Green eye | At least one player can edit |
+
+Note that the **Save** button must be clicked for body edits to broadcast to other viewers; the sidebar shows an amber dot on notes with unsaved changes.
 
 ### Real-time sync
 
@@ -328,12 +342,14 @@ src/
 │   ├── homebrew/      # Custom monsters, items, spells
 │   ├── initiative/    # Combat tracker
 │   ├── items/         # SRD + homebrew item browser
-│   ├── map/           # Tactical map board
+│   ├── map/           # Tactical map board + ping + presence
 │   ├── notes/         # Note editor, folders, wiki, decorators
 │   │   ├── LiveEditor.tsx      # CodeMirror 6 live markdown editor
+│   │   ├── SharePopover.tsx    # Per-user view/edit permission matrix
 │   │   ├── decorators.ts       # remark plugin for note syntax
 │   │   ├── notesStore.ts       # Zustand store + Supabase sync
 │   │   └── wikiIndex.ts        # Wiki link index builder
+│   ├── npcs/          # NPC tracker + stat blocks
 │   ├── party/         # Character roster
 │   ├── rules/         # SRD 5.1 reference
 │   ├── session/       # Auth, campaigns, join flow
