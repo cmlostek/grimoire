@@ -1,7 +1,8 @@
 <img width="480" height="168" alt="Arc 2026-04-23 22 11 36" src="https://github.com/user-attachments/assets/985fd684-b3d0-44e8-a186-8c46166327f8" />
 
-# ⚔️ Grimoire -- Version 1.0
+# ⚔️ Grimoire -- Version 1.0.1
 -- Built with [Claude](https://www.anthropic.com/) Sonnet 4.6 and Opus 4.7.
+-- Release notes: [CHANGELOG.md](./CHANGELOG.md)
 
 A real-time, multiplayer Game Master (GM) companion for running **Dungeons and Dragons 5e** campaigns in the browser. Built for game masters who want a single, fast screen that handles everything — notes, party tracking, combat, maps, spells, shops, and more — with live sync across all players at the table.
 
