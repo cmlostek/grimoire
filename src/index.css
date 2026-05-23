@@ -8,6 +8,14 @@
   --ac-600: #0284c7;
   --ac-700: #0369a1;
   --ac-900: #0c4a6e;
+
+  /* CodeMirror note editor surface. Consumed by LiveEditor.noteTheme so the
+     editor flips with the app's dark/light mode without a re-mount. */
+  --editor-bg: #020617;
+  --editor-fg: #f1f5f9;
+  --editor-heading: #bae6fd;
+  --editor-code-bg: #1e293b;
+  --editor-code-fg: #e2e8f0;
 }
 
 /* ─── Light mode ──────────────────────────────────────────────────────────
@@ -15,6 +23,13 @@
    existing dark-themed components flip to a light palette without rewriting
    every component. The accent ramp (var(--ac-*)) is driven separately by
    themeStore.applyMode. */
+html.light {
+  --editor-bg: #ffffff;
+  --editor-fg: #0f172a;
+  --editor-heading: #0c4a6e;
+  --editor-code-bg: #e2e8f0;
+  --editor-code-fg: #0f172a;
+}
 html.light body { background-color: #f1f5f9; color: #0f172a; }
 html.light .bg-slate-950 { background-color: #f1f5f9 !important; }
 html.light .bg-slate-900 { background-color: #ffffff !important; }

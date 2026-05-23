@@ -313,9 +313,13 @@ const secretPlugin = ViewPlugin.fromClass(
 );
 
 // ─── Theme ────────────────────────────────────────────────────────────────────
+// Editor surface colors come from CSS variables so they swap with the
+// app-wide dark/light mode (see :root + html.light in index.css). The
+// fallback values match the original dark theme so nothing breaks if a
+// consumer mounts the editor without the theme variables defined.
 const noteTheme = EditorView.theme(
   {
-    '&': { height: '100%', backgroundColor: '#020617' },
+    '&': { height: '100%', backgroundColor: 'var(--editor-bg, #020617)' },
     '.cm-scroller': {
       overflow: 'auto',
       fontFamily: 'ui-sans-serif, system-ui, sans-serif',
@@ -323,14 +327,14 @@ const noteTheme = EditorView.theme(
     },
     '.cm-content': {
       padding: '24px 32px',
-      color: '#f1f5f9',
+      color: 'var(--editor-fg, #f1f5f9)',
       lineHeight: '1.8',
-      caretColor: '#f1f5f9',
+      caretColor: 'var(--editor-fg, #f1f5f9)',
       minHeight: '100%',
     },
     '&.cm-focused': { outline: 'none' },
     '.cm-line': { padding: '0' },
-    '.cm-cursor': { borderLeftColor: '#e2e8f0', borderLeftWidth: '2px' },
+    '.cm-cursor': { borderLeftColor: 'var(--editor-fg, #e2e8f0)', borderLeftWidth: '2px' },
     '&.cm-focused .cm-selectionBackground': { backgroundColor: '#1d4ed850' },
     '.cm-selectionBackground': { backgroundColor: '#1d4ed830' },
     '.cm-gutters': { display: 'none' },
@@ -338,7 +342,7 @@ const noteTheme = EditorView.theme(
     // ── Headings ──────────────────────────────────────────────────────────────
     '.cm-heading': {
       fontFamily: '"Iowan Old Style", Georgia, serif !important',
-      color: '#bae6fd !important',
+      color: 'var(--editor-heading, #bae6fd) !important',
       fontWeight: 'bold !important',
     },
     '.cm-h1': { fontSize: '1.7em !important', borderBottom: '1px solid #334155', paddingBottom: '0.1em', display: 'block' },
@@ -349,12 +353,12 @@ const noteTheme = EditorView.theme(
     '.cm-bold':        { fontWeight: '700' },
     '.cm-italic':      { fontStyle: 'italic' },
     '.cm-code-inline': {
-      background: '#1e293b',
+      background: 'var(--editor-code-bg, #1e293b)',
       padding: '0.05em 0.35em',
       borderRadius: '0.25em',
       fontFamily: 'ui-monospace, monospace',
       fontSize: '0.88em',
-      color: '#e2e8f0',
+      color: 'var(--editor-code-fg, #e2e8f0)',
     },
 
     // ── Lists & blockquotes ───────────────────────────────────────────────────
