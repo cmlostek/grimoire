@@ -20,6 +20,10 @@
   /* Decorator token foregrounds. Background tints work in both modes; only
      the text needs a per-mode override for legibility. */
   --deco-player-fg: #86efac; /* green-300 — readable on dark */
+
+  /* Elevated surface (used in color-mix calls so accent-tinted cards blend
+     toward the right base color per mode). Dark = slate-900, light = white. */
+  --surface-elev: #0f172a;
 }
 
 /* ─── Light mode ──────────────────────────────────────────────────────────
@@ -36,6 +40,9 @@ html.light {
 
   /* Darker greens for player mentions so they read against light surfaces. */
   --deco-player-fg: #166534; /* green-800 */
+
+  /* Flip the elevated-surface base so accent-tinted cards stay readable. */
+  --surface-elev: #ffffff;
 }
 html.light body { background-color: #f1f5f9; color: #0f172a; }
 html.light .bg-slate-950 { background-color: #f1f5f9 !important; }

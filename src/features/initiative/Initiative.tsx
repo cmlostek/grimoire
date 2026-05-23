@@ -115,7 +115,7 @@ export default function Initiative() {
                       ? 'bg-slate-900/40 border-slate-800 opacity-60'
                       : 'bg-slate-900 border-slate-800'
                 }`}
-                style={isActive ? { background: 'color-mix(in srgb, var(--ac-900) 30%, #0f172a)' } : undefined}
+                style={isActive ? { background: 'color-mix(in srgb, var(--ac-900) 30%, var(--surface-elev))' } : undefined}
               >
                 <div className="flex items-start gap-3">
                   {/* Initiative badge */}
@@ -308,7 +308,7 @@ export default function Initiative() {
             <div
               className="border rounded-lg p-4 space-y-2"
               style={{
-                background: 'color-mix(in srgb, var(--ac-900) 20%, #0f172a)',
+                background: 'color-mix(in srgb, var(--ac-900) 20%, var(--surface-elev))',
                 borderColor: 'var(--ac-700)',
               }}
             >
