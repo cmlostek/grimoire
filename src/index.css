@@ -28,6 +28,18 @@ html.light .border-slate-800 { border-color: #cbd5e1 !important; }
 html.light .border-slate-700 { border-color: #94a3b8 !important; }
 html.light .hover\:bg-slate-900:hover { background-color: #f1f5f9 !important; }
 html.light .hover\:bg-slate-800:hover { background-color: #e2e8f0 !important; }
+/* Sky-tinted accent text used across components (party names, stat values,
+   section labels). In dark mode the pale sky reads against slate-950; in
+   light mode it disappears against slate-100, so flip it to the dark slate
+   that *was* the dark-mode background. */
+html.light .text-sky-50,
+html.light .text-sky-100,
+html.light .text-sky-200,
+html.light .text-sky-300 { color: #0f172a !important; }
+html.light .text-sky-400 { color: #1e3a8a !important; }
+html.light .hover\:text-sky-200:hover,
+html.light .hover\:text-sky-300:hover,
+html.light .hover\:text-sky-400:hover { color: #1e3a8a !important; }
 html.light .markdown-body { color: #0f172a; }
 html.light .markdown-body h1,
 html.light .markdown-body h2,
