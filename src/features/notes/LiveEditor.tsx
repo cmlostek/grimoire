@@ -371,7 +371,7 @@ const noteTheme = EditorView.theme(
 
     // ── Decorator tokens ──────────────────────────────────────────────────────
     '.cm-d-loc':       { background: 'rgba(251,146,60,.18)',  color: '#fdba74', borderRadius: '0.25em', padding: '0.05em 0.25em', cursor: 'pointer' },
-    '.cm-d-player':    { background: 'rgba(34,197,94,.18)',   color: '#86efac', borderRadius: '0.25em', padding: '0.05em 0.25em' },
+    '.cm-d-player':    { background: 'rgba(34,197,94,.18)',   color: 'var(--deco-player-fg, #86efac)', borderRadius: '0.25em', padding: '0.05em 0.25em' },
     '.cm-d-dep':       { background: 'rgba(244,63,94,.18)',   color: '#fda4af', borderRadius: '0.25em', padding: '0.05em 0.25em' },
     '.cm-d-milestone': { background: 'rgba(56,189,248,.18)',  color: '#7dd3fc', borderRadius: '0.25em', padding: '0.05em 0.25em' },
     '.cm-d-artifact':  { background: 'rgba(34,197,94,.18)',   color: '#86efac', borderRadius: '0.25em', padding: '0.05em 0.25em' },

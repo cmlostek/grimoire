@@ -16,6 +16,10 @@
   --editor-heading: #bae6fd;
   --editor-code-bg: #1e293b;
   --editor-code-fg: #e2e8f0;
+
+  /* Decorator token foregrounds. Background tints work in both modes; only
+     the text needs a per-mode override for legibility. */
+  --deco-player-fg: #86efac; /* green-300 — readable on dark */
 }
 
 /* ─── Light mode ──────────────────────────────────────────────────────────
@@ -29,6 +33,9 @@ html.light {
   --editor-heading: #0c4a6e;
   --editor-code-bg: #e2e8f0;
   --editor-code-fg: #0f172a;
+
+  /* Darker greens for player mentions so they read against light surfaces. */
+  --deco-player-fg: #166534; /* green-800 */
 }
 html.light body { background-color: #f1f5f9; color: #0f172a; }
 html.light .bg-slate-950 { background-color: #f1f5f9 !important; }
@@ -138,7 +145,7 @@ input[type="number"] { -moz-appearance: textfield; appearance: textfield; }
 /* Note decorators */
 .note-deco { padding: 0.05em 0.35em; border-radius: 0.3em; white-space: pre-wrap; }
 .note-loc { background: rgba(251, 146, 60, 0.18); color: #fdba74; cursor: pointer; }
-.note-player { background: rgba(34, 197, 94, 0.18); color: #86efac; }
+.note-player { background: rgba(34, 197, 94, 0.18); color: var(--deco-player-fg, #86efac); }
 .note-dep { background: rgba(244, 63, 94, 0.18); color: #fda4af; }
 .note-milestone { background: rgba(56, 189, 248, 0.18); color: #7dd3fc; }
 .note-artifact { background: rgba(34, 197, 94, 0.18); color: #86efac; }
