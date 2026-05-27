@@ -3,12 +3,9 @@
 # ⚔️ Grimoire -- Version 1.0.2
 -- Built with [Claude](https://www.anthropic.com/) Sonnet 4.6 and Opus 4.7.
 -- Release notes: [CHANGELOG.md](./CHANGELOG.md)
+-- New features are published to [Preview](https://www.grimoire-preview.vercel.app/). Use your normal login credentials to view them.
 
 A real-time, multiplayer Game Master (GM) companion for running **Dungeons and Dragons 5e** campaigns in the browser. Built for game masters who want a single, fast screen that handles everything — notes, party tracking, combat, maps, spells, shops, and more — with live sync across all players at the table.
-
-> **Live demo:** [Grimoire](https://dnd.cmlostek.site/)
-> **Email:** test@test.com
-> **Password:** password
 
 ---
 
