@@ -52,7 +52,7 @@ type StateRow = {
 
 const DEFAULT_STATE: MapState = {
   background_url: null,
-  grid_size: 50,
+  grid_size: 1,
   show_grid: true,
   shapes: [],
 };

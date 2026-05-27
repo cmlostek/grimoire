@@ -1,28 +1,10 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import PageHeader from '../../components/PageHeader';
 import { useSession } from '../session/sessionStore';
 import { useNotes } from '../notes/notesStore';
 import { useTranscripts, type Transcript } from './transcriptionStore';
+import { useRecording } from './recordingStore';
 import { Mic, Square, Save, Trash2, AlertTriangle, FileText, Clock } from 'lucide-react';
-
-type SpeechRecognitionLike = {
-  continuous: boolean;
-  interimResults: boolean;
-  lang: string;
-  start: () => void;
-  stop: () => void;
-  onresult: ((e: any) => void) | null;
-  onerror: ((e: any) => void) | null;
-  onend: (() => void) | null;
-};
-
-function getRecognitionCtor(): (new () => SpeechRecognitionLike) | null {
-  const w = window as unknown as {
-    SpeechRecognition?: new () => SpeechRecognitionLike;
-    webkitSpeechRecognition?: new () => SpeechRecognitionLike;
-  };
-  return w.SpeechRecognition ?? w.webkitSpeechRecognition ?? null;
-}
 
 function formatDuration(startedAt: string, endedAt: string | null) {
   if (!endedAt) return '…';
@@ -56,123 +38,13 @@ export default function Transcription() {
   const createNote = useNotes((s) => s.createNote);
   const updateNote = useNotes((s) => s.updateNote);
 
-  const [supported] = useState(() => getRecognitionCtor() !== null);
-  const [recording, setRecording] = useState(false);
-  const [finalText, setFinalText] = useState('');
-  const [interim, setInterim] = useState('');
-  const [startedAt, setStartedAt] = useState<string | null>(null);
-  const [recError, setRecError] = useState<string | null>(null);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const { isRecording, finalText, interim, startedAt, error, supported, start, stop, reset } = useRecording();
 
-  const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
-  const finalTextRef = useRef('');
-  const recordingRef = useRef(false);
-  const networkFailsRef = useRef(0);
-  const restartTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
 
   useEffect(() => {
     if (campaignId) loadTranscripts(campaignId);
   }, [campaignId, loadTranscripts]);
-
-  const spawnRecognition = (Ctor: new () => SpeechRecognitionLike) => {
-    if (!recordingRef.current) return;
-    const rec = new Ctor();
-    rec.continuous = true;
-    rec.interimResults = true;
-    rec.lang = 'en-US';
-    rec.onresult = (e: any) => {
-      networkFailsRef.current = 0; // successful audio — reset failure count
-      let latestInterim = '';
-      for (let i = e.resultIndex; i < e.results.length; i++) {
-        const result = e.results[i];
-        const text = result[0].transcript;
-        if (result.isFinal) {
-          finalTextRef.current += (finalTextRef.current ? ' ' : '') + text.trim();
-          setFinalText(finalTextRef.current);
-        } else {
-          latestInterim += text;
-        }
-      }
-      setInterim(latestInterim);
-    };
-    rec.onerror = (e: any) => {
-      const code: string = e?.error ?? 'error';
-      if (code === 'network') {
-        networkFailsRef.current++;
-        if (networkFailsRef.current >= 4) {
-          setRecError('Unable to reach the speech recognition service. This requires Chrome with a stable internet connection.');
-          recordingRef.current = false;
-          setRecording(false);
-        }
-        return; // onend will schedule a restart with backoff
-      }
-      if (code === 'not-allowed' || code === 'service-not-allowed') {
-        setRecError('Microphone access denied. Allow microphone in your browser settings and try again.');
-        recordingRef.current = false;
-        setRecording(false);
-        return;
-      }
-      setRecError(`Speech error: ${code}`);
-    };
-    rec.onend = () => {
-      if (recognitionRef.current !== rec || !recordingRef.current) return;
-      recognitionRef.current = null;
-      // Back off on repeated network failures to avoid a rapid-cycling tight loop
-      const delay = networkFailsRef.current > 0 ? Math.min(500 * networkFailsRef.current, 3000) : 100;
-      restartTimerRef.current = setTimeout(() => spawnRecognition(Ctor), delay);
-    };
-    recognitionRef.current = rec;
-    try {
-      rec.start();
-    } catch {
-      recognitionRef.current = null;
-      restartTimerRef.current = setTimeout(() => spawnRecognition(Ctor), 500);
-    }
-  };
-
-  const start = () => {
-    const Ctor = getRecognitionCtor();
-    if (!Ctor) return;
-    setRecError(null);
-    finalTextRef.current = finalText;
-    networkFailsRef.current = 0;
-    recordingRef.current = true;
-    setRecording(true);
-    setStartedAt(new Date().toISOString());
-    spawnRecognition(Ctor);
-  };
-
-  const stop = () => {
-    if (restartTimerRef.current) clearTimeout(restartTimerRef.current);
-    const rec = recognitionRef.current;
-    recognitionRef.current = null;
-    recordingRef.current = false;
-    setRecording(false);
-    setInterim('');
-    if (rec) {
-      try { rec.stop(); } catch { /* ignore */ }
-    }
-  };
-
-  useEffect(() => {
-    return () => {
-      if (restartTimerRef.current) clearTimeout(restartTimerRef.current);
-      const rec = recognitionRef.current;
-      recognitionRef.current = null;
-      recordingRef.current = false;
-      if (rec) {
-        try { rec.stop(); } catch { /* ignore */ }
-      }
-    };
-  }, []);
-
-  const reset = () => {
-    setFinalText('');
-    setInterim('');
-    finalTextRef.current = '';
-    setStartedAt(null);
-    setRecError(null);
-  };
 
   const saveTranscriptOnly = async () => {
     if (!campaignId || !finalText.trim()) return;
@@ -214,7 +86,7 @@ export default function Transcription() {
       <div className="flex-1 min-h-0 flex">
         <section className="flex-1 min-w-0 flex flex-col p-6 gap-4">
           <div className="flex items-center gap-3">
-            {!recording ? (
+            {!isRecording ? (
               <button
                 onClick={start}
                 disabled={!supported}
@@ -230,13 +102,13 @@ export default function Transcription() {
                 <Square size={16} /> Stop
               </button>
             )}
-            {recording && (
+            {isRecording && (
               <span className="flex items-center gap-1.5 text-xs text-rose-300">
                 <span className="w-2 h-2 bg-rose-500 rounded-full animate-pulse" />
                 Listening…
               </span>
             )}
-            {finalText && !recording && (
+            {finalText && !isRecording && (
               <>
                 <button
                   onClick={saveAsNote}
@@ -260,16 +132,16 @@ export default function Transcription() {
             )}
           </div>
 
-          {recError && (
+          {error && (
             <div className="text-xs text-rose-300 bg-rose-950/40 border border-rose-900 rounded p-2">
-              {recError}
+              {error}
             </div>
           )}
 
           <div className="flex-1 min-h-0 bg-slate-950 border border-slate-800 rounded-lg p-4 overflow-y-auto">
             {!finalText && !interim && (
               <div className="text-slate-600 text-sm italic">
-                {recording
+                {isRecording
                   ? 'Listening. Words will appear here as they are recognized.'
                   : supported
                     ? 'Press Start recording to dictate session notes. On stop, save the transcript as a new note or keep it in the archive below.'

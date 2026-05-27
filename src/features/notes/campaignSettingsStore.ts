@@ -29,6 +29,8 @@ import { supabase } from '../../lib/supabase';
 export type CampaignSettings = {
   /** Nav path slugs hidden from non-GM players (e.g. 'shop', 'spells'). */
   hiddenPages: string[];
+  /** GM-only page slugs shared with players (e.g. 'initiative'). */
+  allowedGmPages: string[];
   /** Folder IDs hidden from non-GM players. */
   hiddenFolderIds: string[];
   /** folderId → hex color string. */
@@ -37,6 +39,7 @@ export type CampaignSettings = {
 
 export const DEFAULTS: CampaignSettings = {
   hiddenPages: [],
+  allowedGmPages: [],
   hiddenFolderIds: [],
   folderColors: {},
 };
@@ -75,6 +78,9 @@ type SettingsState = {
   subscribe: (cid: string) => () => void;
 
   togglePage: (page: string) => void;
+  toggleGmPage: (page: string) => void;
+  hideAll: (pages: string[]) => void;
+  showAll: () => void;
   toggleFolder: (folderId: string) => void;
   setFolderColor: (folderId: string, color: string | null) => void;
 };
@@ -142,6 +148,39 @@ export const useCampaignSettings = create<SettingsState>((set, get) => ({
       ? settings.hiddenPages.filter((p) => p !== page)
       : [...settings.hiddenPages, page];
     const next = { ...settings, hiddenPages };
+    set({ settings: next });
+    if (campaignId) {
+      lsSave(campaignId, next);
+      sbUpsert(campaignId, next);
+    }
+  },
+
+  toggleGmPage: (page) => {
+    const { settings, campaignId } = get();
+    const allowedGmPages = (settings.allowedGmPages ?? []).includes(page)
+      ? (settings.allowedGmPages ?? []).filter((p) => p !== page)
+      : [...(settings.allowedGmPages ?? []), page];
+    const next = { ...settings, allowedGmPages };
+    set({ settings: next });
+    if (campaignId) {
+      lsSave(campaignId, next);
+      sbUpsert(campaignId, next);
+    }
+  },
+
+  hideAll: (pages) => {
+    const { settings, campaignId } = get();
+    const next = { ...settings, hiddenPages: pages };
+    set({ settings: next });
+    if (campaignId) {
+      lsSave(campaignId, next);
+      sbUpsert(campaignId, next);
+    }
+  },
+
+  showAll: () => {
+    const { settings, campaignId } = get();
+    const next = { ...settings, hiddenPages: [] };
     set({ settings: next });
     if (campaignId) {
       lsSave(campaignId, next);

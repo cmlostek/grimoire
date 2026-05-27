@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { NavLink, Route, Routes, Navigate } from 'react-router-dom';
-import { Dice6, Swords, NotebookPen, Map as MapIcon, BookOpen, Sparkles, Coins, Package, ScrollText, Users, FlaskConical, Dices, LogOut, ArrowLeftRight, Copy, Mic, Eye, EyeOff, Settings, BookMarked, Sun, Moon, PanelLeftClose, PanelLeftOpen } from 'lucide-react';
+import { Dice6, Swords, NotebookPen, Map as MapIcon, BookOpen, Sparkles, Coins, Package, ScrollText, Users, FlaskConical, Dices, LogOut, ArrowLeftRight, Copy, Mic, Eye, EyeOff, Settings, BookMarked, Sun, Moon, PanelLeftClose, PanelLeftOpen, Radio } from 'lucide-react';
 import DiceRoller from './features/dice/DiceRoller';
 import { QuickDice } from './features/dice/QuickDice';
 import { useQuickDice } from './features/dice/quickDiceStore';
@@ -20,6 +20,7 @@ import CampaignPicker from './features/session/CampaignPicker';
 import { useSession } from './features/session/sessionStore';
 import { useCampaignSettings } from './features/notes/campaignSettingsStore';
 import { useTheme } from './features/session/themeStore';
+import { useRecording } from './features/transcription/recordingStore';
 
 type NavItem = {
   to: string;
@@ -30,7 +31,7 @@ type NavItem = {
 
 const nav: NavItem[] = [
   { to: '/dice', label: 'Dice', icon: Dice6 },
-  { to: '/initiative', label: 'Initiative', icon: Swords, gmOnly: true },
+  { to: '/initiative', label: 'Initiative', icon: Swords },
   { to: '/party', label: 'Party', icon: Users },
   { to: '/notes', label: 'Notes', icon: NotebookPen },
   { to: '/npcs',  label: 'NPCs',  icon: BookMarked },
@@ -99,7 +100,16 @@ function AppShell() {
   const loadSettings = useCampaignSettings((s) => s.load);
   const subscribeSettings = useCampaignSettings((s) => s.subscribe);
   const togglePage = useCampaignSettings((s) => s.togglePage);
+  const toggleGmPage = useCampaignSettings((s) => s.toggleGmPage);
+  const hideAll = useCampaignSettings((s) => s.hideAll);
+  const showAll = useCampaignSettings((s) => s.showAll);
   const hiddenPages = useCampaignSettings((s) => s.settings.hiddenPages);
+  const allowedGmPages = useCampaignSettings((s) => s.settings.allowedGmPages ?? []);
+
+  const isRecording = useRecording((s) => s.isRecording);
+  const startRecording = useRecording((s) => s.start);
+  const stopRecording = useRecording((s) => s.stop);
+  const recordingSupported = useRecording((s) => s.supported);
 
   useEffect(() => {
     if (!campaignId) return;
@@ -108,10 +118,13 @@ function AppShell() {
     return unsub;
   }, [campaignId, loadSettings, subscribeSettings]);
 
-  // Players see only non-gmOnly pages that the GM hasn't hidden
-  const visibleNav = nav.filter((n) =>
-    (!n.gmOnly || isGM) && (isGM || !hiddenPages.includes(n.to.replace('/', '')))
-  );
+  // Players see non-gmOnly pages the GM hasn't hidden, plus gmOnly pages the GM has shared
+  const visibleNav = nav.filter((n) => {
+    const slug = n.to.replace('/', '');
+    if (isGM) return true;
+    if (n.gmOnly) return allowedGmPages.includes(slug);
+    return !hiddenPages.includes(slug);
+  });
 
   const copyJoinCode = () => {
     if (joinCode) navigator.clipboard.writeText(joinCode);
@@ -144,6 +157,19 @@ function AppShell() {
             >
               <Dices size={14} />
             </button>
+            {isGM && recordingSupported && (
+              <button
+                onClick={isRecording ? stopRecording : startRecording}
+                title={isRecording ? 'Stop recording' : 'Start recording'}
+                className={`p-1.5 rounded border ${
+                  isRecording
+                    ? 'bg-rose-900/60 border-rose-700 text-rose-300'
+                    : 'bg-slate-800 border-slate-700 hover:bg-slate-700 text-slate-300'
+                }`}
+              >
+                {isRecording ? <Radio size={14} className="animate-pulse" /> : <Mic size={14} />}
+              </button>
+            )}
           </div>
         ) : (
           <div className="px-4 py-3 border-b border-slate-800 flex items-start justify-between gap-2">
@@ -167,18 +193,33 @@ function AppShell() {
               >
                 <PanelLeftClose size={13} />
               </button>
-              <button
-                onClick={toggleQuickDice}
-                title="Quick dice roller"
-                className={`p-1.5 rounded border ${
-                  quickDiceOpen
-                    ? 'bg-slate-900'
-                    : 'bg-slate-800 border-slate-700 hover:bg-slate-700 text-slate-300'
-                }`}
-                style={quickDiceOpen ? { color: 'var(--ac-200)', borderColor: 'var(--ac-700)' } : undefined}
-              >
-                <Dices size={14} />
-              </button>
+              <div className="flex gap-1">
+                {isGM && recordingSupported && (
+                  <button
+                    onClick={isRecording ? stopRecording : startRecording}
+                    title={isRecording ? 'Stop recording' : 'Start recording'}
+                    className={`p-1.5 rounded border ${
+                      isRecording
+                        ? 'bg-rose-900/60 border-rose-700 text-rose-300'
+                        : 'bg-slate-800 border-slate-700 hover:bg-slate-700 text-slate-300'
+                    }`}
+                  >
+                    {isRecording ? <Radio size={14} className="animate-pulse" /> : <Mic size={14} />}
+                  </button>
+                )}
+                <button
+                  onClick={toggleQuickDice}
+                  title="Quick dice roller"
+                  className={`p-1.5 rounded border ${
+                    quickDiceOpen
+                      ? 'bg-slate-900'
+                      : 'bg-slate-800 border-slate-700 hover:bg-slate-700 text-slate-300'
+                  }`}
+                  style={quickDiceOpen ? { color: 'var(--ac-200)', borderColor: 'var(--ac-700)' } : undefined}
+                >
+                  <Dices size={14} />
+                </button>
+              </div>
             </div>
           </div>
         )}
@@ -225,8 +266,26 @@ function AppShell() {
           {/* GM page-visibility — only rendered when expanded */}
           {!collapsed && isGM && showPagePicker && (
             <div className="px-4 py-2 border-b border-slate-800">
-              <div className="text-[10px] uppercase tracking-wider text-slate-500 mb-2">
-                Player Visibility
+              <div className="flex items-center justify-between mb-2">
+                <div className="text-[10px] uppercase tracking-wider text-slate-500">
+                  Player Visibility
+                </div>
+                <div className="flex gap-1">
+                  <button
+                    onClick={() => hideAll(nav.filter((n) => !n.gmOnly).map((n) => n.to.replace('/', '')))}
+                    className="text-[9px] px-1.5 py-0.5 bg-slate-800 hover:bg-slate-700 rounded text-slate-400"
+                    title="Hide all pages from players"
+                  >
+                    Hide all
+                  </button>
+                  <button
+                    onClick={showAll}
+                    className="text-[9px] px-1.5 py-0.5 bg-slate-800 hover:bg-slate-700 rounded text-slate-400"
+                    title="Show all pages to players"
+                  >
+                    Show all
+                  </button>
+                </div>
               </div>
               <div className="space-y-1">
                 {nav.filter((n) => !n.gmOnly).map((item) => {
@@ -254,6 +313,36 @@ function AppShell() {
                     </button>
                   );
                 })}
+                {nav.filter((n) => n.gmOnly).length > 0 && (
+                  <>
+                    <div className="text-[9px] uppercase tracking-wider text-slate-600 mt-2 mb-1 px-2">GM-only pages</div>
+                    {nav.filter((n) => n.gmOnly).map((item) => {
+                      const slug = item.to.replace('/', '');
+                      const shared = allowedGmPages.includes(slug);
+                      return (
+                        <button
+                          key={item.to}
+                          onClick={() => toggleGmPage(slug)}
+                          className={`w-full flex items-center justify-between px-2 py-1 rounded text-[11px] transition-colors ${
+                            shared
+                              ? 'text-slate-200 hover:bg-slate-800'
+                              : 'text-slate-500 hover:bg-slate-800 hover:text-slate-300'
+                          }`}
+                        >
+                          <span className="flex items-center gap-1.5">
+                            <item.icon size={11} />
+                            {item.label}
+                          </span>
+                          {shared ? (
+                            <Eye size={11} className="text-sky-400" />
+                          ) : (
+                            <EyeOff size={11} className="text-slate-600" />
+                          )}
+                        </button>
+                      );
+                    })}
+                  </>
+                )}
               </div>
             </div>
           )}
@@ -290,7 +379,7 @@ function AppShell() {
         <Routes>
           <Route path="/" element={<Navigate to="/dice" replace />} />
           <Route path="/dice" element={<DiceRoller />} />
-          {role === 'gm' && <Route path="/initiative" element={<Initiative />} />}
+          <Route path="/initiative" element={<Initiative />} />
           <Route path="/notes" element={<Notes />} />
           <Route path="/npcs" element={<NPCs />} />
           <Route path="/map" element={<MapBoard />} />
