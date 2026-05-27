@@ -39,6 +39,7 @@ create table if not exists notes (
   campaign_id        uuid not null references campaigns(id) on delete cascade,
   title              text not null default 'Untitled',
   body               text not null default '',
+  ydoc_state         text,
   visible_to_players boolean not null default false,
   player_editable    boolean not null default false,
   owner_user_id      uuid,
@@ -525,3 +526,12 @@ alter publication supabase_realtime add table note_folders;
 alter publication supabase_realtime add table initiative_entries;
 alter publication supabase_realtime add table npcs;
 alter publication supabase_realtime add table note_permissions;
+
+
+-- =============================================
+-- SECTION 9 — Yjs collaborative editing state
+-- =============================================
+-- Stores the Yjs document vector-clock state per note so all clients can
+-- start from a consistent CRDT baseline (no duplicate-content on cold join).
+
+alter table notes add column if not exists ydoc_state text;

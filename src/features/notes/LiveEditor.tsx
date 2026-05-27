@@ -6,8 +6,9 @@
  * - {{secrets}} show as interactive widgets when cursor is outside them
  * - Decorator tokens highlighted in colour
  * - Click $dice$ to roll, click [[wiki]] to navigate, [[...]] autocomplete
+ * - Yjs CRDT collaborative editing with live cursors via Supabase Realtime
  */
-import { useEffect, useRef, useState, useCallback } from 'react';
+import { useEffect, useRef, useState, useCallback, forwardRef, useImperativeHandle } from 'react';
 import { createPortal } from 'react-dom';
 import {
   EditorView,
@@ -22,10 +23,16 @@ import {
 import { EditorState, RangeSetBuilder } from '@codemirror/state';
 import {
   defaultKeymap,
-  history,
-  historyKeymap,
   indentWithTab,
 } from '@codemirror/commands';
+import * as Y from 'yjs';
+import { yCollab, yUndoManagerKeymap } from 'y-codemirror.next';
+import {
+  SupabaseCollabProvider,
+  userCollabColor,
+  toBase64,
+  fromBase64,
+} from './collabProvider';
 import { searchWiki, kindLabel, type WikiEntry } from './wikiIndex';
 import { modifier } from '../../data/srd';
 import type { PartyMember } from '../party/partyStore';
@@ -432,6 +439,37 @@ const noteTheme = EditorView.theme(
       textTransform: 'none',
       letterSpacing: 'normal',
     },
+
+    // ── Remote cursors (y-codemirror.next) ───────────────────────────────────
+    '.cm-ySelectionInfo': {
+      position: 'absolute',
+      top: '-1.4em',
+      left: '-1px',
+      fontSize: '10px',
+      fontFamily: 'ui-sans-serif, system-ui, sans-serif',
+      fontWeight: '600',
+      fontStyle: 'normal',
+      lineHeight: '1.2',
+      userSelect: 'none',
+      color: '#fff',
+      padding: '0.1em 0.45em',
+      borderRadius: '0.3em',
+      whiteSpace: 'nowrap',
+      zIndex: '100',
+      pointerEvents: 'none',
+      opacity: '0',
+      transition: 'opacity 0.15s',
+    },
+    '.cm-ySelectionInfoVisible, .cm-ySelectionCaret:hover > .cm-ySelectionInfo': {
+      opacity: '1',
+    },
+    '.cm-ySelectionCaret': {
+      position: 'relative',
+      borderLeft: '2px solid',
+      borderRight: 'none',
+      marginLeft: '-1px',
+      boxSizing: 'border-box',
+    },
   },
   { dark: true },
 );
@@ -453,6 +491,11 @@ type Props = {
   onNavigate: (path: string) => void;
   rollFormula: (formula: string) => void;
   party: PartyMember[];
+  // Collab
+  noteId: string;
+  ydocState: string | null;
+  userId: string;
+  userName: string;
 };
 
 // ─── Abilities for party tooltip ─────────────────────────────────────────────
@@ -460,10 +503,19 @@ const PARTY_ABILITIES = ['str', 'dex', 'con', 'int', 'wis', 'cha'] as const;
 
 type HoverTooltip = { member: PartyMember; rect: DOMRect };
 
+// ─── Exposed handle (for parent to read Yjs state on save) ───────────────────
+export type LiveEditorHandle = {
+  getYdocState: () => string | null;
+};
+
 // ─── Component ────────────────────────────────────────────────────────────────
-export function LiveEditor({ body, onChange, wikiIndex, onNavigate, rollFormula, party }: Props) {
+export const LiveEditor = forwardRef<LiveEditorHandle, Props>(function LiveEditor(
+  { body, onChange, wikiIndex, onNavigate, rollFormula, party, noteId, ydocState, userId, userName },
+  ref,
+) {
   const containerRef = useRef<HTMLDivElement>(null);
   const viewRef      = useRef<EditorView | null>(null);
+  const ydocRef      = useRef<Y.Doc | null>(null);
 
   const onChangeRef  = useRef(onChange);  onChangeRef.current  = onChange;
   const wikiRef      = useRef(wikiIndex); wikiRef.current      = wikiIndex;
@@ -477,6 +529,14 @@ export function LiveEditor({ body, onChange, wikiIndex, onNavigate, rollFormula,
 
   const [hoverTooltip, setHoverTooltip] = useState<HoverTooltip | null>(null);
   const hoverTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Expose a way for the parent (Notes.tsx) to read the Yjs state on save.
+  useImperativeHandle(ref, () => ({
+    getYdocState() {
+      if (!ydocRef.current) return null;
+      return toBase64(Y.encodeStateAsUpdate(ydocRef.current));
+    },
+  }));
 
   const acceptSuggestion = useCallback((entry: WikiEntry) => {
     const view = viewRef.current;
@@ -550,18 +610,44 @@ export function LiveEditor({ body, onChange, wikiIndex, onNavigate, rollFormula,
     },
   });
 
-  // Mount once
+  // Mount once per note (key={note.id} ensures remount on note switch).
   useEffect(() => {
     if (!containerRef.current) return;
 
+    // ── Yjs document setup ───────────────────────────────────────────────────
+    const ydoc = new Y.Doc();
+    const ytext = ydoc.getText('note');
+    ydocRef.current = ydoc;
+
+    if (ydocState) {
+      // Restore persisted Yjs state (all clients start from identical vector clock).
+      Y.applyUpdate(ydoc, fromBase64(ydocState));
+    } else if (body) {
+      // Legacy note with no Yjs state yet — initialize from plain text.
+      ytext.insert(0, body);
+    }
+
+    // ── Collab provider (Supabase broadcast) ─────────────────────────────────
+    const { color, colorLight } = userCollabColor(userId);
+    const provider = new SupabaseCollabProvider(ydoc, noteId, {
+      name: userName || 'Anonymous',
+      color,
+      colorLight,
+    });
+
+    const undoManager = new Y.UndoManager(ytext);
+
+    // ── CodeMirror view ───────────────────────────────────────────────────────
     const view = new EditorView({
       state: EditorState.create({
-        doc: body,
+        doc: ytext.toString(),
         extensions: [
-          history(),
-          keymap.of([...defaultKeymap, ...historyKeymap, indentWithTab]),
+          // Yjs binding — must be first so it captures all transactions.
+          yCollab(ytext, provider.awareness, { undoManager }),
+          // Use Yjs-aware undo keymap (undoes only local changes, not remote).
+          keymap.of([...yUndoManagerKeymap, ...defaultKeymap, indentWithTab]),
           drawSelection(),
-          // Order matters: replace-decorations (secret/list) before mark-decorations
+          // Order matters: replace-decorations (secret/list) before mark-decorations.
           secretPlugin,
           listPlugin,
           headingPlugin,
@@ -609,23 +695,15 @@ export function LiveEditor({ body, onChange, wikiIndex, onNavigate, rollFormula,
 
     viewRef.current = view;
     requestAnimationFrame(() => view.focus());
-    return () => { view.destroy(); viewRef.current = null; };
+
+    return () => {
+      provider.destroy();
+      view.destroy();
+      viewRef.current = null;
+      ydocRef.current = null;
+    };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-
-  // Sync external body (realtime, note switching handled by key={note.id})
-  useEffect(() => {
-    const view = viewRef.current;
-    if (!view) return;
-    const current = view.state.doc.toString();
-    if (current !== body) {
-      const { from } = view.state.selection.main;
-      view.dispatch({
-        changes: { from: 0, to: current.length, insert: body },
-        selection: { anchor: Math.min(from, body.length) },
-      });
-    }
-  }, [body]);
 
   return (
     <div
@@ -636,8 +714,6 @@ export function LiveEditor({ body, onChange, wikiIndex, onNavigate, rollFormula,
         const locEl = target.closest('.cm-d-player') as HTMLElement | null;
         if (hoverTimerRef.current) { clearTimeout(hoverTimerRef.current); hoverTimerRef.current = null; }
         if (locEl) {
-          // The decorator marks the whole `@{Name}` token, so textContent is
-          // `@{Name}` — strip the wrapper before looking up the party member.
           const raw = locEl.textContent?.trim() ?? '';
           const inner = raw.startsWith('@{') && raw.endsWith('}')
             ? raw.slice(2, -1).trim()
@@ -740,4 +816,4 @@ export function LiveEditor({ body, onChange, wikiIndex, onNavigate, rollFormula,
       )}
     </div>
   );
-}
+});
