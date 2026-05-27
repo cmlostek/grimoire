@@ -267,14 +267,14 @@ The note editor supports custom inline syntax on top of standard markdown. Synta
 
 | Syntax | Renders as | Use for |
 |--------|-----------|---------|
-| `&{The Hall of Noon}` | 🟠 Orange badge | Locations — click to open the matching note |
-| `@{Aria Swiftwind}` | 🟢 Green badge | Player refs — hover to see character stats |
-| `?{The heir must be found}` | 🔴 Pink badge | Plot dependencies / conditions |
-| `!{The Siege Begins}` | 🔵 Blue badge | Milestone events |
-| `${The Sunblade}` | 🟢 Green badge | Artifacts & key items |
-| `%%Only I can see this%%` | ◽ Gray italic | GM-only inline comments |
-| `[[Goblin King]]` | 🔗 Blue underline | Wiki link to another note |
-| `$1d20 + 5$` | 🎲 Dice chip | Click-to-roll inline formula |
+| `&{The Hall of Noon}` | Orange badge | Locations — click to open the matching note |
+| `@{Aria Swiftwind}` | Green badge | Player refs — hover to see character stats |
+| `?{The heir must be found}` | Red badge | Plot dependencies / conditions |
+| `!{The Siege Begins}` | Blue badge | Milestone events |
+| `${The Sunblade}` | Pink badge | Artifacts & key items |
+| `%%Only I can see this%%` | Gray italic | GM-only inline comments |
+| `[[Goblin King]]` | Blue underline | Wiki link to another note |
+| `$1d20 + 5$` | Dice chip | Click-to-roll inline formula |
 
 ### Secrets
 
