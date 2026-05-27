@@ -20,6 +20,7 @@
   /* Decorator token foregrounds. Background tints work in both modes; only
      the text needs a per-mode override for legibility. */
   --deco-player-fg: #86efac; /* green-300 — readable on dark */
+  --deco-artifact-fg: #f9a8d4; /* pink-300 — readable on dark */
 
   /* Elevated surface (used in color-mix calls so accent-tinted cards blend
      toward the right base color per mode). Dark = slate-900, light = white. */
@@ -40,6 +41,7 @@ html.light {
 
   /* Darker greens for player mentions so they read against light surfaces. */
   --deco-player-fg: #166534; /* green-800 */
+  --deco-artifact-fg: #9d174d; /* pink-800 — readable on light */
 
   /* Flip the elevated-surface base so accent-tinted cards stay readable. */
   --surface-elev: #ffffff;
@@ -48,15 +50,54 @@ html.light body { background-color: #f1f5f9; color: #0f172a; }
 html.light .bg-slate-950 { background-color: #f1f5f9 !important; }
 html.light .bg-slate-900 { background-color: #ffffff !important; }
 html.light .bg-slate-800 { background-color: #e2e8f0 !important; }
+/* slate-700 is used for active/selected pill backgrounds (NPC status filter,
+   icon picker, etc). At default dark mode this is fine, but in light mode
+   the dark grey collides with our overridden dark text — flip to a mid-light
+   slate so the selection stays visible. */
+html.light .bg-slate-700 { background-color: #cbd5e1 !important; }
 html.light .text-slate-100 { color: #0f172a !important; }
 html.light .text-slate-200 { color: #1e293b !important; }
 html.light .text-slate-300 { color: #334155 !important; }
 html.light .text-slate-400 { color: #475569 !important; }
 html.light .text-slate-500 { color: #64748b !important; }
+html.light .text-slate-950 { color: #ffffff !important; }
 html.light .border-slate-800 { border-color: #cbd5e1 !important; }
 html.light .border-slate-700 { border-color: #94a3b8 !important; }
 html.light .hover\:bg-slate-900:hover { background-color: #f1f5f9 !important; }
 html.light .hover\:bg-slate-800:hover { background-color: #e2e8f0 !important; }
+html.light .hover\:bg-slate-700:hover { background-color: #cbd5e1 !important; }
+/* Tailwind's `disabled:` variants compile to their own selectors
+   (`.disabled\:bg-slate-800:disabled`) — the base `.bg-slate-800` override
+   above does NOT catch them, which left disabled Roll / Sign-in buttons as
+   dark slate with dark-grey text in light mode. Light bg + the existing
+   disabled grey text reads as a normal disabled button. */
+html.light .disabled\:bg-slate-800:disabled { background-color: #e2e8f0 !important; }
+html.light .disabled\:text-slate-600:disabled { color: #94a3b8 !important; }
+/* PageHeader uses bg-slate-900/50 to ride on top of the panel bg. Tailwind
+   compiles that as its own class (independent of bg-slate-900) so the
+   regular override above doesn't catch it. Match the surrounding panel bg
+   in light mode so the header doesn't read as a dull grey strip. */
+html.light .bg-slate-900\/50 { background-color: transparent !important; }
+html.light .bg-slate-900\/40 { background-color: transparent !important; }
+
+/* Accent-tab active fg: defaults to the regular --ac-200 accent (so the
+   sidebar nav active state is unchanged), but the auth tab opt-in to a
+   darker variant so the small "Sign in" / "Create account" labels read
+   clearly against their pale-blue active tint. */
+:root { --auth-tab-active-fg: var(--ac-200); }
+html.light { --auth-tab-active-fg: #1e293b; }
+
+/* Sidebar nav active row: dark mode keeps its slate-800 fill + sky-200 text
+   exactly as before. Light mode flips to dark slate text on a pale-blue
+   tint so the selection actually pops against the white sidebar. */
+:root {
+  --nav-active-bg: #1e293b;
+  --nav-active-fg: var(--ac-200);
+}
+html.light {
+  --nav-active-bg: var(--ac-900);
+  --nav-active-fg: #0f172a;
+}
 /* Sky-tinted accent text used across components (party names, stat values,
    section labels). In dark mode the pale sky reads against slate-950; in
    light mode it disappears against slate-100, so flip it to the dark slate
@@ -77,6 +118,54 @@ html.light .markdown-body h4 { color: #0c4a6e; }
 html.light .markdown-body code { background: #e2e8f0; color: #0f172a; }
 html.light .markdown-body pre { background: #f8fafc; border-color: #cbd5e1; }
 html.light .markdown-body blockquote { color: #475569; border-color: #94a3b8; }
+/* Markdown tables (used heavily in the Rules pages) hard-code a dark slate
+   row/header bg. In light mode markdown-body text is dark, so leaving the
+   th bg dark produces dark text on dark cells. Flip the table chrome to a
+   light palette. */
+html.light .markdown-body th { background: #e2e8f0; color: #0f172a; }
+html.light .markdown-body th,
+html.light .markdown-body td { border-color: #cbd5e1; }
+html.light .markdown-body hr { border-top-color: #cbd5e1; }
+html.light .markdown-body h1 { border-bottom-color: #cbd5e1; }
+html.light .markdown-body a { color: #0369a1; }
+
+/* Note decorator foregrounds — dark variants for light mode. The background
+   tints (~18% alpha) stay the same because they read fine against both
+   surfaces; only the text colors swap so each token type stays legible on
+   the white note canvas. Selectors cover both the rendered markdown
+   (`.note-*`) and the live editor (`.cm-d-*`) — CodeMirror injects its
+   theme styles via the same stylesheet space, so the `html.light` parent
+   selector wins by specificity. */
+html.light .note-loc,
+html.light .cm-d-loc { color: #9a3412 !important; }            /* orange-800 */
+html.light .note-dep,
+html.light .cm-d-dep { color: #9f1239 !important; }            /* rose-800 */
+html.light .note-milestone,
+html.light .cm-d-milestone { color: #075985 !important; }      /* sky-800 */
+html.light .note-link,
+html.light .cm-d-link { color: #0369a1 !important; }           /* sky-700 */
+html.light .note-link:hover { color: #0c4a6e !important; }     /* sky-900 */
+html.light .note-link-broken { color: #475569 !important; }    /* slate-600 */
+html.light .note-dice,
+html.light .cm-d-dice { color: #3730a3 !important; }           /* indigo-800 */
+html.light .note-dice:hover { color: #1e1b4b !important; }     /* indigo-950 */
+html.light .note-secret-block,
+html.light .note-secret-content,
+html.light .csw-body { color: #1e293b !important; }            /* slate-800 */
+html.light .note-secret-row,
+html.light .note-secret-toggle,
+html.light .csw-header,
+html.light .csw-btn { color: #5b21b6 !important; }             /* violet-800 */
+html.light .note-secret-toggle:hover { color: #4c1d95 !important; } /* violet-900 */
+html.light .note-secret-revealed .note-secret-row,
+html.light .cm-secret-widget.csw-revealed .csw-header { color: #047857 !important; } /* emerald-700 */
+html.light .note-secret-locked,
+html.light .cm-secret-widget.csw-locked .csw-header { color: #64748b !important; }   /* slate-500 */
+
+/* CodeMirror text-selection highlight. The default is a near-opaque blue
+   that washes out dark text on the white editor surface in light mode. */
+html.light .cm-selectionBackground,
+html.light .cm-focused .cm-selectionBackground { background-color: #bae6fd !important; }
 
 html, body, #root { height: 100%; }
 body { margin: 0; }
@@ -155,7 +244,7 @@ input[type="number"] { -moz-appearance: textfield; appearance: textfield; }
 .note-player { background: rgba(34, 197, 94, 0.18); color: var(--deco-player-fg, #86efac); }
 .note-dep { background: rgba(244, 63, 94, 0.18); color: #fda4af; }
 .note-milestone { background: rgba(56, 189, 248, 0.18); color: #7dd3fc; }
-.note-artifact { background: rgba(34, 197, 94, 0.18); color: #86efac; }
+.note-artifact { background: rgba(236, 72, 153, 0.18); color: var(--deco-artifact-fg, #f9a8d4); }
 .note-comment { color: #64748b; font-style: italic; background: rgba(100, 116, 139, 0.08); padding: 0.05em 0.35em; border-radius: 0.3em; white-space: pre-wrap; }
 .note-link {
   background: rgba(14, 165, 233, 0.14); color: #7dd3fc;

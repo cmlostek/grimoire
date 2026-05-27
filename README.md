@@ -1,6 +1,6 @@
 <img width="480" height="168" alt="Arc 2026-04-23 22 11 36" src="https://github.com/user-attachments/assets/985fd684-b3d0-44e8-a186-8c46166327f8" />
 
-# ⚔️ Grimoire -- Version 1.0.1
+# ⚔️ Grimoire -- Version 1.0.2
 -- Built with [Claude](https://www.anthropic.com/) Sonnet 4.6 and Opus 4.7.
 -- Release notes: [CHANGELOG.md](./CHANGELOG.md)
 
@@ -114,6 +114,7 @@ A full campaign journal with live Obsidian-style markdown editing. Syntax marker
 ### 🎨 UI *(v1.0.1)*
 - **Collapsible sidebar** — toggle to icons-only at any time; state persisted across reloads
 - **Dark / Light mode** — single Sun/Moon toggle. Dark uses the saturated default blue; light uses a pale blue accent on slate-100 surfaces. (The previous 5-accent and 6-background color pickers were removed.)
+- **Light-mode contrast polish** *(v1.0.2)* — full sweep over every surface that was unreadable on a light backdrop: disabled buttons, sidebar selection, auth tabs, Rules tables, the CodeMirror selection highlight, and every note decorator (each one now has a dark 700/800-shade variant tuned for the white note canvas). Artifact decorators switched from green to pink so they no longer collide with `@{player}` mentions; the sidebar "Switch campaign" button uses a double-arrow icon to distinguish it from "Sign out".
 
 ---
 

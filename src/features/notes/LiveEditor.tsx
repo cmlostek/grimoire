@@ -374,7 +374,7 @@ const noteTheme = EditorView.theme(
     '.cm-d-player':    { background: 'rgba(34,197,94,.18)',   color: 'var(--deco-player-fg, #86efac)', borderRadius: '0.25em', padding: '0.05em 0.25em' },
     '.cm-d-dep':       { background: 'rgba(244,63,94,.18)',   color: '#fda4af', borderRadius: '0.25em', padding: '0.05em 0.25em' },
     '.cm-d-milestone': { background: 'rgba(56,189,248,.18)',  color: '#7dd3fc', borderRadius: '0.25em', padding: '0.05em 0.25em' },
-    '.cm-d-artifact':  { background: 'rgba(34,197,94,.18)',   color: '#86efac', borderRadius: '0.25em', padding: '0.05em 0.25em' },
+    '.cm-d-artifact':  { background: 'rgba(236,72,153,.18)',  color: 'var(--deco-artifact-fg, #f9a8d4)', borderRadius: '0.25em', padding: '0.05em 0.25em' },
     '.cm-d-comment':   { color: '#64748b', fontStyle: 'italic', background: 'rgba(100,116,139,.08)', borderRadius: '0.25em', padding: '0.05em 0.25em' },
     '.cm-d-secret':    { background: 'rgba(139,92,246,.10)', color: '#c4b5fd', borderBottom: '1.5px dashed rgba(167,139,250,.5)', borderRadius: '0.25em', padding: '0.05em 0.25em' },
     '.cm-d-link':      { color: '#7dd3fc', background: 'rgba(14,165,233,.10)', borderBottom: '1px dashed rgba(125,211,252,.4)', borderRadius: '0.25em', padding: '0.05em 0.25em', cursor: 'pointer' },

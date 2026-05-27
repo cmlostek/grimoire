@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { NavLink, Route, Routes, Navigate } from 'react-router-dom';
-import { Dice6, Swords, NotebookPen, Map as MapIcon, BookOpen, Sparkles, Coins, Package, ScrollText, Users, FlaskConical, Dices, LogOut, Copy, Mic, Eye, EyeOff, Settings, BookMarked, Sun, Moon, PanelLeftClose, PanelLeftOpen } from 'lucide-react';
+import { Dice6, Swords, NotebookPen, Map as MapIcon, BookOpen, Sparkles, Coins, Package, ScrollText, Users, FlaskConical, Dices, LogOut, ArrowLeftRight, Copy, Mic, Eye, EyeOff, Settings, BookMarked, Sun, Moon, PanelLeftClose, PanelLeftOpen } from 'lucide-react';
 import DiceRoller from './features/dice/DiceRoller';
 import { QuickDice } from './features/dice/QuickDice';
 import { useQuickDice } from './features/dice/quickDiceStore';
@@ -208,11 +208,11 @@ function AppShell() {
               className={({ isActive }) =>
                 `flex items-center ${collapsed ? 'justify-center px-0' : 'gap-3 px-4'} py-2 text-sm transition-colors border-l-2 ${
                   isActive
-                    ? 'bg-slate-800'
+                    ? ''
                     : 'text-slate-300 hover:bg-slate-900 hover:text-slate-100 border-transparent'
                 }`
               }
-              style={({ isActive }) => isActive ? { color: 'var(--ac-200)', borderLeftColor: 'var(--ac-400)' } : undefined}
+              style={({ isActive }) => isActive ? { color: 'var(--nav-active-fg)', background: 'var(--nav-active-bg)', borderLeftColor: 'var(--ac-400)' } : undefined}
             >
               <Icon size={16} />
               {!collapsed && label}
@@ -272,11 +272,10 @@ function AppShell() {
             onClick={toggleMode}
           />
           <FooterButton
-            icon={<LogOut size={12} />}
+            icon={<ArrowLeftRight size={12} />}
             label="Switch campaign"
             collapsed={collapsed}
             onClick={leaveCurrent}
-            danger
           />
           <FooterButton
             icon={<LogOut size={12} />}

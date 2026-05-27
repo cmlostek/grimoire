@@ -42,14 +42,14 @@ function AuthScreen() {
             <button
               onClick={() => setMode('signin')}
               className={`flex-1 py-1.5 ${mode !== 'signin' ? 'bg-slate-900 text-slate-400 hover:bg-slate-800' : ''}`}
-              style={mode === 'signin' ? { background: 'color-mix(in srgb, var(--ac-900) 40%, transparent)', color: 'var(--ac-200)' } : undefined}
+              style={mode === 'signin' ? { background: 'color-mix(in srgb, var(--ac-900) 40%, transparent)', color: 'var(--auth-tab-active-fg)' } : undefined}
             >
               Sign in
             </button>
             <button
               onClick={() => setMode('signup')}
               className={`flex-1 py-1.5 ${mode !== 'signup' ? 'bg-slate-900 text-slate-400 hover:bg-slate-800' : ''}`}
-              style={mode === 'signup' ? { background: 'color-mix(in srgb, var(--ac-900) 40%, transparent)', color: 'var(--ac-200)' } : undefined}
+              style={mode === 'signup' ? { background: 'color-mix(in srgb, var(--ac-900) 40%, transparent)', color: 'var(--auth-tab-active-fg)' } : undefined}
             >
               Create account
             </button>

@@ -215,7 +215,7 @@ export default function DiceRoller() {
               <button
                 onClick={doRoll}
                 disabled={!canRoll}
-                className="px-5 py-3 bg-sky-700 hover:bg-sky-600 disabled:bg-slate-800 disabled:text-slate-600 text-slate-950 rounded font-semibold flex items-center gap-2"
+                className="px-5 py-3 bg-sky-700 hover:bg-sky-600 disabled:bg-slate-800 disabled:text-slate-600 text-white rounded font-semibold flex items-center gap-2"
               >
                 <Dices size={18} /> Roll
               </button>
