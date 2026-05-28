@@ -253,8 +253,7 @@ export default function Notes() {
       try {
         await useNotes.getState().saveNote(noteId, editorRef.current?.getYdocState());
         setSaveStatus('saved');
-        // Fade the "Saved" indicator after 3 s.
-        setTimeout(() => setSaveStatus((s) => (s === 'saved' ? 'idle' : s)), 3000);
+        // "Saved" stays visible until the next autosave cycle begins.
       } catch {
         setSaveStatus('idle');
       }
@@ -277,10 +276,16 @@ export default function Notes() {
         color: string;
       }>();
       const next: Record<string, PresenceUser[]> = {};
+      // Track which userIds we've already added per note so a user with
+      // multiple browser tabs only appears as a single presence dot.
+      const seen = new Set<string>(); // `${noteId}:${userId}`
       for (const key in state) {
         for (const meta of state[key]) {
           // Exclude self and entries with no note open.
           if (meta.userId === userId || !meta.noteId) continue;
+          const dedupeKey = `${meta.noteId}:${meta.userId}`;
+          if (seen.has(dedupeKey)) continue;
+          seen.add(dedupeKey);
           (next[meta.noteId] ??= []).push({
             userId: meta.userId,
             userName: meta.userName,
@@ -336,6 +341,10 @@ export default function Notes() {
     // by the most-recent autosave cycle; we don't pass it here because
     // editorRef now points to the new note's editor.
     void useNotes.getState().saveNote(prev);
+
+    // Reset the status indicator — "Saved" from the previous note shouldn't
+    // bleed over to the freshly-opened one.
+    setSaveStatus('idle');
   }, [activeNoteId]);
 
   // ── Save on unmount (navigate away, campaign change, etc.) ───────────────

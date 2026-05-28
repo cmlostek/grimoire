@@ -647,7 +647,7 @@ export const LiveEditor = forwardRef<LiveEditorHandle, Props>(function LiveEdito
     const provider = new SupabaseCollabProvider(
       ydoc,
       noteId,
-      { name: userName || 'Anonymous', color, colorLight },
+      { name: userName || 'Anonymous', color, colorLight, userId },
       {
         fallbackBody: needsFallback ? body : undefined,
         onReady: () => setCollabReady(true),
@@ -655,13 +655,21 @@ export const LiveEditor = forwardRef<LiveEditorHandle, Props>(function LiveEdito
     );
 
     // Notify parent whenever the set of remote collaborators changes.
+    // Deduplicate by userId so a user with multiple tabs only appears once.
     const emitCollaborators = () => {
       const states = provider.awareness.getStates();
+      const seen = new Set<string>();
       const list: Collaborator[] = [];
       states.forEach((state, clientId) => {
         if (clientId === ydoc.clientID) return;
         const u = (state as { user?: CollabUser }).user;
-        if (u) list.push({ clientId, name: u.name, color: u.color });
+        if (!u) return;
+        // Use userId if present, otherwise fall back to color (deterministic
+        // from userId via userCollabColor, so reliable as a dedup key).
+        const key = u.userId ?? u.color;
+        if (seen.has(key)) return;
+        seen.add(key);
+        list.push({ clientId, name: u.name, color: u.color });
       });
       onCollaboratorsChangeRef.current?.(list);
     };

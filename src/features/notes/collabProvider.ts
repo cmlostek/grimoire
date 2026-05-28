@@ -12,6 +12,8 @@ export type CollabUser = {
   name: string;
   color: string;
   colorLight: string;
+  /** The authenticated user ID — used to deduplicate multi-tab presence. */
+  userId?: string;
 };
 
 /** A remote collaborator currently editing the same note. */
