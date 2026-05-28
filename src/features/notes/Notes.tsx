@@ -150,7 +150,7 @@ function toggleSecret(body: string, index: number): string {
 }
 import { QuickDiceButton } from '../dice/QuickDice';
 import { useQuickDice } from '../dice/quickDiceStore';
-import { LiveEditor } from './LiveEditor';
+import { LiveEditor, type LiveEditorHandle } from './LiveEditor';
 
 type DragItem =
   | { kind: 'note'; id: string }
@@ -159,8 +159,12 @@ type DragItem =
 export default function Notes() {
   const campaignId = useSession((s) => s.campaignId);
   const userId = useSession((s) => s.userId);
+  const displayName = useSession((s) => s.displayName);
   const role = useSession((s) => s.role);
   const isGM = role === 'gm';
+
+  // Ref to the active LiveEditor so we can read its Yjs state on save.
+  const editorRef = useRef<LiveEditorHandle>(null);
 
   const notes = useNotes((s) => s.notes);
   const folders = useNotes((s) => s.folders);
@@ -583,7 +587,7 @@ export default function Notes() {
                   const dirty = !!drafts[active.id];
                   return (
                     <button
-                      onClick={() => saveNote(active.id)}
+                      onClick={() => saveNote(active.id, editorRef.current?.getYdocState())}
                       disabled={!dirty}
                       title={dirty ? 'Save (broadcasts to other viewers)' : 'No unsaved changes'}
                       className={`px-2 py-1 text-xs rounded flex items-center gap-1 transition-colors ${
@@ -647,12 +651,17 @@ export default function Notes() {
                   /* Live editor — highlights decorators inline as you type */
                   <LiveEditor
                     key={active.id}
+                    ref={editorRef}
                     body={drafts[active.id]?.body ?? active.body}
                     onChange={(v) => updateDraft(active.id, { body: v })}
                     wikiIndex={wikiIndex}
                     onNavigate={onWikiClick}
                     rollFormula={rollFormula}
                     party={party}
+                    noteId={active.id}
+                    ydocState={active.ydoc_state ?? null}
+                    userId={userId ?? ''}
+                    userName={displayName ?? userId ?? 'Traveller'}
                   />
                 ) : (
                   /* Read-only rendered view for players / non-owners */

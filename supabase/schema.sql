@@ -5,6 +5,9 @@
 -- (Select the section, press Run. Then move to the next one.)
 -- Safe to re-run each section.
 -- =============================================
+-- IMPORTANT: When adding a new migration, also update this file so that
+-- new installs never need to run migrations manually.
+-- =============================================
 
 
 -- =============================================
@@ -36,7 +39,9 @@ create table if not exists notes (
   campaign_id        uuid not null references campaigns(id) on delete cascade,
   title              text not null default 'Untitled',
   body               text not null default '',
+  ydoc_state         text,
   visible_to_players boolean not null default false,
+  player_editable    boolean not null default false,
   owner_user_id      uuid,
   created_by         uuid not null default auth.uid(),
   created_at         timestamptz not null default now(),
@@ -99,17 +104,17 @@ create table if not exists homebrew (
 );
 create index if not exists homebrew_campaign_idx on homebrew(campaign_id);
 
-create table if not exists shop_items (
-  id           uuid primary key default gen_random_uuid(),
-  campaign_id  uuid not null references campaigns(id) on delete cascade,
-  name         text not null,
-  price_gp     numeric(10,2) not null default 0,
-  stock        int not null default 0,
-  description  text,
-  data         jsonb not null default '{}'::jsonb,
-  updated_at   timestamptz not null default now()
+create table if not exists shops (
+  id                 uuid primary key default gen_random_uuid(),
+  campaign_id        uuid not null references campaigns(id) on delete cascade,
+  name               text not null default 'New Shop',
+  description        text not null default '',
+  visible_to_players boolean not null default false,
+  items              jsonb not null default '[]',
+  created_at         timestamptz not null default now(),
+  updated_at         timestamptz not null default now()
 );
-create index if not exists shop_items_campaign_idx on shop_items(campaign_id);
+create index if not exists shops_campaign_idx on shops(campaign_id);
 
 create table if not exists stat_blocks (
   id           uuid primary key default gen_random_uuid(),
@@ -129,6 +134,48 @@ create table if not exists transcripts (
   body         text not null default ''
 );
 create index if not exists transcripts_campaign_idx on transcripts(campaign_id);
+
+create table if not exists initiative_entries (
+  id           uuid primary key default gen_random_uuid(),
+  campaign_id  uuid not null references campaigns(id) on delete cascade,
+  name         text not null default '',
+  initiative   int not null default 0,
+  hp           int not null default 0,
+  max_hp       int not null default 0,
+  ac           int not null default 10,
+  is_pc        boolean not null default false,
+  conditions   jsonb not null default '[]',
+  turn_order   int not null default 0,
+  created_at   timestamptz not null default now()
+);
+create index if not exists initiative_entries_campaign_idx on initiative_entries(campaign_id);
+
+create table if not exists npcs (
+  id                 uuid primary key default gen_random_uuid(),
+  campaign_id        uuid not null references campaigns(id) on delete cascade,
+  name               text not null default 'New NPC',
+  faction            text not null default '',
+  faction_color      text not null default '#475569',
+  location           text not null default '',
+  status             text not null default 'unknown',
+  notes              text not null default '',
+  visible_to_players boolean not null default false,
+  icon               text not null default 'user',
+  linked_note_id     uuid references notes(id) on delete set null,
+  stat_block         jsonb not null default '{}'::jsonb,
+  stat_block_visible boolean not null default false,
+  created_at         timestamptz not null default now()
+);
+create index if not exists npcs_campaign_idx on npcs(campaign_id);
+
+create table if not exists note_permissions (
+  note_id   uuid not null references notes(id) on delete cascade,
+  user_id   uuid not null,
+  can_view  boolean not null default false,
+  can_edit  boolean not null default false,
+  primary key (note_id, user_id)
+);
+create index if not exists note_permissions_user_idx on note_permissions(user_id);
 
 
 -- =============================================
@@ -161,21 +208,46 @@ as $func$
   );
 $func$;
 
+create or replace function public.note_campaign(p_note uuid)
+returns uuid
+language sql
+stable
+security definer
+set search_path = public
+as $func$
+  select campaign_id from notes where id = p_note;
+$func$;
+
+-- SECURITY DEFINER so note_permissions policies never read `notes` directly,
+-- which would cause infinite RLS recursion between notes and note_permissions.
+create or replace function public.note_author(p_note uuid)
+returns uuid
+language sql
+stable
+security definer
+set search_path = public
+as $func$
+  select owner_user_id from notes where id = p_note;
+$func$;
+
 
 -- =============================================
 -- SECTION 3 — Enable RLS
 -- =============================================
 
-alter table campaigns         enable row level security;
-alter table campaign_members  enable row level security;
-alter table notes             enable row level security;
-alter table party_members     enable row level security;
-alter table map_state         enable row level security;
-alter table map_tokens        enable row level security;
-alter table homebrew          enable row level security;
-alter table shop_items        enable row level security;
-alter table stat_blocks       enable row level security;
-alter table transcripts       enable row level security;
+alter table campaigns          enable row level security;
+alter table campaign_members   enable row level security;
+alter table notes              enable row level security;
+alter table party_members      enable row level security;
+alter table map_state          enable row level security;
+alter table map_tokens         enable row level security;
+alter table homebrew           enable row level security;
+alter table shops              enable row level security;
+alter table stat_blocks        enable row level security;
+alter table transcripts        enable row level security;
+alter table initiative_entries enable row level security;
+alter table npcs               enable row level security;
+alter table note_permissions   enable row level security;
 
 
 -- =============================================
@@ -208,12 +280,20 @@ create policy members_delete on campaign_members for delete to authenticated usi
 
 
 -- =============================================
--- SECTION 5 — Policies: notes + party_members
+-- SECTION 5 — Policies: notes + note_permissions + party_members
 -- =============================================
 
 drop policy if exists notes_select on notes;
 create policy notes_select on notes for select to authenticated
-  using (is_gm(campaign_id) or (is_member(campaign_id) and (visible_to_players or owner_user_id = auth.uid())));
+  using (
+    is_gm(campaign_id)
+    or (is_member(campaign_id) and owner_user_id = auth.uid())
+    or (is_member(campaign_id) and visible_to_players)
+    or exists (
+      select 1 from note_permissions p
+      where p.note_id = notes.id and p.user_id = auth.uid() and p.can_view
+    )
+  );
 
 drop policy if exists notes_insert on notes;
 create policy notes_insert on notes for insert to authenticated
@@ -221,12 +301,47 @@ create policy notes_insert on notes for insert to authenticated
 
 drop policy if exists notes_update on notes;
 create policy notes_update on notes for update to authenticated
-  using (is_gm(campaign_id) or (is_member(campaign_id) and owner_user_id = auth.uid()))
-  with check (is_gm(campaign_id) or (is_member(campaign_id) and owner_user_id = auth.uid()));
+  using (
+    is_gm(campaign_id)
+    or (is_member(campaign_id) and owner_user_id = auth.uid())
+    or (is_member(campaign_id) and visible_to_players and coalesce(player_editable, false))
+    or exists (
+      select 1 from note_permissions p
+      where p.note_id = notes.id and p.user_id = auth.uid() and p.can_edit
+    )
+  )
+  with check (
+    is_gm(campaign_id)
+    or (is_member(campaign_id) and owner_user_id = auth.uid())
+    or (is_member(campaign_id) and visible_to_players and coalesce(player_editable, false))
+    or exists (
+      select 1 from note_permissions p
+      where p.note_id = notes.id and p.user_id = auth.uid() and p.can_edit
+    )
+  );
 
 drop policy if exists notes_delete on notes;
 create policy notes_delete on notes for delete to authenticated
   using (is_gm(campaign_id) or (is_member(campaign_id) and owner_user_id = auth.uid()));
+
+drop policy if exists note_permissions_select on note_permissions;
+create policy note_permissions_select on note_permissions for select to authenticated
+  using (
+    user_id = auth.uid()
+    or is_gm(note_campaign(note_id))
+    or note_author(note_id) = auth.uid()
+  );
+
+drop policy if exists note_permissions_write on note_permissions;
+create policy note_permissions_write on note_permissions for all to authenticated
+  using (
+    is_gm(note_campaign(note_id))
+    or note_author(note_id) = auth.uid()
+  )
+  with check (
+    is_gm(note_campaign(note_id))
+    or note_author(note_id) = auth.uid()
+  );
 
 drop policy if exists party_select on party_members;
 create policy party_select on party_members for select to authenticated using (is_member(campaign_id));
@@ -235,14 +350,16 @@ drop policy if exists party_insert on party_members;
 create policy party_insert on party_members for insert to authenticated with check (is_gm(campaign_id));
 
 drop policy if exists party_update on party_members;
-create policy party_update on party_members for update to authenticated using (is_gm(campaign_id) or (is_member(campaign_id) and (owner_user_id is null or owner_user_id = auth.uid()))) with check (is_gm(campaign_id) or (is_member(campaign_id) and owner_user_id = auth.uid()));
+create policy party_update on party_members for update to authenticated
+  using  (is_gm(campaign_id) or (is_member(campaign_id) and (owner_user_id is null or owner_user_id = auth.uid())))
+  with check (is_gm(campaign_id) or (is_member(campaign_id) and (owner_user_id is null or owner_user_id = auth.uid())));
 
 drop policy if exists party_delete on party_members;
 create policy party_delete on party_members for delete to authenticated using (is_gm(campaign_id));
 
 
 -- =============================================
--- SECTION 6 — Policies: map + homebrew + shop + statblocks + transcripts
+-- SECTION 6 — Policies: map + homebrew + shops + stat_blocks + transcripts + initiative + npcs
 -- =============================================
 
 drop policy if exists map_state_select on map_state;
@@ -269,17 +386,45 @@ create policy homebrew_select on homebrew for select to authenticated using (is_
 drop policy if exists homebrew_write on homebrew;
 create policy homebrew_write on homebrew for all to authenticated using (is_gm(campaign_id)) with check (is_gm(campaign_id));
 
-drop policy if exists shop_select on shop_items;
-create policy shop_select on shop_items for select to authenticated using (is_member(campaign_id));
+drop policy if exists shops_gm on shops;
+create policy shops_gm on shops for all to authenticated
+  using (is_gm(campaign_id))
+  with check (is_gm(campaign_id));
 
-drop policy if exists shop_write on shop_items;
-create policy shop_write on shop_items for all to authenticated using (is_gm(campaign_id)) with check (is_gm(campaign_id));
+drop policy if exists shops_players on shops;
+create policy shops_players on shops for select to authenticated
+  using (is_member(campaign_id) and visible_to_players = true);
 
 drop policy if exists statblocks_all on stat_blocks;
 create policy statblocks_all on stat_blocks for all to authenticated using (is_gm(campaign_id)) with check (is_gm(campaign_id));
 
 drop policy if exists transcripts_all on transcripts;
 create policy transcripts_all on transcripts for all to authenticated using (is_gm(campaign_id)) with check (is_gm(campaign_id));
+
+drop policy if exists initiative_select on initiative_entries;
+create policy initiative_select on initiative_entries for select to authenticated using (is_member(campaign_id));
+
+drop policy if exists initiative_insert on initiative_entries;
+create policy initiative_insert on initiative_entries for insert to authenticated with check (is_gm(campaign_id));
+
+drop policy if exists initiative_update on initiative_entries;
+create policy initiative_update on initiative_entries for update to authenticated using (is_gm(campaign_id)) with check (is_gm(campaign_id));
+
+drop policy if exists initiative_delete on initiative_entries;
+create policy initiative_delete on initiative_entries for delete to authenticated using (is_gm(campaign_id));
+
+drop policy if exists npcs_select on npcs;
+create policy npcs_select on npcs for select to authenticated
+  using (is_gm(campaign_id) or (is_member(campaign_id) and visible_to_players = true));
+
+drop policy if exists npcs_insert on npcs;
+create policy npcs_insert on npcs for insert to authenticated with check (is_gm(campaign_id));
+
+drop policy if exists npcs_update on npcs;
+create policy npcs_update on npcs for update to authenticated using (is_gm(campaign_id)) with check (is_gm(campaign_id));
+
+drop policy if exists npcs_delete on npcs;
+create policy npcs_delete on npcs for delete to authenticated using (is_gm(campaign_id));
 
 
 -- =============================================
@@ -314,8 +459,8 @@ create trigger map_tokens_touch    before update on map_tokens    for each row e
 drop trigger if exists homebrew_touch      on homebrew;
 create trigger homebrew_touch      before update on homebrew      for each row execute function touch_updated_at();
 
-drop trigger if exists shop_items_touch    on shop_items;
-create trigger shop_items_touch    before update on shop_items    for each row execute function touch_updated_at();
+drop trigger if exists shops_touch         on shops;
+create trigger shops_touch         before update on shops         for each row execute function touch_updated_at();
 
 drop trigger if exists stat_blocks_touch   on stat_blocks;
 create trigger stat_blocks_touch   before update on stat_blocks   for each row execute function touch_updated_at();
@@ -343,7 +488,6 @@ alter table note_folders enable row level security;
 drop policy if exists note_folders_select on note_folders;
 create policy note_folders_select on note_folders for select to authenticated using (is_member(campaign_id));
 
--- Members can create folders; only GMs can update or delete them
 drop policy if exists note_folders_write on note_folders;
 drop policy if exists note_folders_insert on note_folders;
 drop policy if exists note_folders_update on note_folders;
@@ -358,7 +502,6 @@ create policy note_folders_delete on note_folders for delete to authenticated
 drop trigger if exists note_folders_touch on note_folders;
 create trigger note_folders_touch before update on note_folders for each row execute function touch_updated_at();
 
--- Add folder_id to notes if missing
 alter table notes add column if not exists folder_id uuid references note_folders(id) on delete set null;
 create index if not exists notes_folder_idx on notes(folder_id);
 
@@ -376,7 +519,19 @@ alter publication supabase_realtime add table party_members;
 alter publication supabase_realtime add table map_state;
 alter publication supabase_realtime add table map_tokens;
 alter publication supabase_realtime add table homebrew;
-alter publication supabase_realtime add table shop_items;
+alter publication supabase_realtime add table shops;
 alter publication supabase_realtime add table stat_blocks;
 alter publication supabase_realtime add table transcripts;
 alter publication supabase_realtime add table note_folders;
+alter publication supabase_realtime add table initiative_entries;
+alter publication supabase_realtime add table npcs;
+alter publication supabase_realtime add table note_permissions;
+
+
+-- =============================================
+-- SECTION 9 — Yjs collaborative editing state
+-- =============================================
+-- Stores the Yjs document vector-clock state per note so all clients can
+-- start from a consistent CRDT baseline (no duplicate-content on cold join).
+
+alter table notes add column if not exists ydoc_state text;

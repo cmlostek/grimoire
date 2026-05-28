@@ -6,6 +6,7 @@ export type Note = {
   campaign_id: string;
   title: string;
   body: string;
+  ydoc_state: string | null;
   folder_id: string | null;
   visible_to_players: boolean;
   /** Legacy: kept in sync with note_permissions for older clients. */
@@ -130,8 +131,9 @@ type NotesState = {
   updateNote: (id: string, patch: Partial<Pick<Note, 'title' | 'body' | 'folder_id' | 'visible_to_players' | 'icon' | 'player_editable'>>) => Promise<void>;
   /** Buffer title/body locally without hitting the DB. Call saveNote to flush. */
   updateDraft: (id: string, patch: { title?: string; body?: string }) => void;
-  /** Flush draft buffer to Supabase; broadcasts via realtime. */
-  saveNote: (id: string) => Promise<void>;
+  /** Flush draft buffer to Supabase; broadcasts via realtime. Accepts the
+   *  current Yjs document state (base64) so it is persisted alongside body. */
+  saveNote: (id: string, ydocState?: string | null) => Promise<void>;
   isDirty: (id: string) => boolean;
   deleteNote: (id: string) => Promise<void>;
   moveNote: (id: string, folderId: string | null) => Promise<void>;
@@ -351,21 +353,28 @@ export const useNotes = create<NotesState>((set, get) => ({
     });
   },
 
-  saveNote: async (id) => {
+  saveNote: async (id, ydocState) => {
     const { drafts, notes } = get();
     const draft = drafts[id];
-    if (!draft) return;
     const note = notes.find((n) => n.id === id);
     if (!note) return;
-    const patch: { title?: string; body?: string } = {};
-    if (draft.title !== undefined && draft.title !== note.title) patch.title = draft.title;
-    if (draft.body !== undefined && draft.body !== note.body) patch.body = draft.body;
+
+    const patch: { title?: string; body?: string; ydoc_state?: string | null } = {};
+    if (draft) {
+      if (draft.title !== undefined && draft.title !== note.title) patch.title = draft.title;
+      if (draft.body !== undefined && draft.body !== note.body) patch.body = draft.body;
+    }
+    // Always persist ydoc_state when provided (even if body text is unchanged).
+    if (ydocState !== undefined) patch.ydoc_state = ydocState ?? null;
+
     if (Object.keys(patch).length === 0) {
-      set((s) => {
-        const d = { ...s.drafts };
-        delete d[id];
-        return { drafts: d };
-      });
+      if (draft) {
+        set((s) => {
+          const d = { ...s.drafts };
+          delete d[id];
+          return { drafts: d };
+        });
+      }
       return;
     }
     // Optimistic: commit draft into the note and clear it.
@@ -382,7 +391,7 @@ export const useNotes = create<NotesState>((set, get) => ({
       // Roll back and restore draft.
       set((s) => ({
         notes: s.notes.map((n) => (n.id === id ? note : n)),
-        drafts: { ...s.drafts, [id]: draft },
+        drafts: draft ? { ...s.drafts, [id]: draft } : s.drafts,
         error: error.message,
       }));
     }

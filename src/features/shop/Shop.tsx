@@ -1,15 +1,25 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import PageHeader from '../../components/PageHeader';
-import { useStore, ShopItem } from '../../store';
+import { useShopStore } from './shopStore';
+import { useSession } from '../session/sessionStore';
+import type { ShopItem } from '../../store';
 import { EQUIPMENT, MAGIC_ITEMS, costToGp } from '../../data/srd';
-import { Plus, Trash2, Search, Store, X, Shuffle } from 'lucide-react';
+import { Plus, Trash2, Search, Store, X, Shuffle, Share2, Eye } from 'lucide-react';
 
 type PickerKind = 'gear' | 'magic' | null;
 
 export default function Shop() {
+  const campaignId = useSession((s) => s.campaignId);
+  const role = useSession((s) => s.role);
+  const isGM = role === 'gm';
+
   const {
     shops,
     activeShopId,
+    loaded,
+    loadForCampaign,
+    subscribe,
+    clear,
     createShop,
     updateShop,
     deleteShop,
@@ -17,7 +27,14 @@ export default function Shop() {
     addShopItem,
     updateShopItem,
     removeShopItem,
-  } = useStore();
+  } = useShopStore();
+
+  useEffect(() => {
+    if (!campaignId) return;
+    loadForCampaign(campaignId);
+    const unsub = subscribe(campaignId);
+    return () => { unsub(); clear(); };
+  }, [campaignId]);
 
   const [picker, setPicker] = useState<PickerKind>(null);
   const [pickerQuery, setPickerQuery] = useState('');
@@ -56,28 +73,53 @@ export default function Shop() {
     }
   };
 
+  const handleCreateShop = () => {
+    if (campaignId) createShop(campaignId, 'New Shop');
+  };
+
   return (
     <div className="h-full flex flex-col">
       <PageHeader title="Shops">
-        {active && (
+        {active && isGM && (
+          <>
+            <button
+              onClick={() => updateShop(active.id, { visibleToPlayers: !active.visibleToPlayers })}
+              className={`px-3 py-1.5 text-xs rounded flex items-center gap-1 transition-colors ${
+                active.visibleToPlayers
+                  ? 'bg-emerald-900/40 text-emerald-300 border border-emerald-700/40'
+                  : 'bg-slate-800 hover:bg-slate-700 text-slate-300'
+              }`}
+              title={active.visibleToPlayers ? 'Shared with party — click to unshare' : 'Share this shop with players'}
+            >
+              {active.visibleToPlayers ? <Eye size={14} /> : <Share2 size={14} />}
+              {active.visibleToPlayers ? 'Shared' : 'Share'}
+            </button>
+            <button
+              onClick={randomStock}
+              className="px-3 py-1.5 text-xs bg-slate-800 hover:bg-slate-700 rounded flex items-center gap-1"
+            >
+              <Shuffle size={14} /> Random stock
+            </button>
+          </>
+        )}
+        {isGM && (
           <button
-            onClick={randomStock}
-            className="px-3 py-1.5 text-xs bg-slate-800 hover:bg-slate-700 rounded flex items-center gap-1"
+            onClick={handleCreateShop}
+            className="px-3 py-1.5 text-xs bg-sky-700 hover:bg-sky-600 text-slate-950 font-semibold rounded flex items-center gap-1"
           >
-            <Shuffle size={14} /> Random stock
+            <Plus size={14} /> New shop
           </button>
         )}
-        <button
-          onClick={() => createShop('New Shop')}
-          className="px-3 py-1.5 text-xs bg-sky-700 hover:bg-sky-600 text-slate-950 font-semibold rounded flex items-center gap-1"
-        >
-          <Plus size={14} /> New shop
-        </button>
       </PageHeader>
 
       <div className="flex-1 min-h-0 flex">
         <aside className="w-60 border-r border-slate-800 overflow-y-auto">
-          {shops.length === 0 && <div className="p-4 text-xs text-slate-600 italic">No shops yet.</div>}
+          {!loaded && <div className="p-4 text-xs text-slate-500 italic">Loading…</div>}
+          {loaded && shops.length === 0 && (
+            <div className="p-4 text-xs text-slate-600 italic">
+              {isGM ? 'No shops yet.' : 'No shops have been shared yet.'}
+            </div>
+          )}
           {shops.map((s) => (
             <button
               key={s.id}
@@ -98,62 +140,76 @@ export default function Shop() {
         <section className="flex-1 min-w-0 overflow-y-auto">
           {!active ? (
             <div className="h-full flex items-center justify-center text-slate-500">
-              Create or select a shop.
+              {isGM ? 'Create or select a shop.' : 'Select a shop.'}
             </div>
           ) : (
             <div className="px-8 py-6 max-w-4xl">
               <div className="flex items-start justify-between gap-4">
                 <div className="flex-1">
-                  <input
-                    value={active.name}
-                    onChange={(e) => updateShop(active.id, { name: e.target.value })}
-                    className="font-serif text-3xl text-sky-200 bg-transparent outline-none w-full"
-                  />
-                  <textarea
-                    value={active.description}
-                    onChange={(e) => updateShop(active.id, { description: e.target.value })}
-                    placeholder="Description, proprietor, flavor..."
-                    rows={2}
-                    className="mt-2 w-full bg-slate-900 border border-slate-800 rounded px-3 py-2 text-sm resize-none"
-                  />
+                  {isGM ? (
+                    <input
+                      value={active.name}
+                      onChange={(e) => updateShop(active.id, { name: e.target.value })}
+                      className="font-serif text-3xl text-sky-200 bg-transparent outline-none w-full"
+                    />
+                  ) : (
+                    <h1 className="font-serif text-3xl text-sky-200">{active.name}</h1>
+                  )}
+                  {isGM ? (
+                    <textarea
+                      value={active.description}
+                      onChange={(e) => updateShop(active.id, { description: e.target.value })}
+                      placeholder="Description, proprietor, flavor..."
+                      rows={2}
+                      className="mt-2 w-full bg-slate-900 border border-slate-800 rounded px-3 py-2 text-sm resize-none"
+                    />
+                  ) : (
+                    active.description && (
+                      <p className="mt-2 text-sm text-slate-400 leading-relaxed">{active.description}</p>
+                    )
+                  )}
                 </div>
-                <button
-                  onClick={() => {
-                    if (confirm('Delete this shop?')) deleteShop(active.id);
-                  }}
-                  className="text-slate-500 hover:text-rose-400 p-1"
-                >
-                  <Trash2 size={16} />
-                </button>
+                {isGM && (
+                  <button
+                    onClick={() => {
+                      if (confirm('Delete this shop?')) deleteShop(active.id);
+                    }}
+                    className="text-slate-500 hover:text-rose-400 p-1"
+                  >
+                    <Trash2 size={16} />
+                  </button>
+                )}
               </div>
 
-              <div className="mt-6 flex gap-2">
-                <button
-                  onClick={() => setPicker('gear')}
-                  className="px-3 py-1.5 text-xs bg-slate-800 hover:bg-slate-700 rounded"
-                >
-                  + Add gear from SRD
-                </button>
-                <button
-                  onClick={() => setPicker('magic')}
-                  className="px-3 py-1.5 text-xs bg-slate-800 hover:bg-slate-700 rounded"
-                >
-                  + Add magic item
-                </button>
-                <button
-                  onClick={() =>
-                    addShopItem(active.id, {
-                      source: 'custom',
-                      name: 'Custom item',
-                      priceGp: 1,
-                      stock: 1,
-                    })
-                  }
-                  className="px-3 py-1.5 text-xs bg-slate-800 hover:bg-slate-700 rounded"
-                >
-                  + Custom
-                </button>
-              </div>
+              {isGM && (
+                <div className="mt-6 flex gap-2">
+                  <button
+                    onClick={() => setPicker('gear')}
+                    className="px-3 py-1.5 text-xs bg-slate-800 hover:bg-slate-700 rounded"
+                  >
+                    + Add gear from SRD
+                  </button>
+                  <button
+                    onClick={() => setPicker('magic')}
+                    className="px-3 py-1.5 text-xs bg-slate-800 hover:bg-slate-700 rounded"
+                  >
+                    + Add magic item
+                  </button>
+                  <button
+                    onClick={() =>
+                      addShopItem(active.id, {
+                        source: 'custom',
+                        name: 'Custom item',
+                        priceGp: 1,
+                        stock: 1,
+                      })
+                    }
+                    className="px-3 py-1.5 text-xs bg-slate-800 hover:bg-slate-700 rounded"
+                  >
+                    + Custom
+                  </button>
+                </div>
+              )}
 
               <div className="mt-4 relative">
                 <Search
@@ -177,12 +233,12 @@ export default function Shop() {
               </div>
 
               <div className="mt-3 border border-slate-800 rounded-lg overflow-hidden">
-                <div className="grid grid-cols-[1fr_auto_auto_auto_auto] gap-2 px-3 py-2 bg-slate-900 text-[10px] uppercase tracking-wider text-slate-500">
+                <div className={`grid gap-2 px-3 py-2 bg-slate-900 text-[10px] uppercase tracking-wider text-slate-500 ${isGM ? 'grid-cols-[1fr_auto_auto_auto_auto]' : 'grid-cols-[1fr_auto_auto]'}`}>
                   <div>Item</div>
-                  <div className="w-36 text-right">Price (gp)</div>
-                  <div className="w-28 text-right">Stock</div>
-                  <div className="w-32">Notes</div>
-                  <div className="w-8" />
+                  <div className="w-20 text-right">Price (gp)</div>
+                  <div className="w-16 text-right">Stock</div>
+                  {isGM && <div className="w-32">Notes</div>}
+                  {isGM && <div className="w-8" />}
                 </div>
                 {active.items.length === 0 && (
                   <div className="px-3 py-6 text-center text-sm text-slate-600 italic">
@@ -191,46 +247,62 @@ export default function Shop() {
                 )}
                 {active.items.length > 0 && filteredItems.length === 0 && (
                   <div className="px-3 py-6 text-center text-sm text-slate-600 italic">
-                    No items match “{shopQuery}”.
+                    No items match "{shopQuery}".
                   </div>
                 )}
                 {filteredItems.map((i) => (
                   <div
                     key={i.id}
-                    className="grid grid-cols-[1fr_auto_auto_auto_auto] gap-2 px-3 py-2 border-t border-slate-900 items-center"
+                    className={`grid gap-2 px-3 py-2 border-t border-slate-900 items-center ${isGM ? 'grid-cols-[1fr_auto_auto_auto_auto]' : 'grid-cols-[1fr_auto_auto]'}`}
                   >
-                    <input
-                      value={i.name}
-                      onChange={(e) => updateShopItem(active.id, i.id, { name: e.target.value })}
-                      className="bg-transparent outline-none text-sm"
-                    />
-                    <Stepper
-                      value={i.priceGp}
-                      step={1}
-                      min={0}
-                      width="w-16"
-                      decimal
-                      onChange={(v) => updateShopItem(active.id, i.id, { priceGp: v })}
-                    />
-                    <Stepper
-                      value={i.stock}
-                      step={1}
-                      min={0}
-                      width="w-12"
-                      onChange={(v) => updateShopItem(active.id, i.id, { stock: v })}
-                    />
-                    <input
-                      value={i.notes ?? ''}
-                      onChange={(e) => updateShopItem(active.id, i.id, { notes: e.target.value })}
-                      placeholder="—"
-                      className="w-32 bg-slate-900 border border-slate-800 rounded px-2 py-1 text-xs"
-                    />
-                    <button
-                      onClick={() => removeShopItem(active.id, i.id)}
-                      className="text-slate-600 hover:text-rose-400 p-1"
-                    >
-                      <Trash2 size={12} />
-                    </button>
+                    {isGM ? (
+                      <input
+                        value={i.name}
+                        onChange={(e) => updateShopItem(active.id, i.id, { name: e.target.value })}
+                        className="bg-transparent outline-none text-sm"
+                      />
+                    ) : (
+                      <span className="text-sm">{i.name}</span>
+                    )}
+                    {isGM ? (
+                      <Stepper
+                        value={i.priceGp}
+                        step={1}
+                        min={0}
+                        width="w-16"
+                        decimal
+                        onChange={(v) => updateShopItem(active.id, i.id, { priceGp: v })}
+                      />
+                    ) : (
+                      <span className="w-20 text-right font-mono text-xs text-slate-300">{i.priceGp} gp</span>
+                    )}
+                    {isGM ? (
+                      <Stepper
+                        value={i.stock}
+                        step={1}
+                        min={0}
+                        width="w-12"
+                        onChange={(v) => updateShopItem(active.id, i.id, { stock: v })}
+                      />
+                    ) : (
+                      <span className="w-16 text-right font-mono text-xs text-slate-400">{i.stock}</span>
+                    )}
+                    {isGM && (
+                      <input
+                        value={i.notes ?? ''}
+                        onChange={(e) => updateShopItem(active.id, i.id, { notes: e.target.value })}
+                        placeholder="—"
+                        className="w-32 bg-slate-900 border border-slate-800 rounded px-2 py-1 text-xs"
+                      />
+                    )}
+                    {isGM && (
+                      <button
+                        onClick={() => removeShopItem(active.id, i.id)}
+                        className="text-slate-600 hover:text-rose-400 p-1"
+                      >
+                        <Trash2 size={12} />
+                      </button>
+                    )}
                   </div>
                 ))}
                 {active.items.length > 0 && (

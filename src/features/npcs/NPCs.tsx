@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import {
   Plus, Trash2, Eye, EyeOff, User, Crown, Skull, Shield, Swords,
-  BookOpen, Coins, Sparkles, Search,
+  BookOpen, Coins, Sparkles, Search, Save,
 } from 'lucide-react';
 import PageHeader from '../../components/PageHeader';
 import { useSession } from '../session/sessionStore';
@@ -184,11 +184,27 @@ function NpcDetail({
   npc, isGM, onUpdate, onDelete,
 }: { npc: NPC; isGM: boolean; onUpdate: (patch: Partial<NPC>) => void; onDelete: () => void }) {
   const [local, setLocal] = useState(npc);
-  useEffect(() => setLocal(npc), [npc.id]);
+  const [dirty, setDirty] = useState(false);
+  const [saving, setSaving] = useState(false);
+  useEffect(() => { setLocal(npc); setDirty(false); }, [npc.id]);
+
+  const applyLocal = (patch: Partial<NPC>) => {
+    setLocal((p) => ({ ...p, ...patch }));
+    setDirty(true);
+  };
 
   const save = (patch: Partial<NPC>) => {
     setLocal((p) => ({ ...p, ...patch }));
+    setDirty(false);
     onUpdate(patch);
+  };
+
+  const saveAll = async () => {
+    setSaving(true);
+    const { id: _id, campaignId: _c, ...rest } = local;
+    onUpdate(rest);
+    setDirty(false);
+    setSaving(false);
   };
 
   const Icon = NPC_ICONS[(local.icon as NpcIconKey)] ?? User;
@@ -229,8 +245,7 @@ function NpcDetail({
           {isGM ? (
             <input
               value={local.name}
-              onChange={(e) => setLocal((p) => ({ ...p, name: e.target.value }))}
-              onBlur={() => onUpdate({ name: local.name })}
+              onChange={(e) => applyLocal({ name: e.target.value })}
               className="font-serif text-2xl w-full bg-transparent outline-none focus:bg-slate-800/40 rounded px-1 -mx-1 text-slate-100"
               placeholder="NPC Name"
             />
@@ -260,6 +275,15 @@ function NpcDetail({
         {/* GM controls */}
         {isGM && (
           <div className="flex items-center gap-2 shrink-0 pt-1">
+            {dirty && (
+              <button
+                onClick={saveAll}
+                disabled={saving}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-amber-700 hover:bg-amber-600 disabled:opacity-50 text-white transition-colors"
+              >
+                <Save size={12} /> {saving ? 'Saving…' : 'Save'}
+              </button>
+            )}
             <button
               onClick={() => save({ visibleToPlayers: !npc.visibleToPlayers })}
               className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors ${
@@ -292,7 +316,7 @@ function NpcDetail({
                 {FACTION_COLORS.map((color) => (
                   <button
                     key={color}
-                    onClick={() => save({ factionColor: color })}
+                    onClick={() => applyLocal({ factionColor: color })}
                     className="w-5 h-5 rounded-full transition-all"
                     style={{
                       backgroundColor: color,
@@ -303,8 +327,7 @@ function NpcDetail({
               </div>
               <input
                 value={local.faction}
-                onChange={(e) => setLocal((p) => ({ ...p, faction: e.target.value }))}
-                onBlur={() => onUpdate({ faction: local.faction })}
+                onChange={(e) => applyLocal({ faction: e.target.value })}
                 placeholder="Faction name"
                 className="w-full bg-slate-800 border border-slate-700 rounded px-2 py-1.5 text-sm"
               />
@@ -325,8 +348,7 @@ function NpcDetail({
           {isGM ? (
             <input
               value={local.location}
-              onChange={(e) => setLocal((p) => ({ ...p, location: e.target.value }))}
-              onBlur={() => onUpdate({ location: local.location })}
+              onChange={(e) => applyLocal({ location: e.target.value })}
               placeholder="Current location"
               className="w-full bg-slate-800 border border-slate-700 rounded px-2 py-1.5 text-sm"
             />
@@ -344,8 +366,7 @@ function NpcDetail({
         {isGM ? (
           <textarea
             value={local.notes}
-            onChange={(e) => setLocal((p) => ({ ...p, notes: e.target.value }))}
-            onBlur={() => onUpdate({ notes: local.notes })}
+            onChange={(e) => applyLocal({ notes: e.target.value })}
             placeholder="Background, motivations, secrets, current plans…"
             rows={10}
             className="w-full bg-slate-800 border border-slate-700 rounded px-3 py-2 text-sm resize-none leading-relaxed"

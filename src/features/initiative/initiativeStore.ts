@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import { supabase } from '../../lib/supabase';
+import { useParty } from '../party/partyStore';
 
 export type Condition = { name: string; rounds: number | null };
 
@@ -140,6 +141,23 @@ export const useInitiativeStore = create<InitiativeState>((set, get) => ({
     if (patch.conditions!== undefined) dbPatch.conditions = patch.conditions;
     set((s) => ({ combatants: s.combatants.map((c) => c.id === id ? { ...c, ...patch } : c) }));
     await supabase.from('initiative_entries').update(dbPatch).eq('id', id);
+
+    // Sync HP/maxHp changes for PCs to the party panel
+    if ((patch.hp !== undefined || patch.maxHp !== undefined)) {
+      const combatant = get().combatants.find((c) => c.id === id);
+      if (combatant?.isPC) {
+        const { party, updatePartyMember } = useParty.getState();
+        const partyMember = party.find(
+          (p) => p.name.toLowerCase() === combatant.name.toLowerCase()
+        );
+        if (partyMember) {
+          const hpPatch: Record<string, number> = {};
+          if (patch.hp !== undefined) hpPatch.hp = patch.hp;
+          if (patch.maxHp !== undefined) hpPatch.maxHp = patch.maxHp;
+          updatePartyMember(partyMember.id, hpPatch);
+        }
+      }
+    }
   },
 
   remove: async (id) => {

@@ -197,8 +197,8 @@ export default function MapBoard() {
         y: sp.y,
         color: selectedColor,
         emoji: tokenEmoji || undefined,
-        size: mapGridSize * 0.9,
-        owner_user_id: null,
+        size: Math.max(40, mapGridSize * 0.9),
+        owner_user_id: userId,
         hidden_from_players: false,
       });
     }
@@ -338,8 +338,9 @@ export default function MapBoard() {
               Cell
               <input
                 type="number"
+                min="1"
                 value={mapGridSize}
-                onChange={(e) => campaignId && setGridSize(campaignId, parseInt(e.target.value || '50', 10))}
+                onChange={(e) => campaignId && setGridSize(campaignId, Math.max(1, parseInt(e.target.value || '1', 10)))}
                 className="w-14 bg-slate-900 border border-slate-800 rounded px-1 py-1 font-mono"
               />
               px
@@ -552,7 +553,7 @@ export default function MapBoard() {
           >
             {mapBgUrl && <image href={mapBgUrl} x={0} y={0} width="100%" height="100%" preserveAspectRatio="xMidYMid meet" />}
 
-            {mapShowGrid && (
+            {mapShowGrid && mapGridSize >= 4 && (
               <g>
                 <defs>
                   <pattern id="grid" width={mapGridSize} height={mapGridSize} patternUnits="userSpaceOnUse">

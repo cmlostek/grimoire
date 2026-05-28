@@ -1,14 +1,17 @@
 import { useEffect, useRef, useState } from 'react';
-import { ChevronRight, Shuffle, RotateCcw, Plus, Trash2, Heart, Shield, Swords, Activity, X } from 'lucide-react';
+import { ChevronRight, Shuffle, RotateCcw, Plus, Trash2, Heart, Shield, Swords, Activity, X, Lock } from 'lucide-react';
 import PageHeader from '../../components/PageHeader';
 import { QuickDiceButton } from '../dice/QuickDice';
 import { useSession } from '../session/sessionStore';
 import { useInitiativeStore, CONDITIONS, type Condition } from './initiativeStore';
+import { useCampaignSettings } from '../notes/campaignSettingsStore';
 
 export default function Initiative() {
   const campaignId = useSession((s) => s.campaignId);
   const role = useSession((s) => s.role);
   const isGM = role === 'gm';
+  const allowedGmPages = useCampaignSettings((s) => s.settings.allowedGmPages ?? []);
+  const playerCanView = isGM || allowedGmPages.includes('initiative');
 
   const {
     combatants, round, turnIndex, loaded,
@@ -69,6 +72,18 @@ export default function Initiative() {
     setPickerRounds('');
   };
 
+  if (!playerCanView) {
+    return (
+      <div className="h-full flex flex-col">
+        <PageHeader title="Initiative" />
+        <div className="flex-1 flex items-center justify-center flex-col gap-3 text-slate-600">
+          <Lock size={32} />
+          <p className="text-sm">The GM hasn't shared the initiative tracker yet.</p>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="h-full flex flex-col">
       <PageHeader title="Initiative">
@@ -104,6 +119,40 @@ export default function Initiative() {
             const isActive = i === turnIndex;
             const dead     = c.hp <= 0 && c.maxHp > 0;
             const hpPct    = c.maxHp > 0 ? (c.hp / c.maxHp) * 100 : 0;
+
+            // Players see a limited view: name + turn indicator only; NPC health/initiative hidden
+            if (!isGM) {
+              return (
+                <div
+                  key={c.id}
+                  className={`rounded-lg border p-3 transition-all ${
+                    isActive
+                      ? 'border-[color:var(--ac-700)] shadow-lg'
+                      : 'bg-slate-900 border-slate-800'
+                  }`}
+                  style={isActive ? { background: 'color-mix(in srgb, var(--ac-900) 30%, var(--surface-elev))' } : undefined}
+                >
+                  <div className="flex items-center gap-3">
+                    <div className={`w-2 h-2 rounded-full shrink-0 ${c.isPC ? 'bg-emerald-500' : 'bg-slate-600'}`} />
+                    <span className="font-serif text-base text-slate-100">{c.name}</span>
+                    {c.isPC && <span className="text-[10px] uppercase tracking-wider text-emerald-400/80">PC</span>}
+                    {isActive && (
+                      <span className="ml-auto text-[10px] uppercase tracking-wider" style={{ color: 'var(--ac-400)' }}>
+                        Acting
+                      </span>
+                    )}
+                  </div>
+                  {c.isPC && (
+                    <div className="mt-2 h-1.5 bg-slate-800 rounded-full overflow-hidden">
+                      <div
+                        className={`h-full ${hpPct > 50 ? 'bg-emerald-600' : hpPct > 25 ? 'bg-amber-500' : 'bg-rose-600'}`}
+                        style={{ width: `${hpPct}%` }}
+                      />
+                    </div>
+                  )}
+                </div>
+              );
+            }
 
             return (
               <div
