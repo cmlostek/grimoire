@@ -386,14 +386,31 @@ export const useNotes = create<NotesState>((set, get) => ({
         drafts: d,
       };
     });
-    const { error } = await supabase.from('notes').update(patch).eq('id', id);
+    let { error } = await supabase.from('notes').update(patch).eq('id', id);
+
+    // Graceful degradation: if the error mentions ydoc_state the column
+    // probably hasn't been migrated yet. Retry without it so body/title
+    // are always saved regardless of migration status.
+    if (error && 'ydoc_state' in patch && /ydoc_state/.test(error.message)) {
+      const { ydoc_state: _dropped, ...corePatch } = patch as Record<string, unknown>;
+      if (Object.keys(corePatch).length > 0) {
+        const retry = await supabase.from('notes').update(corePatch).eq('id', id);
+        error = retry.error;
+      } else {
+        error = null; // nothing left to save — treat as success
+      }
+    }
+
     if (error) {
-      // Roll back and restore draft.
+      // Roll back optimistic update and restore draft so the user can retry.
       set((s) => ({
         notes: s.notes.map((n) => (n.id === id ? note : n)),
         drafts: draft ? { ...s.drafts, [id]: draft } : s.drafts,
-        error: error.message,
+        error: error!.message,
       }));
+      // Propagate so callers (e.g. scheduleAutosave) know the save failed
+      // and don't display a false "Saved" indicator.
+      throw new Error(error.message);
     }
   },
 

@@ -168,7 +168,12 @@ export class SupabaseCollabProvider {
     removeAwarenessStates(this.awareness, [this.doc.clientID], 'leave');
     this.dead = true;
     this.awareness.destroy();
-    supabase.removeChannel(this.channel);
+    // Delay channel removal so the departure broadcast (queued above by
+    // send()) has time to flush over the WebSocket before the connection
+    // is torn down. Without this delay the socket closes first and peers
+    // keep seeing the stale cursor for up to 30 seconds.
+    const ch = this.channel;
+    setTimeout(() => supabase.removeChannel(ch), 500);
   }
 }
 

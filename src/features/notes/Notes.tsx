@@ -209,7 +209,7 @@ export default function Notes() {
   const editorRef = useRef<LiveEditorHandle>(null);
 
   // ── Autosave ──────────────────────────────────────────────────────────────
-  type SaveStatus = 'idle' | 'saving' | 'saved';
+  type SaveStatus = 'idle' | 'saving' | 'saved' | 'failed';
   const [saveStatus, setSaveStatus] = useState<SaveStatus>('idle');
   const autosaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Stable ref: callbacks read this instead of closing over stale activeNoteId.
@@ -255,7 +255,7 @@ export default function Notes() {
         setSaveStatus('saved');
         // "Saved" stays visible until the next autosave cycle begins.
       } catch {
-        setSaveStatus('idle');
+        setSaveStatus('failed');
       }
     }, 2500);
   }, []); // stable — uses refs, not closed-over state
@@ -340,7 +340,7 @@ export default function Notes() {
     // Save title/body draft of previous note. ydoc_state was already persisted
     // by the most-recent autosave cycle; we don't pass it here because
     // editorRef now points to the new note's editor.
-    void useNotes.getState().saveNote(prev);
+    void useNotes.getState().saveNote(prev).catch(() => {});
 
     // Reset the status indicator — "Saved" from the previous note shouldn't
     // bleed over to the freshly-opened one.
@@ -352,7 +352,7 @@ export default function Notes() {
     return () => {
       if (autosaveTimerRef.current) clearTimeout(autosaveTimerRef.current);
       const noteId = activeNoteIdRef.current;
-      if (noteId) void useNotes.getState().saveNote(noteId);
+      if (noteId) void useNotes.getState().saveNote(noteId).catch(() => {});
     };
   }, []);
 
@@ -724,17 +724,21 @@ export default function Notes() {
 
                 {/* Autosave status indicator */}
                 {canEdit(active) && saveStatus !== 'idle' && (
-                  <span className="flex items-center gap-1 text-xs text-slate-400 select-none shrink-0">
+                  <span className="flex items-center gap-1 text-xs select-none shrink-0">
                     {saveStatus === 'saving' ? (
-                      <>
+                      <span className="flex items-center gap-1 text-slate-400">
                         <Loader2 size={13} className="animate-spin" />
                         Saving…
-                      </>
+                      </span>
+                    ) : saveStatus === 'saved' ? (
+                      <span className="flex items-center gap-1 text-emerald-400">
+                        <Check size={13} />
+                        Saved
+                      </span>
                     ) : (
-                      <>
-                        <Check size={13} className="text-emerald-400" />
-                        <span className="text-emerald-400">Saved</span>
-                      </>
+                      <span className="flex items-center gap-1 text-rose-400" title="Save failed — check your connection">
+                        ✕ Save failed
+                      </span>
                     )}
                   </span>
                 )}
