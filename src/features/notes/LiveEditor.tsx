@@ -30,7 +30,6 @@ import { yCollab, yUndoManagerKeymap } from 'y-codemirror.next';
 import {
   SupabaseCollabProvider,
   userCollabColor,
-  stableClientId,
   toBase64,
   fromBase64,
 } from './collabProvider';
@@ -618,9 +617,7 @@ export const LiveEditor = forwardRef<LiveEditorHandle, Props>(function LiveEdito
     if (!containerRef.current) return;
 
     // ── Yjs document setup ───────────────────────────────────────────────────
-    // Use a stable clientID so reconnects reuse the same Yjs identity and
-    // remote peers replace the stale cursor rather than accumulating duplicates.
-    const ydoc = new Y.Doc({ clientID: stableClientId(userId, noteId) });
+    const ydoc = new Y.Doc();
     const ytext = ydoc.getText('note');
     ydocRef.current = ydoc;
 

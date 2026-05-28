@@ -33,21 +33,6 @@ export function userCollabColor(userId: string): { color: string; colorLight: st
   return palette[Math.abs(h) % palette.length];
 }
 
-/**
- * Stable 32-bit clientID derived from userId + noteId.
- * Using a fixed clientID means reconnects reuse the same Yjs identity,
- * so remote peers replace the stale cursor entry rather than accumulating
- * a duplicate ghost cursor.
- */
-export function stableClientId(userId: string, noteId: string): number {
-  const s = userId + ':' + noteId;
-  let h = 2166136261;
-  for (let i = 0; i < s.length; i++) {
-    h ^= s.charCodeAt(i);
-    h = Math.imul(h, 16777619);
-  }
-  return h >>> 0;
-}
 
 type CollabMsg =
   | { t: 'req' }
