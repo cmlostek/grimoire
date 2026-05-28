@@ -32,6 +32,7 @@ import {
   userCollabColor,
   toBase64,
   fromBase64,
+  type CollabUser,
   type Collaborator,
 } from './collabProvider';
 import { searchWiki, kindLabel, type WikiEntry } from './wikiIndex';
