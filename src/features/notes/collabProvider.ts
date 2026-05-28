@@ -33,19 +33,56 @@ export function userCollabColor(userId: string): { color: string; colorLight: st
   return palette[Math.abs(h) % palette.length];
 }
 
+/**
+ * Stable 32-bit clientID derived from userId + noteId.
+ * Using a fixed clientID means reconnects reuse the same Yjs identity,
+ * so remote peers replace the stale cursor entry rather than accumulating
+ * a duplicate ghost cursor.
+ */
+export function stableClientId(userId: string, noteId: string): number {
+  const s = userId + ':' + noteId;
+  let h = 2166136261;
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return h >>> 0;
+}
+
 type CollabMsg =
   | { t: 'req' }
   | { t: 'state'; u: number[] }
   | { t: 'upd'; u: number[] }
   | { t: 'aw'; u: number[] };
 
+export interface SupabaseCollabProviderOptions {
+  /**
+   * Body text to insert into an empty Y.Doc if no peer responds within
+   * PEER_TIMEOUT_MS. This is the "first-client-wins" protocol that
+   * prevents two clients independently inserting the same body text and
+   * creating duplicate content when their Y.Docs are merged.
+   */
+  fallbackBody?: string;
+  /** Called once the document is ready (peer state received OR fallback applied). */
+  onReady?: () => void;
+}
+
+const PEER_TIMEOUT_MS = 350;
+
 export class SupabaseCollabProvider {
   readonly doc: Y.Doc;
   readonly awareness: Awareness;
   private channel: RealtimeChannel;
   private dead = false;
+  private synced = false;
+  private fallbackTimer: ReturnType<typeof setTimeout> | null = null;
 
-  constructor(doc: Y.Doc, noteId: string, user: CollabUser) {
+  constructor(
+    doc: Y.Doc,
+    noteId: string,
+    user: CollabUser,
+    options: SupabaseCollabProviderOptions = {},
+  ) {
     this.doc = doc;
     this.awareness = new Awareness(doc);
     this.awareness.setLocalStateField('user', user);
@@ -57,33 +94,61 @@ export class SupabaseCollabProvider {
     this.channel
       .on('broadcast', { event: 'yjs' }, ({ payload }: { payload: CollabMsg }) => {
         if (this.dead) return;
+
         if (payload.t === 'req') {
-          // Respond to a join request with our full state.
+          // A peer joined — send them our full state + current awareness.
           this.send({ t: 'state', u: Array.from(Y.encodeStateAsUpdate(this.doc)) });
           const ids = [...this.awareness.getStates().keys()];
           if (ids.length) {
             this.send({ t: 'aw', u: Array.from(encodeAwarenessUpdate(this.awareness, ids)) });
           }
         } else if (payload.t === 'state' || payload.t === 'upd') {
+          // Receiving state from a peer — mark synced so we skip the fallback.
+          if (!this.synced) {
+            this.synced = true;
+            if (this.fallbackTimer !== null) {
+              clearTimeout(this.fallbackTimer);
+              this.fallbackTimer = null;
+            }
+          }
           Y.applyUpdate(this.doc, new Uint8Array(payload.u), this);
+          if (payload.t === 'state') options.onReady?.();
         } else if (payload.t === 'aw') {
           applyAwarenessUpdate(this.awareness, new Uint8Array(payload.u), this);
         }
       })
       .subscribe((status) => {
-        if (status === 'SUBSCRIBED') {
-          this.send({ t: 'req' });
+        if (status !== 'SUBSCRIBED' || this.dead) return;
+
+        // Announce ourselves and request any existing state from peers.
+        this.send({ t: 'req' });
+
+        // If nobody responds within PEER_TIMEOUT_MS, we're the first (or only)
+        // client. Insert the fallback body text so the editor isn't blank.
+        if (options.fallbackBody !== undefined) {
+          this.fallbackTimer = setTimeout(() => {
+            this.fallbackTimer = null;
+            if (this.dead || this.synced) return;
+            const ytext = this.doc.getText('note');
+            if (ytext.toString() === '' && options.fallbackBody) {
+              ytext.insert(0, options.fallbackBody);
+            }
+            options.onReady?.();
+          }, PEER_TIMEOUT_MS);
+        } else {
+          // No fallback needed (ydocState was supplied) — already ready.
+          options.onReady?.();
         }
       });
 
-    // Broadcast incremental doc updates to peers.
+    // Broadcast incremental updates to all peers.
     this.doc.on('update', (update: Uint8Array, origin: unknown) => {
       if (origin !== this && !this.dead) {
         this.send({ t: 'upd', u: Array.from(update) });
       }
     });
 
-    // Broadcast awareness (cursor) changes to peers.
+    // Broadcast awareness (cursor/presence) changes.
     this.awareness.on(
       'update',
       ({ added, updated, removed }: { added: number[]; updated: number[]; removed: number[] }) => {
@@ -99,8 +164,15 @@ export class SupabaseCollabProvider {
   }
 
   destroy() {
-    this.dead = true;
+    if (this.fallbackTimer !== null) {
+      clearTimeout(this.fallbackTimer);
+      this.fallbackTimer = null;
+    }
+    // Broadcast our departure BEFORE setting dead=true so the awareness
+    // 'update' listener can still fire and peers see the cursor disappear
+    // immediately rather than waiting for the 30-second awareness timeout.
     removeAwarenessStates(this.awareness, [this.doc.clientID], 'leave');
+    this.dead = true;
     this.awareness.destroy();
     supabase.removeChannel(this.channel);
   }

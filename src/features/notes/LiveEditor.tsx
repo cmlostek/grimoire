@@ -30,6 +30,7 @@ import { yCollab, yUndoManagerKeymap } from 'y-codemirror.next';
 import {
   SupabaseCollabProvider,
   userCollabColor,
+  stableClientId,
   toBase64,
   fromBase64,
 } from './collabProvider';
@@ -610,36 +611,54 @@ export const LiveEditor = forwardRef<LiveEditorHandle, Props>(function LiveEdito
     },
   });
 
+  const [collabReady, setCollabReady] = useState(!!ydocState);
+
   // Mount once per note (key={note.id} ensures remount on note switch).
   useEffect(() => {
     if (!containerRef.current) return;
 
     // ── Yjs document setup ───────────────────────────────────────────────────
-    const ydoc = new Y.Doc();
+    // Use a stable clientID so reconnects reuse the same Yjs identity and
+    // remote peers replace the stale cursor rather than accumulating duplicates.
+    const ydoc = new Y.Doc({ clientID: stableClientId(userId, noteId) });
     const ytext = ydoc.getText('note');
     ydocRef.current = ydoc;
 
+    // Determine if we need the first-client-wins protocol.
+    // When ydocState exists every client starts from the same vector clock → no
+    // duplication possible on sync. When it's absent we must wait for a peer
+    // response before inserting body text, otherwise two clients independently
+    // inserting the same text creates CRDT duplicates when their docs merge.
+    const needsFallback = !ydocState && !!body;
+
     if (ydocState) {
-      // Restore persisted Yjs state (all clients start from identical vector clock).
+      // Restore persisted Yjs state — all clients share the same vector clock.
       Y.applyUpdate(ydoc, fromBase64(ydocState));
-    } else if (body) {
-      // Legacy note with no Yjs state yet — initialize from plain text.
-      ytext.insert(0, body);
     }
+    // If no ydocState: Y.Text starts empty. The provider will insert `body`
+    // after 350ms if no peer responds (first-client-wins).
 
     // ── Collab provider (Supabase broadcast) ─────────────────────────────────
     const { color, colorLight } = userCollabColor(userId);
-    const provider = new SupabaseCollabProvider(ydoc, noteId, {
-      name: userName || 'Anonymous',
-      color,
-      colorLight,
-    });
+    const provider = new SupabaseCollabProvider(
+      ydoc,
+      noteId,
+      { name: userName || 'Anonymous', color, colorLight },
+      {
+        fallbackBody: needsFallback ? body : undefined,
+        onReady: () => setCollabReady(true),
+      },
+    );
 
     const undoManager = new Y.UndoManager(ytext);
 
     // ── CodeMirror view ───────────────────────────────────────────────────────
     const view = new EditorView({
       state: EditorState.create({
+        // Start from whatever Y.Text currently contains. If ydocState was
+        // loaded this is the full saved content; if awaiting a peer or
+        // fallback this is empty (yCollab will update the view once content
+        // arrives via applyUpdate / ytext.insert).
         doc: ytext.toString(),
         extensions: [
           // Yjs binding — must be first so it captures all transactions.
@@ -735,6 +754,17 @@ export const LiveEditor = forwardRef<LiveEditorHandle, Props>(function LiveEdito
       }}
     >
       <div ref={containerRef} className="h-full" />
+
+      {/* Loading veil shown only while waiting for first-client-wins peer timeout
+          (≤350 ms, only for unsaved legacy notes without a ydoc_state). */}
+      {!collabReady && (
+        <div
+          className="absolute inset-0 flex items-center justify-center pointer-events-none"
+          style={{ background: 'var(--editor-bg, #020617)', zIndex: 10 }}
+        >
+          <span className="text-xs text-slate-500 animate-pulse">Connecting…</span>
+        </div>
+      )}
 
       {hoverTooltip && createPortal(
         (() => {
