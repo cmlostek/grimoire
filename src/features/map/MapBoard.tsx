@@ -318,12 +318,13 @@ export default function MapBoard() {
       return;
     }
 
-    if (!isGM) return;
-
+    // Ruler is available to everyone, not just the GM.
     if (tool === 'ruler') {
       setRuler({ x1: p.x, y1: p.y, x2: p.x, y2: p.y });
       return;
     }
+
+    if (!isGM) return;
     if (tool === 'circle' || tool === 'square' || tool === 'cone') {
       setDrafting(p);
       return;
@@ -359,7 +360,7 @@ export default function MapBoard() {
       setLocalDrag({ id: draggingTokenId, x: sp.x, y: sp.y });
       return;
     }
-    if (isGM && ruler && tool === 'ruler') {
+    if (ruler && tool === 'ruler') {
       setRuler({ ...ruler, x2: p.x, y2: p.y });
     }
   };
@@ -526,7 +527,7 @@ export default function MapBoard() {
             <div className="grid grid-cols-3 gap-1">
               {toolButton('select', MousePointer2, 'Select / drag')}
               {toolButton('ping', Radio, 'Ping — click to flash a marker for everyone')}
-              {toolButton('ruler', Ruler, 'Ruler (5 ft/cell)', true)}
+              {toolButton('ruler', Ruler, 'Ruler (5 ft/cell)')}
               {toolButton('token', User, 'Place token', true)}
               {toolButton('circle', CircleIcon, 'Circle AoE', true)}
               {toolButton('square', SquareIcon, 'Square AoE', true)}
@@ -767,13 +768,14 @@ export default function MapBoard() {
                 strokeWidth={2 / zoom}
               />
 
-              {/* Background image — fills canvas exactly */}
+              {/* Background image — canvas dimensions are set to the image's
+                  natural pixel size on upload, so this fills exactly 1:1. */}
               {mapBgUrl && (
                 <image
                   href={mapBgUrl}
                   x={0} y={0}
                   width={canvasW} height={canvasH}
-                  preserveAspectRatio="xMidYMid meet"
+                  preserveAspectRatio="none"
                 />
               )}
 
@@ -893,11 +895,13 @@ export default function MapBoard() {
                       stroke={dispColor}
                       strokeWidth={1.5 / zoom}
                     />
-                    {/* Emoji icon */}
+                    {/* Emoji icon — dominantBaseline="central" + dy offset centres
+                        the glyph both horizontally and vertically inside the circle */}
                     {t.emoji && (
                       <text
-                        x={t.x} y={t.y + r * 0.3}
+                        x={t.x} y={t.y}
                         textAnchor="middle"
+                        dominantBaseline="central"
                         fontSize={r * 1.1}
                         pointerEvents="none"
                       >
