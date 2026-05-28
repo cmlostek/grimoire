@@ -14,6 +14,13 @@ export type CollabUser = {
   colorLight: string;
 };
 
+/** A remote collaborator currently editing the same note. */
+export type Collaborator = {
+  clientId: number;
+  name: string;
+  color: string;
+};
+
 // Deterministic color palette from userId hash.
 export function userCollabColor(userId: string): { color: string; colorLight: string } {
   let h = 5381;

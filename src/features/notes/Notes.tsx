@@ -1,10 +1,12 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { useNavigate } from 'react-router-dom';
 import { useStore } from '../../store';
 import { useNotes, canViewNote, canEditNote, EMPTY_PERMS, type Folder, type Note } from './notesStore';
 import { useSession } from '../session/sessionStore';
+import { supabase } from '../../lib/supabase';
+import { userCollabColor, type Collaborator } from './collabProvider';
 import PageHeader from '../../components/PageHeader';
 import { SharePopover } from './SharePopover';
 import {
@@ -39,7 +41,8 @@ import {
   Clock,
   Palette,
   Share2,
-  Save,
+  Check,
+  Loader2,
 } from 'lucide-react';
 import { useVisibilityReload } from '../../hooks/useVisibilityReload';
 import { useCampaignSettings } from './campaignSettingsStore';
@@ -93,9 +96,8 @@ function NoteIconDisplay({ iconId, size = 11 }: { iconId: string | null | undefi
   const { Icon, color } = getNoteIconDef(iconId);
   return <Icon size={size} style={{ color }} className="shrink-0" />;
 }
+
 // ─── Note share status (sidebar icon only) ────────────────────────────────
-// Header uses the SharePopover for control; sidebar shows a single glanceable
-// dot derived from the permission matrix.
 type ShareStatus = 'private' | 'shared_view' | 'shared_edit';
 function getShareStatus(
   note: { visible_to_players: boolean; player_editable: boolean | null },
@@ -152,6 +154,10 @@ import { QuickDiceButton } from '../dice/QuickDice';
 import { useQuickDice } from '../dice/quickDiceStore';
 import { LiveEditor, type LiveEditorHandle } from './LiveEditor';
 
+// ─── Module-level types shared by Notes, FolderNode, and NoteRow ─────────
+/** A user currently viewing a note (from Supabase Realtime Presence). */
+type PresenceUser = { userId: string; userName: string; color: string };
+
 type DragItem =
   | { kind: 'note'; id: string }
   | { kind: 'folder'; id: string };
@@ -163,9 +169,7 @@ export default function Notes() {
   const role = useSession((s) => s.role);
   const isGM = role === 'gm';
 
-  // Ref to the active LiveEditor so we can read its Yjs state on save.
-  const editorRef = useRef<LiveEditorHandle>(null);
-
+  // ── Store state (must come before refs that depend on activeNoteId) ───────
   const notes = useNotes((s) => s.notes);
   const folders = useNotes((s) => s.folders);
   const drafts = useNotes((s) => s.drafts);
@@ -193,9 +197,6 @@ export default function Notes() {
   const homebrewItems = useStore((s) => s.homebrewItems);
   const homebrewSpells = useStore((s) => s.homebrewSpells);
   const party = useParty((s) => s.party);
-  // Notes references party members via @{Name} mentions, so it needs the
-  // party data loaded even when the user lands directly on /notes (instead
-  // of relying on the Party page to have been visited first).
   const loadParty = useParty((s) => s.loadForCampaign);
   const subscribeParty = useParty((s) => s.subscribe);
   const rollFormula = useQuickDice((s) => s.rollFormula);
@@ -204,6 +205,27 @@ export default function Notes() {
   const subscribeSettings = useCampaignSettings((s) => s.subscribe);
   const campaignSettings = useCampaignSettings((s) => s.settings);
 
+  // ── Ref to the active LiveEditor (exposes getYdocState) ──────────────────
+  const editorRef = useRef<LiveEditorHandle>(null);
+
+  // ── Autosave ──────────────────────────────────────────────────────────────
+  type SaveStatus = 'idle' | 'saving' | 'saved';
+  const [saveStatus, setSaveStatus] = useState<SaveStatus>('idle');
+  const autosaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Stable ref: callbacks read this instead of closing over stale activeNoteId.
+  const activeNoteIdRef = useRef(activeNoteId);
+  activeNoteIdRef.current = activeNoteId;
+  // Tracks the previously-active note so we can save it on switch.
+  const prevNoteIdRef = useRef<string | null>(null);
+
+  // ── Live collaborators (same note, from Yjs awareness) ───────────────────
+  const [activeCollaborators, setActiveCollaborators] = useState<Collaborator[]>([]);
+
+  // ── Campaign-wide presence (sidebar: who has which note open) ─────────────
+  const [notePresence, setNotePresence] = useState<Record<string, PresenceUser[]>>({});
+  const presenceChannelRef = useRef<ReturnType<typeof supabase.channel> | null>(null);
+
+  // ── Load data for campaign ────────────────────────────────────────────────
   useEffect(() => {
     if (!campaignId) return;
     loadForCampaign(campaignId);
@@ -219,6 +241,111 @@ export default function Notes() {
   useVisibilityReload(() => {
     if (campaignId) loadForCampaign(campaignId);
   });
+
+  // ── Debounced autosave (2.5 s after last change) ─────────────────────────
+  const scheduleAutosave = useCallback(() => {
+    if (autosaveTimerRef.current) clearTimeout(autosaveTimerRef.current);
+    autosaveTimerRef.current = setTimeout(async () => {
+      autosaveTimerRef.current = null;
+      const noteId = activeNoteIdRef.current;
+      if (!noteId) return;
+      setSaveStatus('saving');
+      try {
+        await useNotes.getState().saveNote(noteId, editorRef.current?.getYdocState());
+        setSaveStatus('saved');
+        // Fade the "Saved" indicator after 3 s.
+        setTimeout(() => setSaveStatus((s) => (s === 'saved' ? 'idle' : s)), 3000);
+      } catch {
+        setSaveStatus('idle');
+      }
+    }, 2500);
+  }, []); // stable — uses refs, not closed-over state
+
+  // ── Campaign presence channel ─────────────────────────────────────────────
+  useEffect(() => {
+    if (!campaignId || !userId) return;
+    const { color } = userCollabColor(userId);
+
+    const ch = supabase.channel(`notes-presence:${campaignId}`);
+    presenceChannelRef.current = ch;
+
+    ch.on('presence', { event: 'sync' }, () => {
+      const state = ch.presenceState<{
+        noteId: string | null;
+        userId: string;
+        userName: string;
+        color: string;
+      }>();
+      const next: Record<string, PresenceUser[]> = {};
+      for (const key in state) {
+        for (const meta of state[key]) {
+          // Exclude self and entries with no note open.
+          if (meta.userId === userId || !meta.noteId) continue;
+          (next[meta.noteId] ??= []).push({
+            userId: meta.userId,
+            userName: meta.userName,
+            color: meta.color,
+          });
+        }
+      }
+      setNotePresence(next);
+    }).subscribe(async (status) => {
+      if (status === 'SUBSCRIBED') {
+        await ch.track({
+          noteId: activeNoteIdRef.current,
+          userId,
+          userName: displayName ?? userId,
+          color,
+        });
+      }
+    });
+
+    return () => {
+      void ch.untrack();
+      supabase.removeChannel(ch);
+      presenceChannelRef.current = null;
+      setNotePresence({});
+    };
+  }, [campaignId, userId, displayName]);
+
+  // ── Re-broadcast which note is open whenever the selection changes ────────
+  useEffect(() => {
+    const ch = presenceChannelRef.current;
+    if (!ch || !userId) return;
+    const { color } = userCollabColor(userId);
+    void ch.track({
+      noteId: activeNoteId,
+      userId,
+      userName: displayName ?? userId,
+      color,
+    });
+  }, [activeNoteId, userId, displayName]);
+
+  // ── Save the previous note when switching away from it ───────────────────
+  useEffect(() => {
+    const prev = prevNoteIdRef.current;
+    prevNoteIdRef.current = activeNoteId;
+    if (!prev || prev === activeNoteId) return;
+
+    // Clear any pending debounce — we're saving immediately.
+    if (autosaveTimerRef.current) {
+      clearTimeout(autosaveTimerRef.current);
+      autosaveTimerRef.current = null;
+    }
+    // Save title/body draft of previous note. ydoc_state was already persisted
+    // by the most-recent autosave cycle; we don't pass it here because
+    // editorRef now points to the new note's editor.
+    void useNotes.getState().saveNote(prev);
+  }, [activeNoteId]);
+
+  // ── Save on unmount (navigate away, campaign change, etc.) ───────────────
+  useEffect(() => {
+    return () => {
+      if (autosaveTimerRef.current) clearTimeout(autosaveTimerRef.current);
+      const noteId = activeNoteIdRef.current;
+      if (noteId) void useNotes.getState().saveNote(noteId);
+    };
+  }, []);
 
   const navigate = useNavigate();
   const [query, setQuery] = useState('');
@@ -239,7 +366,6 @@ export default function Notes() {
     [isGM, notes, userId, role, permissions]
   );
 
-  // Apply sort order to notes and folders for the sidebar
   const sortedVisibleNotes = useMemo(
     () =>
       sortMode === 'alpha'
@@ -455,6 +581,7 @@ export default function Notes() {
                 dragOverId={dragOverId}
                 isGM={isGM}
                 hiddenFolderIds={hiddenFolderIds}
+                notePresence={notePresence}
                 isExpanded={isFolderExpanded}
                 onToggle={toggleFolderExpanded}
                 onSelectNote={(id) => {
@@ -504,6 +631,7 @@ export default function Notes() {
                 dimmed={matchingNoteIds !== null && !matchingNoteIds.has(n.id)}
                 confirming={confirmingId === n.id}
                 isGM={isGM}
+                presentUsers={notePresence[n.id] ?? []}
                 onSelect={() => {
                   setActiveNote(n.id);
                 }}
@@ -540,7 +668,6 @@ export default function Notes() {
                     </button>
                     {showIconPicker && (
                       <>
-                        {/* Backdrop to close picker */}
                         <div
                           className="fixed inset-0 z-20"
                           onClick={() => setShowIconPicker(false)}
@@ -577,32 +704,57 @@ export default function Notes() {
                 )}
                 <input
                   value={drafts[active.id]?.title ?? active.title}
-                  onChange={(e) => updateDraft(active.id, { title: e.target.value })}
+                  onChange={(e) => {
+                    updateDraft(active.id, { title: e.target.value });
+                    scheduleAutosave();
+                  }}
                   readOnly={!canEdit(active)}
                   className="flex-1 bg-transparent font-serif text-xl outline-none"
                   placeholder="Title"
                 />
-                {/* Save button — appears when local draft has unsaved changes */}
-                {canEdit(active) && (() => {
-                  const dirty = !!drafts[active.id];
-                  return (
-                    <button
-                      onClick={() => saveNote(active.id, editorRef.current?.getYdocState())}
-                      disabled={!dirty}
-                      title={dirty ? 'Save (broadcasts to other viewers)' : 'No unsaved changes'}
-                      className={`px-2 py-1 text-xs rounded flex items-center gap-1 transition-colors ${
-                        dirty
-                          ? 'bg-emerald-700 hover:bg-emerald-600 text-white'
-                          : 'bg-slate-800 text-slate-500 cursor-not-allowed'
-                      }`}
-                    >
-                      <Save size={13} />
-                      {dirty ? 'Save' : 'Saved'}
-                      {dirty && <span className="w-1.5 h-1.5 rounded-full bg-amber-300" />}
-                    </button>
-                  );
-                })()}
-                {/* Share popover — replaces the old tri-state cycle */}
+
+                {/* Autosave status indicator */}
+                {canEdit(active) && saveStatus !== 'idle' && (
+                  <span className="flex items-center gap-1 text-xs text-slate-400 select-none shrink-0">
+                    {saveStatus === 'saving' ? (
+                      <>
+                        <Loader2 size={13} className="animate-spin" />
+                        Saving…
+                      </>
+                    ) : (
+                      <>
+                        <Check size={13} className="text-emerald-400" />
+                        <span className="text-emerald-400">Saved</span>
+                      </>
+                    )}
+                  </span>
+                )}
+
+                {/* Active collaborator avatars */}
+                {activeCollaborators.length > 0 && (
+                  <div className="flex items-center -space-x-1.5 shrink-0" title="Currently editing">
+                    {activeCollaborators.slice(0, 5).map((c) => (
+                      <div
+                        key={c.clientId}
+                        title={c.name}
+                        className="w-6 h-6 rounded-full border-2 border-slate-900 flex items-center justify-center text-[10px] font-bold"
+                        style={{ backgroundColor: c.color, color: '#fff' }}
+                      >
+                        {c.name.charAt(0).toUpperCase()}
+                      </div>
+                    ))}
+                    {activeCollaborators.length > 5 && (
+                      <div
+                        className="w-6 h-6 rounded-full border-2 border-slate-900 bg-slate-700 flex items-center justify-center text-[9px] text-slate-300"
+                        title={`${activeCollaborators.length - 5} more`}
+                      >
+                        +{activeCollaborators.length - 5}
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* Share popover */}
                 {(isGM || active.owner_user_id === userId) && (
                   <div className="relative">
                     <button
@@ -653,7 +805,10 @@ export default function Notes() {
                     key={active.id}
                     ref={editorRef}
                     body={drafts[active.id]?.body ?? active.body}
-                    onChange={(v) => updateDraft(active.id, { body: v })}
+                    onChange={(v) => {
+                      updateDraft(active.id, { body: v });
+                      scheduleAutosave();
+                    }}
                     wikiIndex={wikiIndex}
                     onNavigate={onWikiClick}
                     rollFormula={rollFormula}
@@ -662,6 +817,7 @@ export default function Notes() {
                     ydocState={active.ydoc_state ?? null}
                     userId={userId ?? ''}
                     userName={displayName ?? userId ?? 'Traveller'}
+                    onCollaboratorsChange={setActiveCollaborators}
                   />
                 ) : (
                   /* Read-only rendered view for players / non-owners */
@@ -685,9 +841,6 @@ export default function Notes() {
                           if (className.includes('note-secret')) {
                             const revealed = p['data-secret-revealed'] === 'true';
                             const idx = parseInt((p['data-secret-index'] as string) ?? '0', 10);
-                            // Content is passed as data-secret-content so we can
-                            // render it with its own ReactMarkdown (supports bold,
-                            // headings, lists, etc. inside the secret block).
                             const content = (p['data-secret-content'] as string) ?? '';
                             return (
                               <Secret
@@ -789,6 +942,8 @@ type FolderNodeProps = {
   dragOverId: string | 'root' | null;
   isGM: boolean;
   hiddenFolderIds: string[];
+  /** Campaign-wide presence map: noteId → list of users currently viewing it. */
+  notePresence: Record<string, PresenceUser[]>;
   isExpanded: (id: string) => boolean;
   onToggle: (id: string) => void;
   onSelectNote: (id: string) => void;
@@ -812,7 +967,6 @@ function FolderNode(props: FolderNodeProps) {
   const { folder, depth, folders, notes, matching, isGM, isExpanded, hiddenFolderIds } = props;
   const [showColorPicker, setShowColorPicker] = useState(false);
 
-  // Campaign settings (folder color & visibility)
   const toggleFolder = useCampaignSettings((s) => s.toggleFolder);
   const setFolderColor = useCampaignSettings((s) => s.setFolderColor);
   const folderColors = useCampaignSettings((s) => s.settings.folderColors);
@@ -856,13 +1010,11 @@ function FolderNode(props: FolderNodeProps) {
         style={{ paddingLeft: 4 + depth * 12 }}
         onClick={() => props.onToggle(folder.id)}
       >
-        {/* Chevron rotates smoothly on expand/collapse */}
         <ChevronRight
           size={12}
           className="text-slate-500 shrink-0 transition-transform duration-200"
           style={{ transform: expanded ? 'rotate(90deg)' : 'rotate(0deg)' }}
         />
-        {/* Lucide folder icon with campaign color */}
         <FolderIcon
           size={12}
           className="shrink-0"
@@ -919,7 +1071,6 @@ function FolderNode(props: FolderNodeProps) {
               </button>
             )}
             {isGM && (
-              /* Folder color picker */
               <div className="relative">
                 <button
                   onClick={(e) => { e.stopPropagation(); setShowColorPicker((v) => !v); }}
@@ -956,7 +1107,6 @@ function FolderNode(props: FolderNodeProps) {
               </div>
             )}
             {isGM && (
-              /* Hide/show folder from players */
               <button
                 onClick={(e) => { e.stopPropagation(); toggleFolder(folder.id); }}
                 title={isHiddenFromPlayers ? 'Hidden from players — click to show' : 'Visible to players — click to hide'}
@@ -1018,6 +1168,7 @@ function FolderNode(props: FolderNodeProps) {
               dimmed={matching !== null && !matching.has(n.id)}
               confirming={props.confirmingId === n.id}
               isGM={isGM}
+              presentUsers={props.notePresence[n.id] ?? []}
               onSelect={() => props.onSelectNote(n.id)}
               onStartDelete={() => props.onStartDeleteNote(n.id)}
               onDelete={() => props.onDeleteNote(n.id)}
@@ -1038,6 +1189,8 @@ type NoteRowProps = {
   dimmed: boolean;
   confirming: boolean;
   isGM: boolean;
+  /** Users from the campaign presence channel currently viewing this note. */
+  presentUsers: PresenceUser[];
   onSelect: () => void;
   onStartDelete: () => void;
   onDelete: () => void;
@@ -1052,17 +1205,14 @@ function NoteRow({
   dimmed,
   confirming,
   isGM,
+  presentUsers,
   onSelect,
   onStartDelete,
   onDelete,
   onCancelDelete,
   onDragStart,
 }: NoteRowProps) {
-  // Status icon needs the permission rows to know "is this shared?"
-  // EMPTY_PERMS is a stable reference — `?? []` here would infinite-loop
-  // useSyncExternalStore (React #185).
   const perms = useNotes((s) => s.permissions[note.id] ?? EMPTY_PERMS);
-  const dirty = useNotes((s) => !!s.drafts[note.id]);
   return (
     <div
       draggable={isGM}
@@ -1080,8 +1230,28 @@ function NoteRow({
       <NoteIconDisplay iconId={note.icon} size={11} />
       <span className="flex-1 min-w-0 truncate">
         {note.title || 'Untitled'}
-        {dirty && <span className="ml-1 text-amber-400" title="Unsaved changes">●</span>}
       </span>
+      {/* Presence dots: who else has this note open right now */}
+      {presentUsers.length > 0 && (
+        <span className="flex items-center gap-px shrink-0">
+          {presentUsers.slice(0, 3).map((u) => (
+            <span
+              key={u.userId}
+              title={`${u.userName} is viewing`}
+              className="inline-block w-1.5 h-1.5 rounded-full"
+              style={{ backgroundColor: u.color }}
+            />
+          ))}
+          {presentUsers.length > 3 && (
+            <span
+              className="text-[8px] text-slate-500 leading-none ml-0.5"
+              title={`${presentUsers.length} people viewing`}
+            >
+              +{presentUsers.length - 3}
+            </span>
+          )}
+        </span>
+      )}
       {isGM && !active && (() => {
         const status = getShareStatus(note, perms);
         if (status === 'shared_edit') return <Eye size={10} className="text-emerald-400 shrink-0" />;

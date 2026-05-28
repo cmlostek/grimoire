@@ -32,6 +32,7 @@ import {
   userCollabColor,
   toBase64,
   fromBase64,
+  type Collaborator,
 } from './collabProvider';
 import { searchWiki, kindLabel, type WikiEntry } from './wikiIndex';
 import { modifier } from '../../data/srd';
@@ -496,6 +497,8 @@ type Props = {
   ydocState: string | null;
   userId: string;
   userName: string;
+  /** Fires whenever the set of remote collaborators changes (excludes self). */
+  onCollaboratorsChange?: (c: Collaborator[]) => void;
 };
 
 // ─── Abilities for party tooltip ─────────────────────────────────────────────
@@ -508,20 +511,23 @@ export type LiveEditorHandle = {
   getYdocState: () => string | null;
 };
 
+export type { Collaborator };
+
 // ─── Component ────────────────────────────────────────────────────────────────
 export const LiveEditor = forwardRef<LiveEditorHandle, Props>(function LiveEditor(
-  { body, onChange, wikiIndex, onNavigate, rollFormula, party, noteId, ydocState, userId, userName },
+  { body, onChange, wikiIndex, onNavigate, rollFormula, party, noteId, ydocState, userId, userName, onCollaboratorsChange },
   ref,
 ) {
   const containerRef = useRef<HTMLDivElement>(null);
   const viewRef      = useRef<EditorView | null>(null);
   const ydocRef      = useRef<Y.Doc | null>(null);
 
-  const onChangeRef  = useRef(onChange);  onChangeRef.current  = onChange;
-  const wikiRef      = useRef(wikiIndex); wikiRef.current      = wikiIndex;
-  const navRef       = useRef(onNavigate); navRef.current      = onNavigate;
-  const rollRef      = useRef(rollFormula); rollRef.current    = rollFormula;
-  const partyRef     = useRef(party);     partyRef.current     = party;
+  const onChangeRef             = useRef(onChange);           onChangeRef.current             = onChange;
+  const wikiRef                 = useRef(wikiIndex);          wikiRef.current                 = wikiIndex;
+  const navRef                  = useRef(onNavigate);         navRef.current                  = onNavigate;
+  const rollRef                 = useRef(rollFormula);        rollRef.current                 = rollFormula;
+  const partyRef                = useRef(party);              partyRef.current                = party;
+  const onCollaboratorsChangeRef = useRef(onCollaboratorsChange); onCollaboratorsChangeRef.current = onCollaboratorsChange;
 
   const [suggest, setSuggest] = useState<SuggestState | null>(null);
   const suggestRef = useRef(suggest);
@@ -646,6 +652,19 @@ export const LiveEditor = forwardRef<LiveEditorHandle, Props>(function LiveEdito
         onReady: () => setCollabReady(true),
       },
     );
+
+    // Notify parent whenever the set of remote collaborators changes.
+    const emitCollaborators = () => {
+      const states = provider.awareness.getStates();
+      const list: Collaborator[] = [];
+      states.forEach((state, clientId) => {
+        if (clientId === ydoc.clientID) return;
+        const u = (state as { user?: CollabUser }).user;
+        if (u) list.push({ clientId, name: u.name, color: u.color });
+      });
+      onCollaboratorsChangeRef.current?.(list);
+    };
+    provider.awareness.on('change', emitCollaborators);
 
     const undoManager = new Y.UndoManager(ytext);
 
