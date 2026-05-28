@@ -268,7 +268,11 @@ export default function Notes() {
     const ch = supabase.channel(`notes-presence:${campaignId}`);
     presenceChannelRef.current = ch;
 
-    ch.on('presence', { event: 'sync' }, () => {
+    // Rebuild the presence map from the full Supabase Presence state.
+    // Called on both 'sync' (initial + any change) and 'leave' (insurance —
+    // 'sync' should fire too, but 'leave' fires first and ensures instant
+    // removal even before the next full sync arrives).
+    const syncPresence = () => {
       const state = ch.presenceState<{
         noteId: string | null;
         userId: string;
@@ -276,9 +280,9 @@ export default function Notes() {
         color: string;
       }>();
       const next: Record<string, PresenceUser[]> = {};
-      // Track which userIds we've already added per note so a user with
-      // multiple browser tabs only appears as a single presence dot.
-      const seen = new Set<string>(); // `${noteId}:${userId}`
+      // Deduplicate: a user with multiple browser tabs should only appear once
+      // per note. Key: `${noteId}:${userId}`.
+      const seen = new Set<string>();
       for (const key in state) {
         for (const meta of state[key]) {
           // Exclude self and entries with no note open.
@@ -294,22 +298,31 @@ export default function Notes() {
         }
       }
       setNotePresence(next);
-    }).subscribe(async (status) => {
-      if (status === 'SUBSCRIBED') {
-        await ch.track({
-          noteId: activeNoteIdRef.current,
-          userId,
-          userName: displayName ?? userId,
-          color,
-        });
-      }
-    });
+    };
+
+    ch.on('presence', { event: 'sync' }, syncPresence)
+      .on('presence', { event: 'leave' }, syncPresence)
+      .subscribe(async (status) => {
+        if (status === 'SUBSCRIBED') {
+          await ch.track({
+            noteId: activeNoteIdRef.current,
+            userId,
+            userName: displayName ?? userId,
+            color,
+          });
+        }
+      });
 
     return () => {
+      // Fire untrack first so the departure propagates to peers.
       void ch.untrack();
-      supabase.removeChannel(ch);
       presenceChannelRef.current = null;
       setNotePresence({});
+      // Delay channel teardown so the untrack message has time to flush over
+      // the WebSocket before the connection is closed. Without the delay,
+      // peers keep seeing the stale dot for up to 30 seconds.
+      const channel = ch;
+      setTimeout(() => supabase.removeChannel(channel), 400);
     };
   }, [campaignId, userId, displayName]);
 

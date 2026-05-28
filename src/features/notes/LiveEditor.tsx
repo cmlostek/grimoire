@@ -661,9 +661,14 @@ export const LiveEditor = forwardRef<LiveEditorHandle, Props>(function LiveEdito
       const seen = new Set<string>();
       const list: Collaborator[] = [];
       states.forEach((state, clientId) => {
+        // Skip this client's own session.
         if (clientId === ydoc.clientID) return;
         const u = (state as { user?: CollabUser }).user;
         if (!u) return;
+        // Skip stale awareness entries from our own user (e.g. after a page
+        // refresh or switching notes — the old clientID is no longer `ydoc.clientID`
+        // but it still carries our userId until the 30-second awareness timeout).
+        if (u.userId && u.userId === userId) return;
         // Use userId if present, otherwise fall back to color (deterministic
         // from userId via userCollabColor, so reliable as a dedup key).
         const key = u.userId ?? u.color;
