@@ -104,7 +104,7 @@ type MapStore = {
   subscribe: (campaignId: string) => () => void;
   clear: () => void;
 
-  setBackground: (campaignId: string, url: string | null) => Promise<void>;
+  setBackground: (campaignId: string, url: string | null, w?: number, h?: number) => Promise<void>;
   setGridSize: (campaignId: string, size: number) => Promise<void>;
   setShowGrid: (campaignId: string, show: boolean) => Promise<void>;
   setCanvasSize: (campaignId: string, w: number, h: number) => Promise<void>;
@@ -204,15 +204,23 @@ export const useMap = create<MapStore>((set, get) => ({
 
   clear: () => set({ state: DEFAULT_STATE, tokens: [], loaded: false, error: null }),
 
-  setBackground: async (campaignId, url) => {
+  setBackground: async (campaignId, url, w, h) => {
     const prev = get().state;
-    // Optimistic update — sets local background immediately (or clears it).
-    // This ensures the "background = null" guard in subscribe() works correctly:
-    // by the time the realtime event arrives, the local state already reflects null.
-    set({ state: { ...prev, background_url: url } });
+    // Optimistic update — sets local background (and optional canvas size) immediately.
+    // Combining both into one upsert avoids the race condition where two separate
+    // upserts arrive in different realtime events with stale width/height defaults.
+    const nextState: MapState = { ...prev, background_url: url };
+    if (w !== undefined && h !== undefined) {
+      nextState.width = w;
+      nextState.height = h;
+    }
+    set({ state: nextState });
+    const patch: Record<string, unknown> = { campaign_id: campaignId, background_url: url };
+    if (w !== undefined) patch.width = w;
+    if (h !== undefined) patch.height = h;
     const { error } = await supabase
       .from('map_state')
-      .upsert({ campaign_id: campaignId, background_url: url }, { onConflict: 'campaign_id' });
+      .upsert(patch, { onConflict: 'campaign_id' });
     if (error) set({ state: prev, error: error.message });
   },
 

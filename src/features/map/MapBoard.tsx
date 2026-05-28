@@ -53,7 +53,6 @@ export default function MapBoard() {
   const setBackground = useMap((s) => s.setBackground);
   const setGridSize = useMap((s) => s.setGridSize);
   const setShowGrid = useMap((s) => s.setShowGrid);
-  const setCanvasSize = useMap((s) => s.setCanvasSize);
   const addShape = useMap((s) => s.addShape);
   const removeShape = useMap((s) => s.removeShape);
   const clearShapes = useMap((s) => s.clearShapes);
@@ -418,18 +417,10 @@ export default function MapBoard() {
       img.onload = () => {
         const w = img.naturalWidth || canvasW;
         const h = img.naturalHeight || canvasH;
-        // Update canvas dimensions to match the image's natural size so the
-        // grid and coordinate system match the image for all clients.
-        // The auto-fit useEffect [canvasW, canvasH] will re-fit to screen
-        // automatically when the optimistic state update triggers a re-render.
-        if (w !== canvasW || h !== canvasH) {
-          void setCanvasSize(campaignId, w, h);
-        } else {
-          // Dimensions unchanged (same image or re-upload) — fit manually since
-          // the useEffect won't fire when dimensions don't change.
-          requestAnimationFrame(fitToScreen);
-        }
-        void setBackground(campaignId, dataUrl);
+        // my last resort or im losing my mind
+        const dimensionsChanged = w !== canvasW || h !== canvasH;
+        void setBackground(campaignId, dataUrl, w, h);
+        if (!dimensionsChanged) requestAnimationFrame(fitToScreen);
       };
       img.src = dataUrl;
     };
