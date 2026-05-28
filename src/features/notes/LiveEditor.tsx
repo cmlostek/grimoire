@@ -32,6 +32,8 @@ import {
   userCollabColor,
   toBase64,
   fromBase64,
+  type CollabUser,
+  type Collaborator,
 } from './collabProvider';
 import { searchWiki, kindLabel, type WikiEntry } from './wikiIndex';
 import { modifier } from '../../data/srd';
@@ -496,6 +498,8 @@ type Props = {
   ydocState: string | null;
   userId: string;
   userName: string;
+  /** Fires whenever the set of remote collaborators changes (excludes self). */
+  onCollaboratorsChange?: (c: Collaborator[]) => void;
 };
 
 // ─── Abilities for party tooltip ─────────────────────────────────────────────
@@ -508,20 +512,23 @@ export type LiveEditorHandle = {
   getYdocState: () => string | null;
 };
 
+export type { Collaborator };
+
 // ─── Component ────────────────────────────────────────────────────────────────
 export const LiveEditor = forwardRef<LiveEditorHandle, Props>(function LiveEditor(
-  { body, onChange, wikiIndex, onNavigate, rollFormula, party, noteId, ydocState, userId, userName },
+  { body, onChange, wikiIndex, onNavigate, rollFormula, party, noteId, ydocState, userId, userName, onCollaboratorsChange },
   ref,
 ) {
   const containerRef = useRef<HTMLDivElement>(null);
   const viewRef      = useRef<EditorView | null>(null);
   const ydocRef      = useRef<Y.Doc | null>(null);
 
-  const onChangeRef  = useRef(onChange);  onChangeRef.current  = onChange;
-  const wikiRef      = useRef(wikiIndex); wikiRef.current      = wikiIndex;
-  const navRef       = useRef(onNavigate); navRef.current      = onNavigate;
-  const rollRef      = useRef(rollFormula); rollRef.current    = rollFormula;
-  const partyRef     = useRef(party);     partyRef.current     = party;
+  const onChangeRef             = useRef(onChange);           onChangeRef.current             = onChange;
+  const wikiRef                 = useRef(wikiIndex);          wikiRef.current                 = wikiIndex;
+  const navRef                  = useRef(onNavigate);         navRef.current                  = onNavigate;
+  const rollRef                 = useRef(rollFormula);        rollRef.current                 = rollFormula;
+  const partyRef                = useRef(party);              partyRef.current                = party;
+  const onCollaboratorsChangeRef = useRef(onCollaboratorsChange); onCollaboratorsChangeRef.current = onCollaboratorsChange;
 
   const [suggest, setSuggest] = useState<SuggestState | null>(null);
   const suggestRef = useRef(suggest);
@@ -640,12 +647,38 @@ export const LiveEditor = forwardRef<LiveEditorHandle, Props>(function LiveEdito
     const provider = new SupabaseCollabProvider(
       ydoc,
       noteId,
-      { name: userName || 'Anonymous', color, colorLight },
+      { name: userName || 'Anonymous', color, colorLight, userId },
       {
         fallbackBody: needsFallback ? body : undefined,
         onReady: () => setCollabReady(true),
       },
     );
+
+    // Notify parent whenever the set of remote collaborators changes.
+    // Deduplicate by userId so a user with multiple tabs only appears once.
+    const emitCollaborators = () => {
+      const states = provider.awareness.getStates();
+      const seen = new Set<string>();
+      const list: Collaborator[] = [];
+      states.forEach((state, clientId) => {
+        // Skip this client's own session.
+        if (clientId === ydoc.clientID) return;
+        const u = (state as { user?: CollabUser }).user;
+        if (!u) return;
+        // Skip stale awareness entries from our own user (e.g. after a page
+        // refresh or switching notes — the old clientID is no longer `ydoc.clientID`
+        // but it still carries our userId until the 30-second awareness timeout).
+        if (u.userId && u.userId === userId) return;
+        // Use userId if present, otherwise fall back to color (deterministic
+        // from userId via userCollabColor, so reliable as a dedup key).
+        const key = u.userId ?? u.color;
+        if (seen.has(key)) return;
+        seen.add(key);
+        list.push({ clientId, name: u.name, color: u.color });
+      });
+      onCollaboratorsChangeRef.current?.(list);
+    };
+    provider.awareness.on('change', emitCollaborators);
 
     const undoManager = new Y.UndoManager(ytext);
 

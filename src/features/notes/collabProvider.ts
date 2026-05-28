@@ -12,6 +12,15 @@ export type CollabUser = {
   name: string;
   color: string;
   colorLight: string;
+  /** The authenticated user ID — used to deduplicate multi-tab presence. */
+  userId?: string;
+};
+
+/** A remote collaborator currently editing the same note. */
+export type Collaborator = {
+  clientId: number;
+  name: string;
+  color: string;
 };
 
 // Deterministic color palette from userId hash.
@@ -159,7 +168,12 @@ export class SupabaseCollabProvider {
     removeAwarenessStates(this.awareness, [this.doc.clientID], 'leave');
     this.dead = true;
     this.awareness.destroy();
-    supabase.removeChannel(this.channel);
+    // Delay channel removal so the departure broadcast (queued above by
+    // send()) has time to flush over the WebSocket before the connection
+    // is torn down. Without this delay the socket closes first and peers
+    // keep seeing the stale cursor for up to 30 seconds.
+    const ch = this.channel;
+    setTimeout(() => supabase.removeChannel(ch), 500);
   }
 }
 
