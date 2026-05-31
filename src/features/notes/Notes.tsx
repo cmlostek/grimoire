@@ -43,6 +43,15 @@ import {
   Share2,
   Check,
   Loader2,
+  Bold,
+  Italic,
+  Strikethrough,
+  Highlighter,
+  Code,
+  Heading1,
+  Heading2,
+  Heading3,
+  ImagePlus,
 } from 'lucide-react';
 import { useVisibilityReload } from '../../hooks/useVisibilityReload';
 import { useCampaignSettings } from './campaignSettingsStore';
@@ -207,6 +216,8 @@ export default function Notes() {
 
   // ── Ref to the active LiveEditor (exposes getYdocState) ──────────────────
   const editorRef = useRef<LiveEditorHandle>(null);
+  // ── Ref to the hidden image-upload file input ─────────────────────────────
+  const imgInputRef = useRef<HTMLInputElement>(null);
 
   // ── Autosave ──────────────────────────────────────────────────────────────
   type SaveStatus = 'idle' | 'saving' | 'saved' | 'failed';
@@ -824,6 +835,60 @@ export default function Notes() {
                   </button>
                 ))}
               </div>
+              {/* Formatting toolbar — only visible while editing */}
+              {canEdit(active) && (
+                <div className="flex items-center gap-0.5 px-3 py-1 border-b border-slate-800 bg-slate-950">
+                  <ToolbarBtn title="Bold (Ctrl+B)" onClick={() => editorRef.current?.format({ kind: 'wrap', before: '**', after: '**' })}>
+                    <Bold size={13} />
+                  </ToolbarBtn>
+                  <ToolbarBtn title="Italic (Ctrl+I)" onClick={() => editorRef.current?.format({ kind: 'wrap', before: '*', after: '*' })}>
+                    <Italic size={13} />
+                  </ToolbarBtn>
+                  <ToolbarBtn title="Strikethrough" onClick={() => editorRef.current?.format({ kind: 'wrap', before: '~~', after: '~~' })}>
+                    <Strikethrough size={13} />
+                  </ToolbarBtn>
+                  <ToolbarBtn title="Highlight" onClick={() => editorRef.current?.format({ kind: 'wrap', before: '==', after: '==' })}>
+                    <Highlighter size={13} />
+                  </ToolbarBtn>
+                  <ToolbarBtn title="Inline code" onClick={() => editorRef.current?.format({ kind: 'wrap', before: '`', after: '`' })}>
+                    <Code size={13} />
+                  </ToolbarBtn>
+                  <div className="w-px h-4 bg-slate-700 mx-0.5" />
+                  <ToolbarBtn title="Heading 1" onClick={() => editorRef.current?.format({ kind: 'line-prefix', prefix: '# ' })}>
+                    <Heading1 size={13} />
+                  </ToolbarBtn>
+                  <ToolbarBtn title="Heading 2" onClick={() => editorRef.current?.format({ kind: 'line-prefix', prefix: '## ' })}>
+                    <Heading2 size={13} />
+                  </ToolbarBtn>
+                  <ToolbarBtn title="Heading 3" onClick={() => editorRef.current?.format({ kind: 'line-prefix', prefix: '### ' })}>
+                    <Heading3 size={13} />
+                  </ToolbarBtn>
+                  <div className="w-px h-4 bg-slate-700 mx-0.5" />
+                  <ToolbarBtn title="Insert image" onClick={() => imgInputRef.current?.click()}>
+                    <ImagePlus size={13} />
+                  </ToolbarBtn>
+                  <input
+                    ref={imgInputRef}
+                    type="file"
+                    accept="image/*"
+                    className="hidden"
+                    onChange={async (e) => {
+                      const file = e.target.files?.[0];
+                      if (!file || !campaignId) return;
+                      e.target.value = '';
+                      const ext = file.name.split('.').pop() ?? 'png';
+                      const path = `${campaignId}/${Date.now()}.${ext}`;
+                      const { error } = await supabase.storage
+                        .from('note-images')
+                        .upload(path, file, { upsert: false });
+                      if (error) { console.error('Image upload failed', error); return; }
+                      const { data } = supabase.storage.from('note-images').getPublicUrl(path);
+                      editorRef.current?.format({ kind: 'insert', text: `![](${data.publicUrl})` });
+                    }}
+                  />
+                </div>
+              )}
+
               <div className="flex-1 min-h-0 overflow-hidden">
                 {canEdit(active) ? (
                   /* Live editor — highlights decorators inline as you type */
@@ -947,6 +1012,29 @@ function addHardBreaks(md: string): string {
       return line;
     })
     .join('\n');
+}
+
+// ─── Formatting toolbar button ────────────────────────────────────────────────
+function ToolbarBtn({
+  title,
+  onClick,
+  children,
+}: {
+  title: string;
+  onClick: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      title={title}
+      // onMouseDown + preventDefault keeps CodeMirror focused so the selection
+      // is still live when the format command fires.
+      onMouseDown={(e) => { e.preventDefault(); onClick(); }}
+      className="p-1.5 rounded text-slate-400 hover:bg-slate-800 hover:text-slate-200 transition-colors"
+    >
+      {children}
+    </button>
+  );
 }
 
 function LegendRow({

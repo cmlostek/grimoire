@@ -104,6 +104,11 @@ export default function MapBoard() {
   const snapRef = useRef({ grid: mapShowGrid, size: mapGridSize });
   snapRef.current = { grid: mapShowGrid, size: mapGridSize };
 
+  // Extra refs needed by touch token-placement and ping handlers
+  const campaignIdRef  = useRef(campaignId);  campaignIdRef.current  = campaignId;
+  const tokenNameRef   = useRef(tokenName);   tokenNameRef.current   = tokenName;
+  const tokenEmojiRef  = useRef(tokenEmoji);  tokenEmojiRef.current  = tokenEmoji;
+
   type TouchMode = 'none' | 'pan' | 'pinch' | 'drag';
   const touchModeRef  = useRef<TouchMode>('none');
   const touchPinchRef = useRef({ dist: 1, zoom: 1, midX: 0, midY: 0, panX: 0, panY: 0 });
@@ -248,6 +253,32 @@ export default function MapBoard() {
         const t = e.touches[0];
         const lx = (t.clientX - rect.left - panRef.current.x) / zoomRef.current;
         const ly = (t.clientY - rect.top  - panRef.current.y) / zoomRef.current;
+
+        // Ping tool: single tap broadcasts a ping
+        if (tool === 'ping') {
+          broadcastPingRef.current(lx, ly);
+          return;
+        }
+
+        // Token tool: tap to place a new token (GM only)
+        if (tool === 'token' && isGM) {
+          const cId = campaignIdRef.current;
+          if (!cId) return;
+          const { grid, size } = snapRef.current;
+          const sx = grid && size > 1 ? Math.round(lx / size) * size : lx;
+          const sy = grid && size > 1 ? Math.round(ly / size) * size : ly;
+          void useMap.getState().addToken(cId, {
+            name: tokenNameRef.current || 'Token',
+            x: sx,
+            y: sy,
+            color: '#94a3b8',
+            emoji: tokenEmojiRef.current || undefined,
+            size: Math.max(30, size * 0.8),
+            owner_user_id: userId,
+            hidden_from_players: false,
+          });
+          return;
+        }
 
         // Check for a draggable token under the touch point (select mode only)
         if (tool === 'select') {
@@ -433,6 +464,11 @@ export default function MapBoard() {
     setPings((curr) => [...curr, ping]);
     window.setTimeout(() => setPings((curr) => curr.filter((x) => x.id !== ping.id)), 2200);
   };
+
+  // Keep a stable ref so touch handlers can call broadcastPing without
+  // needing it in their useCallback deps.
+  const broadcastPingRef = useRef(broadcastPing);
+  broadcastPingRef.current = broadcastPing;
 
   // ── Token drag logic ──────────────────────────────────────────────────────
   const canDragToken = (t: MapToken) =>
