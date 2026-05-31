@@ -731,14 +731,17 @@ export const LiveEditor = forwardRef<LiveEditorHandle, Props>(function LiveEdito
   // Click handler: dice roll + wiki navigate (secrets handled by widget)
   const clickExt = EditorView.domEventHandlers({
     mousedown(event, view) {
-      const coords = view.posAtCoords({ x: event.clientX, y: event.clientY });
+      // precise:true → returns null for clicks on blank space / outside text,
+      // preventing false-positive navigation when clicking anywhere in the editor.
+      const coords = view.posAtCoords({ x: event.clientX, y: event.clientY }, true);
       if (coords === null) return false;
       const line = view.state.doc.lineAt(coords);
       const col  = coords - line.from;
       DECO_RE.lastIndex = 0;
       let m: RegExpExecArray | null;
       while ((m = DECO_RE.exec(line.text)) !== null) {
-        if (col < m.index || col > m.index + m[0].length) continue;
+        // Strict bounds: col must be inside [m.index, m.index + length)
+        if (col < m.index || col >= m.index + m[0].length) continue;
         const token = m[0];
         if (token.startsWith('$') && !token.startsWith('${') && token.endsWith('$')) {
           event.preventDefault();
@@ -746,18 +749,16 @@ export const LiveEditor = forwardRef<LiveEditorHandle, Props>(function LiveEdito
           return true;
         }
         if (token.startsWith('[[') && token.endsWith(']]')) {
-          event.preventDefault();
           const name = token.slice(2, -2);
           const hit  = wikiRef.current.find((e) => e.name === name);
-          if (hit) navRef.current(hit.route);
-          return true;
+          if (hit) { event.preventDefault(); navRef.current(hit.route); return true; }
+          return false; // unresolved link — let cursor place normally
         }
         if (token.startsWith('&{') && token.endsWith('}')) {
-          event.preventDefault();
           const name = token.slice(2, -1).trim();
           const hit  = wikiRef.current.find((e) => e.name === name);
-          if (hit) navRef.current(hit.route);
-          return true;
+          if (hit) { event.preventDefault(); navRef.current(hit.route); return true; }
+          return false; // no match — let cursor place normally
         }
       }
       return false;
@@ -931,18 +932,10 @@ export const LiveEditor = forwardRef<LiveEditorHandle, Props>(function LiveEdito
               }
             }
 
-            // &{ location / wiki
-            if (!candidate) {
-              const at = upto.lastIndexOf('&{');
-              if (at !== -1) {
-                const frag = upto.slice(at + 2);
-                if (!frag.includes('}') && !frag.includes('\n')) {
-                  const hits = searchWiki(wikiRef.current, frag, 6)
-                    .map((e) => ({ label: e.name, sub: kindLabel(e.kind) }));
-                  if (hits.length) candidate = { trigger: '&{', openAt: at, results: hits };
-                }
-              }
-            }
+            // &{ location — no autocomplete: location names aren't in the wiki index
+            // (only spells/items are), so offering suggestions here would populate
+            // with spells. Users type location names manually.
+            // Will add locations later if and/or when it is added to the index
 
             // $ dice expression
             if (!candidate) {
