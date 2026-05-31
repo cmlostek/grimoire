@@ -731,9 +731,8 @@ export const LiveEditor = forwardRef<LiveEditorHandle, Props>(function LiveEdito
   // Click handler: dice roll + wiki navigate (secrets handled by widget)
   const clickExt = EditorView.domEventHandlers({
     mousedown(event, view) {
-      // precise:true → returns null for clicks on blank space / outside text,
-      // preventing false-positive navigation when clicking anywhere in the editor.
-      const coords = view.posAtCoords({ x: event.clientX, y: event.clientY }, true);
+      // I broke it, so I'm fixing it
+      const coords = view.posAtCoords({ x: event.clientX, y: event.clientY });
       if (coords === null) return false;
       const line = view.state.doc.lineAt(coords);
       const col  = coords - line.from;
