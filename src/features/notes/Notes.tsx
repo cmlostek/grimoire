@@ -921,7 +921,7 @@ export default function Notes() {
                         },
                       }}
                     >
-                      {active.body ? preprocessDecorators(active.body) : '*Empty note.*'}
+                      {active.body ? addHardBreaks(preprocessDecorators(active.body)) : '*Empty note.*'}
                     </ReactMarkdown>
                   </div>
                 )}
@@ -932,6 +932,21 @@ export default function Notes() {
       </div>
     </div>
   );
+}
+
+function addHardBreaks(md: string): string {
+  const lines = md.split('\n');
+  let inCode = false;
+  return lines
+    .map((line, i) => {
+      if (line.trimStart().startsWith('```')) inCode = !inCode;
+      const next = lines[i + 1] ?? '';
+      if (!inCode && line.trim() !== '' && next.trim() !== '') {
+        return line.trimEnd() + '  ';
+      }
+      return line;
+    })
+    .join('\n');
 }
 
 function LegendRow({
