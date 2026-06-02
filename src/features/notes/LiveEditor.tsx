@@ -583,7 +583,6 @@ type Props = {
   onNavigate: (path: string) => void;
   rollFormula: (formula: string) => void;
   party: PartyMember[];
-  uploadImage?: (file: File) => Promise<string | null>;
   // Collab
   noteId: string;
   ydocState: string | null;
@@ -613,7 +612,7 @@ export type { Collaborator };
 
 // ─── Component ────────────────────────────────────────────────────────────────
 export const LiveEditor = forwardRef<LiveEditorHandle, Props>(function LiveEditor(
-  { body, onChange, wikiIndex, onNavigate, rollFormula, party, uploadImage, noteId, ydocState, userId, userName, onCollaboratorsChange },
+  { body, onChange, wikiIndex, onNavigate, rollFormula, party, noteId, ydocState, userId, userName, onCollaboratorsChange },
   ref,
 ) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -625,7 +624,6 @@ export const LiveEditor = forwardRef<LiveEditorHandle, Props>(function LiveEdito
   const navRef                  = useRef(onNavigate);         navRef.current                  = onNavigate;
   const rollRef                 = useRef(rollFormula);        rollRef.current                 = rollFormula;
   const partyRef                = useRef(party);              partyRef.current                = party;
-  const uploadImageRef          = useRef(uploadImage);        uploadImageRef.current          = uploadImage;
   const onCollaboratorsChangeRef = useRef(onCollaboratorsChange); onCollaboratorsChangeRef.current = onCollaboratorsChange;
 
   const [suggest, setSuggest] = useState<SuggestState | null>(null);
@@ -891,29 +889,6 @@ export const LiveEditor = forwardRef<LiveEditorHandle, Props>(function LiveEdito
           clickExt,
           noteTheme,
           EditorView.lineWrapping,
-          EditorView.domEventHandlers({
-            paste(event, view) {
-              const items = event.clipboardData?.items;
-              if (!items || !uploadImageRef.current) return false;
-              for (const item of Array.from(items)) {
-                if (!item.type.startsWith('image/')) continue;
-                const file = item.getAsFile();
-                if (!file) continue;
-                event.preventDefault();
-                uploadImageRef.current(file).then((url) => {
-                  if (!url) return;
-                  const { from } = view.state.selection.main;
-                  const text = `![](${url})`;
-                  view.dispatch({
-                    changes: { from, insert: text },
-                    selection: { anchor: from + text.length },
-                  });
-                });
-                return true;
-              }
-              return false;
-            },
-          }),
           EditorView.updateListener.of((update) => {
             if (!update.docChanged && !update.selectionSet) return;
             if (update.docChanged) {

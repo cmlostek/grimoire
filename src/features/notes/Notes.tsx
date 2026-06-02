@@ -216,21 +216,6 @@ export default function Notes() {
 
   // ── Ref to the active LiveEditor (exposes getYdocState) ──────────────────
   const editorRef = useRef<LiveEditorHandle>(null);
-  // ── Ref to the hidden image-upload file input ─────────────────────────────
-  const imgInputRef = useRef<HTMLInputElement>(null);
-
-  // ── Image upload ─────────────────────────────────────────────────────────
-  const uploadImageFile = useCallback(async (file: File): Promise<string | null> => {
-    if (!campaignId) return null;
-    const ext = file.name.split('.').pop() ?? 'png';
-    const path = `${campaignId}/${Date.now()}.${ext}`;
-    const { error } = await supabase.storage
-      .from('note-images')
-      .upload(path, file, { upsert: false });
-    if (error) { console.error('Image upload failed', error); return null; }
-    const { data } = supabase.storage.from('note-images').getPublicUrl(path);
-    return data.publicUrl;
-  }, [campaignId]);
 
   // ── Autosave ──────────────────────────────────────────────────────────────
   type SaveStatus = 'idle' | 'saving' | 'saved' | 'failed';
@@ -877,22 +862,9 @@ export default function Notes() {
                     <Heading3 size={13} />
                   </ToolbarBtn>
                   <div className="w-px h-4 bg-slate-700 mx-0.5" />
-                  <ToolbarBtn title="Insert image" onClick={() => imgInputRef.current?.click()}>
+                  <ToolbarBtn title="Insert image" onClick={() => editorRef.current?.format({ kind: 'wrap', before: '[](', after: ')' })}>
                     <ImagePlus size={13} />
                   </ToolbarBtn>
-                  <input
-                    ref={imgInputRef}
-                    type="file"
-                    accept="image/*"
-                    className="hidden"
-                    onChange={async (e) => {
-                      const file = e.target.files?.[0];
-                      if (!file) return;
-                      e.target.value = '';
-                      const url = await uploadImageFile(file);
-                      if (url) editorRef.current?.format({ kind: 'insert', text: `![](${url})` });
-                    }}
-                  />
                 </div>
               )}
 
@@ -915,7 +887,6 @@ export default function Notes() {
                     ydocState={active.ydoc_state ?? null}
                     userId={userId ?? ''}
                     userName={displayName ?? userId ?? 'Traveller'}
-                    uploadImage={uploadImageFile}
                     onCollaboratorsChange={setActiveCollaborators}
                   />
                 ) : (
