@@ -535,3 +535,24 @@ alter publication supabase_realtime add table note_permissions;
 -- start from a consistent CRDT baseline (no duplicate-content on cold join).
 
 alter table notes add column if not exists ydoc_state text;
+
+
+-- =============================================
+-- SECTION 10 — Storage: note-images bucket
+-- =============================================
+-- Public bucket for images embedded in notes.
+-- Safe to re-run.
+
+insert into storage.buckets (id, name, public)
+values ('note-images', 'note-images', true)
+on conflict (id) do nothing;
+
+drop policy if exists note_images_insert on storage.objects;
+create policy note_images_insert on storage.objects
+  for insert to authenticated
+  with check (bucket_id = 'note-images');
+
+drop policy if exists note_images_select on storage.objects;
+create policy note_images_select on storage.objects
+  for select to public
+  using (bucket_id = 'note-images');
