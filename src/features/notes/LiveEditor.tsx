@@ -211,7 +211,7 @@ const highlightPlugin = ViewPlugin.fromClass(
 
 // ─── Inline image preview ────────────────────────────────────────────────────
 // Replaces ![alt](url) with a thumbnail widget when the cursor is outside it.
-const IMAGE_RE = /!\[([^\]\n]*)\]\(([^)\n]+)\)/g;
+const IMAGE_RE = /\[([^\]\n]*)\]\(([^)\n]+)\)/g;
 
 class ImageWidget extends WidgetType {
   constructor(readonly src: string, readonly alt: string) { super(); }
