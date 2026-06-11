@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   Plus, Trash2, Eye, EyeOff, User, Crown, Skull, Shield, Swords,
   BookOpen, Coins, Sparkles, Search, Save,
@@ -186,7 +186,41 @@ function NpcDetail({
   const [local, setLocal] = useState(npc);
   const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
+
+  // Keep latest dirty + local in refs so we can flush on NPC switch / unmount
+  // without re-running the reset effect on every keystroke.
+  const dirtyRef = useRef(dirty);
+  const localRef = useRef(local);
+  const onUpdateRef = useRef(onUpdate);
+  useEffect(() => { dirtyRef.current = dirty; }, [dirty]);
+  useEffect(() => { localRef.current = local; }, [local]);
+  useEffect(() => { onUpdateRef.current = onUpdate; }, [onUpdate]);
+
+  const flush = () => {
+    if (!dirtyRef.current) return;
+    const { id: _id, campaignId: _c, ...rest } = localRef.current;
+    onUpdateRef.current(rest);
+    dirtyRef.current = false;
+  };
+
+  // When switching NPCs, persist any pending edits from the previous one
+  // before swapping in the new record.
+  useEffect(() => {
+    return () => { flush(); };
+  }, [npc.id]);
+
   useEffect(() => { setLocal(npc); setDirty(false); }, [npc.id]);
+
+  // Warn on tab/window close if there are unsaved edits.
+  useEffect(() => {
+    const handler = (e: BeforeUnloadEvent) => {
+      if (!dirtyRef.current) return;
+      e.preventDefault();
+      e.returnValue = '';
+    };
+    window.addEventListener('beforeunload', handler);
+    return () => window.removeEventListener('beforeunload', handler);
+  }, []);
 
   const applyLocal = (patch: Partial<NPC>) => {
     setLocal((p) => ({ ...p, ...patch }));
@@ -202,7 +236,7 @@ function NpcDetail({
   const saveAll = async () => {
     setSaving(true);
     const { id: _id, campaignId: _c, ...rest } = local;
-    onUpdate(rest);
+    await onUpdate(rest);
     setDirty(false);
     setSaving(false);
   };
@@ -275,15 +309,18 @@ function NpcDetail({
         {/* GM controls */}
         {isGM && (
           <div className="flex items-center gap-2 shrink-0 pt-1">
-            {dirty && (
-              <button
-                onClick={saveAll}
-                disabled={saving}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-amber-700 hover:bg-amber-600 disabled:opacity-50 text-white transition-colors"
-              >
-                <Save size={12} /> {saving ? 'Saving…' : 'Save'}
-              </button>
-            )}
+            <button
+              onClick={saveAll}
+              disabled={!dirty || saving}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors ${
+                dirty
+                  ? 'bg-amber-700 hover:bg-amber-600 text-white'
+                  : 'bg-slate-800 border border-slate-700 text-slate-500 cursor-default'
+              } disabled:opacity-60`}
+              title={dirty ? 'Save changes' : 'No unsaved changes'}
+            >
+              <Save size={12} /> {saving ? 'Saving…' : dirty ? 'Save' : 'Saved'}
+            </button>
             <button
               onClick={() => save({ visibleToPlayers: !npc.visibleToPlayers })}
               className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors ${
@@ -384,8 +421,8 @@ function NpcDetail({
         visible={local.statBlockVisible}
         isGM={isGM}
         showToPlayers={local.visibleToPlayers && local.statBlockVisible}
-        onStatBlockChange={(sb) => save({ statBlock: sb })}
-        onVisibilityChange={(v) => save({ statBlockVisible: v })}
+        onStatBlockChange={(sb) => applyLocal({ statBlock: sb })}
+        onVisibilityChange={(v) => applyLocal({ statBlockVisible: v })}
       />
 
       {/* GM-only hint */}
@@ -421,16 +458,13 @@ function StatBlockSection({
   onStatBlockChange: (sb: NpcStatBlock) => void;
   onVisibilityChange: (v: boolean) => void;
 }) {
-  const [local, setLocal] = useState(statBlock);
-  useEffect(() => setLocal(statBlock), [statBlock]);
-
   // Players see nothing if the GM hasn't revealed the stat block.
   if (!isGM && !showToPlayers) return null;
 
+  const local = statBlock;
   const setField = <K extends keyof NpcStatBlock>(k: K, v: NpcStatBlock[K]) => {
-    setLocal((p) => ({ ...p, [k]: v }));
+    onStatBlockChange({ ...local, [k]: v });
   };
-  const flush = () => onStatBlockChange(local);
 
   if (!isGM) {
     // Player read-only view
@@ -461,7 +495,7 @@ function StatBlockSection({
           <input
             value={local.creatureType ?? ''}
             onChange={(e) => setField('creatureType', e.target.value)}
-            onBlur={flush}
+
             placeholder="Medium humanoid (elf), neutral good"
             className="w-full bg-slate-800 border border-slate-700 rounded px-2 py-1"
           />
@@ -473,7 +507,7 @@ function StatBlockSection({
               type="number"
               value={local.ac ?? ''}
               onChange={(e) => setField('ac', e.target.value === '' ? undefined : parseInt(e.target.value, 10))}
-              onBlur={flush}
+
               className="w-full bg-slate-800 border border-slate-700 rounded px-2 py-1"
             />
           </FormRow>
@@ -482,7 +516,7 @@ function StatBlockSection({
               type="number"
               value={local.hpCurrent ?? ''}
               onChange={(e) => setField('hpCurrent', e.target.value === '' ? undefined : parseInt(e.target.value, 10))}
-              onBlur={flush}
+
               className="w-full bg-slate-800 border border-slate-700 rounded px-2 py-1"
             />
           </FormRow>
@@ -491,7 +525,7 @@ function StatBlockSection({
               type="number"
               value={local.hpMax ?? ''}
               onChange={(e) => setField('hpMax', e.target.value === '' ? undefined : parseInt(e.target.value, 10))}
-              onBlur={flush}
+
               className="w-full bg-slate-800 border border-slate-700 rounded px-2 py-1"
             />
           </FormRow>
@@ -499,7 +533,7 @@ function StatBlockSection({
             <input
               value={local.cr ?? ''}
               onChange={(e) => setField('cr', e.target.value || undefined)}
-              onBlur={flush}
+
               placeholder="1/4"
               className="w-full bg-slate-800 border border-slate-700 rounded px-2 py-1"
             />
@@ -511,7 +545,7 @@ function StatBlockSection({
             <input
               value={local.hitDice ?? ''}
               onChange={(e) => setField('hitDice', e.target.value || undefined)}
-              onBlur={flush}
+
               placeholder="3d8 + 3"
               className="w-full bg-slate-800 border border-slate-700 rounded px-2 py-1"
             />
@@ -520,7 +554,7 @@ function StatBlockSection({
             <input
               value={local.speed ?? ''}
               onChange={(e) => setField('speed', e.target.value || undefined)}
-              onBlur={flush}
+
               placeholder="30 ft., fly 60 ft."
               className="w-full bg-slate-800 border border-slate-700 rounded px-2 py-1"
             />
@@ -537,7 +571,7 @@ function StatBlockSection({
                   type="number"
                   value={local[a] ?? ''}
                   onChange={(e) => setField(a, e.target.value === '' ? undefined : parseInt(e.target.value, 10))}
-                  onBlur={flush}
+    
                   className="w-full bg-slate-800 border border-slate-700 rounded px-1 py-1 text-center"
                   placeholder="10"
                 />
@@ -550,7 +584,7 @@ function StatBlockSection({
           <input
             value={local.skills ?? ''}
             onChange={(e) => setField('skills', e.target.value || undefined)}
-            onBlur={flush}
+
             placeholder="Perception +5, Stealth +6"
             className="w-full bg-slate-800 border border-slate-700 rounded px-2 py-1"
           />
@@ -560,7 +594,7 @@ function StatBlockSection({
           <input
             value={local.senses ?? ''}
             onChange={(e) => setField('senses', e.target.value || undefined)}
-            onBlur={flush}
+
             placeholder="Darkvision 60 ft., passive Perception 15"
             className="w-full bg-slate-800 border border-slate-700 rounded px-2 py-1"
           />
@@ -570,7 +604,7 @@ function StatBlockSection({
           <input
             value={local.languages ?? ''}
             onChange={(e) => setField('languages', e.target.value || undefined)}
-            onBlur={flush}
+
             placeholder="Common, Elvish"
             className="w-full bg-slate-800 border border-slate-700 rounded px-2 py-1"
           />
@@ -581,7 +615,7 @@ function StatBlockSection({
             <input
               value={local.damageResistances ?? ''}
               onChange={(e) => setField('damageResistances', e.target.value || undefined)}
-              onBlur={flush}
+
               className="w-full bg-slate-800 border border-slate-700 rounded px-2 py-1"
             />
           </FormRow>
@@ -589,7 +623,7 @@ function StatBlockSection({
             <input
               value={local.damageImmunities ?? ''}
               onChange={(e) => setField('damageImmunities', e.target.value || undefined)}
-              onBlur={flush}
+
               className="w-full bg-slate-800 border border-slate-700 rounded px-2 py-1"
             />
           </FormRow>
@@ -597,7 +631,7 @@ function StatBlockSection({
             <input
               value={local.conditionImmunities ?? ''}
               onChange={(e) => setField('conditionImmunities', e.target.value || undefined)}
-              onBlur={flush}
+
               className="w-full bg-slate-800 border border-slate-700 rounded px-2 py-1"
             />
           </FormRow>
@@ -607,7 +641,7 @@ function StatBlockSection({
           <textarea
             value={local.traits ?? ''}
             onChange={(e) => setField('traits', e.target.value || undefined)}
-            onBlur={flush}
+
             placeholder="Pack Tactics. The NPC has advantage on attack rolls…"
             rows={3}
             className="w-full bg-slate-800 border border-slate-700 rounded px-2 py-1.5 text-sm resize-none leading-relaxed"
@@ -618,7 +652,7 @@ function StatBlockSection({
           <textarea
             value={local.actions ?? ''}
             onChange={(e) => setField('actions', e.target.value || undefined)}
-            onBlur={flush}
+
             placeholder="Longsword. Melee Weapon Attack: +5 to hit, reach 5 ft., one target. Hit: 7 (1d8 + 3) slashing damage."
             rows={4}
             className="w-full bg-slate-800 border border-slate-700 rounded px-2 py-1.5 text-sm resize-none leading-relaxed"
