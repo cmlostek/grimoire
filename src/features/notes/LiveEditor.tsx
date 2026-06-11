@@ -32,8 +32,11 @@ import {
   userCollabColor,
   toBase64,
   fromBase64,
+  type CollabUser,
+  type Collaborator,
 } from './collabProvider';
 import { searchWiki, kindLabel, type WikiEntry } from './wikiIndex';
+import { autocorrectExtension } from './autocorrect';
 import { modifier } from '../../data/srd';
 import type { PartyMember } from '../party/partyStore';
 import { Shield, Heart } from 'lucide-react';
@@ -173,6 +176,88 @@ const codeInlinePlugin = ViewPlugin.fromClass(
       if (u.docChanged || u.viewportChanged || u.selectionSet) {
         this.decorations = buildInlineDecos(u.view, CODE_INL_RE, 1, 'cm-code-inline');
       }
+    }
+  },
+  { decorations: (v) => v.decorations },
+);
+
+// ─── Strikethrough & highlight ───────────────────────────────────────────────
+const STRIKE_RE    = /~~([^~\n]+?)~~/g;
+const HIGHLIGHT_RE = /==([^=\n]+?)==/g;
+
+const strikethroughPlugin = ViewPlugin.fromClass(
+  class {
+    decorations: DecorationSet;
+    constructor(view: EditorView) { this.decorations = buildInlineDecos(view, STRIKE_RE, 2, 'cm-strikethrough'); }
+    update(u: ViewUpdate) {
+      if (u.docChanged || u.viewportChanged || u.selectionSet)
+        this.decorations = buildInlineDecos(u.view, STRIKE_RE, 2, 'cm-strikethrough');
+    }
+  },
+  { decorations: (v) => v.decorations },
+);
+
+const highlightPlugin = ViewPlugin.fromClass(
+  class {
+    decorations: DecorationSet;
+    constructor(view: EditorView) { this.decorations = buildInlineDecos(view, HIGHLIGHT_RE, 2, 'cm-highlight'); }
+    update(u: ViewUpdate) {
+      if (u.docChanged || u.viewportChanged || u.selectionSet)
+        this.decorations = buildInlineDecos(u.view, HIGHLIGHT_RE, 2, 'cm-highlight');
+    }
+  },
+  { decorations: (v) => v.decorations },
+);
+
+// ─── Inline image preview ────────────────────────────────────────────────────
+// Replaces ![alt](url) with a thumbnail widget when the cursor is outside it.
+const IMAGE_RE = /\[([^\]\n]*)\]\(([^)\n]+)\)/g;
+
+class ImageWidget extends WidgetType {
+  constructor(readonly src: string, readonly alt: string) { super(); }
+  toDOM(): HTMLElement {
+    const img = document.createElement('img');
+    img.src = this.src;
+    img.alt = this.alt || 'image';
+    Object.assign(img.style, {
+      maxWidth: '320px', maxHeight: '180px',
+      verticalAlign: 'middle', borderRadius: '6px',
+      margin: '2px 4px', display: 'inline-block',
+      cursor: 'default',
+    });
+    return img;
+  }
+  eq(o: ImageWidget) { return o.src === this.src && o.alt === this.alt; }
+  ignoreEvent() { return true; }
+}
+
+function buildImageDecos(view: EditorView): DecorationSet {
+  const builder = new RangeSetBuilder<Decoration>();
+  const cursorPos = view.state.selection.main.head;
+  for (const { from, to } of view.visibleRanges) {
+    const text = view.state.doc.sliceString(from, to);
+    IMAGE_RE.lastIndex = 0;
+    let m: RegExpExecArray | null;
+    while ((m = IMAGE_RE.exec(text)) !== null) {
+      const absFrom = from + m.index;
+      const absTo   = absFrom + m[0].length;
+      if (cursorPos >= absFrom && cursorPos <= absTo) continue; // show raw while editing
+      builder.add(absFrom, absTo, Decoration.replace({
+        widget: new ImageWidget(m[2], m[1]),
+        inclusive: false,
+      }));
+    }
+  }
+  return builder.finish();
+}
+
+const imagePlugin = ViewPlugin.fromClass(
+  class {
+    decorations: DecorationSet;
+    constructor(view: EditorView) { this.decorations = buildImageDecos(view); }
+    update(u: ViewUpdate) {
+      if (u.docChanged || u.viewportChanged || u.selectionSet)
+        this.decorations = buildImageDecos(u.view);
     }
   },
   { decorations: (v) => v.decorations },
@@ -376,6 +461,10 @@ const noteTheme = EditorView.theme(
       fontStyle: 'italic',
     },
 
+    // ── Strikethrough / highlight ─────────────────────────────────────────────
+    '.cm-strikethrough': { textDecoration: 'line-through', color: '#94a3b8' },
+    '.cm-highlight':     { background: 'rgba(250,204,21,.22)', borderRadius: '0.15em', padding: '0.05em 0.2em' },
+
     // ── Decorator tokens ──────────────────────────────────────────────────────
     '.cm-d-loc':       { background: 'rgba(251,146,60,.18)',  color: '#fdba74', borderRadius: '0.25em', padding: '0.05em 0.25em', cursor: 'pointer' },
     '.cm-d-player':    { background: 'rgba(34,197,94,.18)',   color: 'var(--deco-player-fg, #86efac)', borderRadius: '0.25em', padding: '0.05em 0.25em' },
@@ -474,9 +563,12 @@ const noteTheme = EditorView.theme(
   { dark: true },
 );
 
-// ─── Wiki suggestion state ────────────────────────────────────────────────────
+// ─── Autocomplete suggestion state ───────────────────────────────────────────
+type SuggestEntry = { label: string; sub?: string };
+/** trigger: the opening sequence, e.g. '[[', '@{', '&{', '$' */
 type SuggestState = {
-  results: WikiEntry[];
+  trigger: string;
+  results: SuggestEntry[];
   cursor: number;
   openAt: number;
   x: number;
@@ -496,6 +588,8 @@ type Props = {
   ydocState: string | null;
   userId: string;
   userName: string;
+  /** Fires whenever the set of remote collaborators changes (excludes self). */
+  onCollaboratorsChange?: (c: Collaborator[]) => void;
 };
 
 // ─── Abilities for party tooltip ─────────────────────────────────────────────
@@ -503,25 +597,34 @@ const PARTY_ABILITIES = ['str', 'dex', 'con', 'int', 'wis', 'cha'] as const;
 
 type HoverTooltip = { member: PartyMember; rect: DOMRect };
 
-// ─── Exposed handle (for parent to read Yjs state on save) ───────────────────
+// ─── Exposed handle (for parent to read Yjs state on save / trigger formatting) ─
+export type FormatCmd =
+  | { kind: 'wrap'; before: string; after: string }   // wraps selection (or inserts markers)
+  | { kind: 'line-prefix'; prefix: string }            // toggles a line prefix, e.g. "# "
+  | { kind: 'insert'; text: string };                  // inserts text at cursor
+
 export type LiveEditorHandle = {
   getYdocState: () => string | null;
+  format: (cmd: FormatCmd) => void;
 };
+
+export type { Collaborator };
 
 // ─── Component ────────────────────────────────────────────────────────────────
 export const LiveEditor = forwardRef<LiveEditorHandle, Props>(function LiveEditor(
-  { body, onChange, wikiIndex, onNavigate, rollFormula, party, noteId, ydocState, userId, userName },
+  { body, onChange, wikiIndex, onNavigate, rollFormula, party, noteId, ydocState, userId, userName, onCollaboratorsChange },
   ref,
 ) {
   const containerRef = useRef<HTMLDivElement>(null);
   const viewRef      = useRef<EditorView | null>(null);
   const ydocRef      = useRef<Y.Doc | null>(null);
 
-  const onChangeRef  = useRef(onChange);  onChangeRef.current  = onChange;
-  const wikiRef      = useRef(wikiIndex); wikiRef.current      = wikiIndex;
-  const navRef       = useRef(onNavigate); navRef.current      = onNavigate;
-  const rollRef      = useRef(rollFormula); rollRef.current    = rollFormula;
-  const partyRef     = useRef(party);     partyRef.current     = party;
+  const onChangeRef             = useRef(onChange);           onChangeRef.current             = onChange;
+  const wikiRef                 = useRef(wikiIndex);          wikiRef.current                 = wikiIndex;
+  const navRef                  = useRef(onNavigate);         navRef.current                  = onNavigate;
+  const rollRef                 = useRef(rollFormula);        rollRef.current                 = rollFormula;
+  const partyRef                = useRef(party);              partyRef.current                = party;
+  const onCollaboratorsChangeRef = useRef(onCollaboratorsChange); onCollaboratorsChangeRef.current = onCollaboratorsChange;
 
   const [suggest, setSuggest] = useState<SuggestState | null>(null);
   const suggestRef = useRef(suggest);
@@ -530,22 +633,73 @@ export const LiveEditor = forwardRef<LiveEditorHandle, Props>(function LiveEdito
   const [hoverTooltip, setHoverTooltip] = useState<HoverTooltip | null>(null);
   const hoverTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Expose a way for the parent (Notes.tsx) to read the Yjs state on save.
+  // Expose a way for the parent (Notes.tsx) to read the Yjs state on save
+  // and to trigger formatting commands from the toolbar.
   useImperativeHandle(ref, () => ({
     getYdocState() {
       if (!ydocRef.current) return null;
       return toBase64(Y.encodeStateAsUpdate(ydocRef.current));
     },
+    format(cmd: FormatCmd) {
+      const view = viewRef.current;
+      if (!view) return;
+
+      if (cmd.kind === 'wrap') {
+        const { from, to } = view.state.selection.main;
+        const selected = view.state.doc.sliceString(from, to);
+        if (selected) {
+          view.dispatch({
+            changes: { from, to, insert: cmd.before + selected + cmd.after },
+            selection: { anchor: from + cmd.before.length, head: from + cmd.before.length + selected.length },
+          });
+        } else {
+          // No selection: insert markers and place cursor between them
+          view.dispatch({
+            changes: { from, insert: cmd.before + cmd.after },
+            selection: { anchor: from + cmd.before.length },
+          });
+        }
+        view.focus();
+
+      } else if (cmd.kind === 'line-prefix') {
+        const { from } = view.state.selection.main;
+        const line = view.state.doc.lineAt(from);
+        const existing = /^(#{1,3} )/.exec(line.text);
+        if (existing && existing[1] === cmd.prefix) {
+          // Toggle off: remove prefix
+          view.dispatch({ changes: { from: line.from, to: line.from + cmd.prefix.length, insert: '' } });
+        } else {
+          // Strip any existing heading prefix, then add the new one
+          const stripped = line.text.replace(/^#{1,3} /, '');
+          view.dispatch({ changes: { from: line.from, to: line.to, insert: cmd.prefix + stripped } });
+        }
+        view.focus();
+
+      } else if (cmd.kind === 'insert') {
+        const { from } = view.state.selection.main;
+        view.dispatch({
+          changes: { from, insert: cmd.text },
+          selection: { anchor: from + cmd.text.length },
+        });
+        view.focus();
+      }
+    },
   }));
 
-  const acceptSuggestion = useCallback((entry: WikiEntry) => {
+  const acceptSuggestion = useCallback((entry: SuggestEntry) => {
     const view = viewRef.current;
     const s    = suggestRef.current;
     if (!view || !s) return;
     const pos = view.state.selection.main.head;
+    let insert: string;
+    if      (s.trigger === '[[') insert = `[[${entry.label}]]`;
+    else if (s.trigger === '@{') insert = `@{${entry.label}}`;
+    else if (s.trigger === '&{') insert = `&{${entry.label}}`;
+    else if (s.trigger === '$')  insert = `$${entry.label}$`;
+    else                          insert = entry.label;
     view.dispatch({
-      changes: { from: s.openAt, to: pos, insert: `[[${entry.name}]]` },
-      selection: { anchor: s.openAt + entry.name.length + 4 },
+      changes:   { from: s.openAt, to: pos, insert },
+      selection: { anchor: s.openAt + insert.length },
     });
     setSuggest(null);
     view.focus();
@@ -577,6 +731,7 @@ export const LiveEditor = forwardRef<LiveEditorHandle, Props>(function LiveEdito
   // Click handler: dice roll + wiki navigate (secrets handled by widget)
   const clickExt = EditorView.domEventHandlers({
     mousedown(event, view) {
+      // I broke it, so I'm fixing it
       const coords = view.posAtCoords({ x: event.clientX, y: event.clientY });
       if (coords === null) return false;
       const line = view.state.doc.lineAt(coords);
@@ -584,7 +739,8 @@ export const LiveEditor = forwardRef<LiveEditorHandle, Props>(function LiveEdito
       DECO_RE.lastIndex = 0;
       let m: RegExpExecArray | null;
       while ((m = DECO_RE.exec(line.text)) !== null) {
-        if (col < m.index || col > m.index + m[0].length) continue;
+        // Strict bounds: col must be inside [m.index, m.index + length)
+        if (col < m.index || col >= m.index + m[0].length) continue;
         const token = m[0];
         if (token.startsWith('$') && !token.startsWith('${') && token.endsWith('$')) {
           event.preventDefault();
@@ -592,18 +748,16 @@ export const LiveEditor = forwardRef<LiveEditorHandle, Props>(function LiveEdito
           return true;
         }
         if (token.startsWith('[[') && token.endsWith(']]')) {
-          event.preventDefault();
           const name = token.slice(2, -2);
           const hit  = wikiRef.current.find((e) => e.name === name);
-          if (hit) navRef.current(hit.route);
-          return true;
+          if (hit) { event.preventDefault(); navRef.current(hit.route); return true; }
+          return false; // unresolved link — let cursor place normally
         }
         if (token.startsWith('&{') && token.endsWith('}')) {
-          event.preventDefault();
           const name = token.slice(2, -1).trim();
           const hit  = wikiRef.current.find((e) => e.name === name);
-          if (hit) navRef.current(hit.route);
-          return true;
+          if (hit) { event.preventDefault(); navRef.current(hit.route); return true; }
+          return false; // no match — let cursor place normally
         }
       }
       return false;
@@ -640,12 +794,38 @@ export const LiveEditor = forwardRef<LiveEditorHandle, Props>(function LiveEdito
     const provider = new SupabaseCollabProvider(
       ydoc,
       noteId,
-      { name: userName || 'Anonymous', color, colorLight },
+      { name: userName || 'Anonymous', color, colorLight, userId },
       {
         fallbackBody: needsFallback ? body : undefined,
         onReady: () => setCollabReady(true),
       },
     );
+
+    // Notify parent whenever the set of remote collaborators changes.
+    // Deduplicate by userId so a user with multiple tabs only appears once.
+    const emitCollaborators = () => {
+      const states = provider.awareness.getStates();
+      const seen = new Set<string>();
+      const list: Collaborator[] = [];
+      states.forEach((state, clientId) => {
+        // Skip this client's own session.
+        if (clientId === ydoc.clientID) return;
+        const u = (state as { user?: CollabUser }).user;
+        if (!u) return;
+        // Skip stale awareness entries from our own user (e.g. after a page
+        // refresh or switching notes — the old clientID is no longer `ydoc.clientID`
+        // but it still carries our userId until the 30-second awareness timeout).
+        if (u.userId && u.userId === userId) return;
+        // Use userId if present, otherwise fall back to color (deterministic
+        // from userId via userCollabColor, so reliable as a dedup key).
+        const key = u.userId ?? u.color;
+        if (seen.has(key)) return;
+        seen.add(key);
+        list.push({ clientId, name: u.name, color: u.color });
+      });
+      onCollaboratorsChangeRef.current?.(list);
+    };
+    provider.awareness.on('change', emitCollaborators);
 
     const undoManager = new Y.UndoManager(ytext);
 
@@ -661,7 +841,38 @@ export const LiveEditor = forwardRef<LiveEditorHandle, Props>(function LiveEdito
           // Yjs binding — must be first so it captures all transactions.
           yCollab(ytext, provider.awareness, { undoManager }),
           // Use Yjs-aware undo keymap (undoes only local changes, not remote).
-          keymap.of([...yUndoManagerKeymap, ...defaultKeymap, indentWithTab]),
+          keymap.of([
+            ...yUndoManagerKeymap,
+            ...defaultKeymap,
+            indentWithTab,
+            // ── Formatting shortcuts ─────────────────────────────────────────
+            {
+              key: 'Mod-b',
+              run(view) {
+                const { from, to } = view.state.selection.main;
+                const sel = view.state.doc.sliceString(from, to);
+                if (sel) {
+                  view.dispatch({ changes: { from, to, insert: `**${sel}**` }, selection: { anchor: from + 2, head: from + 2 + sel.length } });
+                } else {
+                  view.dispatch({ changes: { from, insert: '****' }, selection: { anchor: from + 2 } });
+                }
+                return true;
+              },
+            },
+            {
+              key: 'Mod-i',
+              run(view) {
+                const { from, to } = view.state.selection.main;
+                const sel = view.state.doc.sliceString(from, to);
+                if (sel) {
+                  view.dispatch({ changes: { from, to, insert: `*${sel}*` }, selection: { anchor: from + 1, head: from + 1 + sel.length } });
+                } else {
+                  view.dispatch({ changes: { from, insert: '**' }, selection: { anchor: from + 1 } });
+                }
+                return true;
+              },
+            },
+          ]),
           drawSelection(),
           // Order matters: replace-decorations (secret/list) before mark-decorations.
           secretPlugin,
@@ -670,6 +881,10 @@ export const LiveEditor = forwardRef<LiveEditorHandle, Props>(function LiveEdito
           boldPlugin,
           italicPlugin,
           codeInlinePlugin,
+          strikethroughPlugin,
+          highlightPlugin,
+          imagePlugin,
+          autocorrectExtension(),
           markPlugin,
           clickExt,
           noteTheme,
@@ -679,27 +894,85 @@ export const LiveEditor = forwardRef<LiveEditorHandle, Props>(function LiveEdito
             if (update.docChanged) {
               onChangeRef.current(update.state.doc.toString());
             }
-            // Wiki autocomplete
-            const pos   = update.state.selection.main.head;
-            const upto  = update.state.doc.sliceString(0, pos);
-            const openAt = upto.lastIndexOf('[[');
-            if (openAt !== -1) {
-              const fragment = upto.slice(openAt + 2);
-              if (!fragment.includes(']]') && !fragment.includes('\n')) {
-                const results = searchWiki(wikiRef.current, fragment, 6);
-                if (results.length > 0) {
-                  const coords = update.view.coordsAtPos(pos);
-                  if (coords) {
-                    setSuggest((prev) => ({
-                      results,
-                      cursor: prev?.openAt === openAt ? prev.cursor : 0,
-                      openAt,
-                      x: coords.left,
-                      y: coords.bottom + 4,
-                    }));
-                    return;
-                  }
+
+            const pos  = update.state.selection.main.head;
+            const upto = update.state.doc.sliceString(0, pos);
+
+            // ── Try each autocomplete trigger in priority order ────────────────
+            type Candidate = { trigger: string; openAt: number; results: SuggestEntry[] };
+            let candidate: Candidate | null = null;
+
+            // [[ wiki link
+            if (!candidate) {
+              const at = upto.lastIndexOf('[[');
+              if (at !== -1) {
+                const frag = upto.slice(at + 2);
+                if (!frag.includes(']]') && !frag.includes('\n')) {
+                  const hits = searchWiki(wikiRef.current, frag, 6)
+                    .map((e) => ({ label: e.name, sub: kindLabel(e.kind) }));
+                  if (hits.length) candidate = { trigger: '[[', openAt: at, results: hits };
                 }
+              }
+            }
+
+            // @{ party member
+            if (!candidate) {
+              const at = upto.lastIndexOf('@{');
+              if (at !== -1) {
+                const frag = upto.slice(at + 2);
+                if (!frag.includes('}') && !frag.includes('\n')) {
+                  const fl = frag.toLowerCase();
+                  const hits = partyRef.current
+                    .filter((m) => m.name.toLowerCase().includes(fl))
+                    .slice(0, 6)
+                    .map((m) => ({ label: m.name, sub: m.classSummary }));
+                  if (hits.length) candidate = { trigger: '@{', openAt: at, results: hits };
+                }
+              }
+            }
+
+            // &{ location — no autocomplete: location names aren't in the wiki index
+            // (only spells/items are), so offering suggestions here would populate
+            // with spells. Users type location names manually.
+            // Will add locations later if and/or when it is added to the index
+
+            // $ dice expression
+            if (!candidate) {
+              const at = upto.lastIndexOf('$');
+              if (at !== -1 && upto[at + 1] !== '{') {
+                const frag = upto.slice(at + 1);
+                if (!frag.includes('$') && !frag.includes('\n')) {
+                  const DICE: SuggestEntry[] = [
+                    { label: '1d4',    sub: 'damage' },
+                    { label: '1d6',    sub: 'damage' },
+                    { label: '1d8',    sub: 'weapon' },
+                    { label: '1d10',   sub: 'weapon' },
+                    { label: '1d12',   sub: 'great weapon' },
+                    { label: '1d20',   sub: 'check / save' },
+                    { label: '2d6',    sub: 'area damage' },
+                    { label: '4d6kh3', sub: 'stat roll' },
+                    { label: '1d100',  sub: 'percentile' },
+                  ];
+                  const fl = frag.toLowerCase();
+                  const hits = DICE.filter((d) => !fl || d.label.startsWith(fl));
+                  if (hits.length) candidate = { trigger: '$', openAt: at, results: hits };
+                }
+              }
+            }
+
+            if (candidate) {
+              const coords = update.view.coordsAtPos(pos);
+              if (coords) {
+                const c = candidate;
+                setSuggest((prev) => ({
+                  trigger:  c.trigger,
+                  results:  c.results,
+                  cursor:   prev?.openAt === c.openAt ? prev.cursor : 0,
+                  openAt:   c.openAt,
+                  x: coords.left,
+                  y: coords.bottom + 4,
+                }));
+                return;
               }
             }
             setSuggest(null);
@@ -824,18 +1097,18 @@ export const LiveEditor = forwardRef<LiveEditorHandle, Props>(function LiveEdito
           onMouseDown={(e) => e.preventDefault()}
         >
           <div className="px-2 py-1 text-[10px] uppercase tracking-wider text-slate-500 border-b border-slate-800">
-            Wiki
+            {suggest.trigger === '[[' ? 'Wiki Link' : suggest.trigger === '@{' ? 'Party Member' : suggest.trigger === '&{' ? 'Location' : 'Dice'}
           </div>
           {suggest.results.map((r, i) => (
             <div
-              key={`${r.kind}-${r.id}`}
+              key={`${i}-${r.label}`}
               onClick={() => acceptSuggestion(r)}
               className={`px-2 py-1 flex items-center justify-between cursor-pointer text-xs ${
                 i === suggest.cursor ? 'bg-sky-900/50 text-sky-100' : 'hover:bg-slate-800 text-slate-300'
               }`}
             >
-              <span className="truncate">{r.name}</span>
-              <span className="text-[10px] text-slate-500 ml-2 shrink-0">{kindLabel(r.kind)}</span>
+              <span className="truncate">{r.label}</span>
+              {r.sub && <span className="text-[10px] text-slate-500 ml-2 shrink-0">{r.sub}</span>}
             </div>
           ))}
         </div>,

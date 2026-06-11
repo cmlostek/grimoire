@@ -28,6 +28,10 @@ export type MapState = {
   grid_size: number;
   show_grid: boolean;
   shapes: MapShape[];
+  /** Logical canvas width in map units. All coordinates are in this space. */
+  width: number;
+  /** Logical canvas height in map units. */
+  height: number;
 };
 
 type TokenRow = {
@@ -47,14 +51,21 @@ type StateRow = {
   campaign_id: string;
   background_url: string | null;
   grid_size: number;
+  width: number;
+  height: number;
   data: StateData | null;
 };
 
+const DEFAULT_CANVAS_W = 2000;
+const DEFAULT_CANVAS_H = 1500;
+
 const DEFAULT_STATE: MapState = {
   background_url: null,
-  grid_size: 1,
+  grid_size: 50,
   show_grid: true,
   shapes: [],
+  width: DEFAULT_CANVAS_W,
+  height: DEFAULT_CANVAS_H,
 };
 
 function rowToToken(r: TokenRow): MapToken {
@@ -75,9 +86,11 @@ function rowToState(r: StateRow): MapState {
   const d = r.data ?? {};
   return {
     background_url: r.background_url,
-    grid_size: r.grid_size,
+    grid_size: r.grid_size ?? 50,
     show_grid: d.show_grid ?? true,
     shapes: d.shapes ?? [],
+    width: r.width ?? DEFAULT_CANVAS_W,
+    height: r.height ?? DEFAULT_CANVAS_H,
   };
 }
 
@@ -91,9 +104,10 @@ type MapStore = {
   subscribe: (campaignId: string) => () => void;
   clear: () => void;
 
-  setBackground: (campaignId: string, url: string | null) => Promise<void>;
+  setBackground: (campaignId: string, url: string | null, w?: number, h?: number) => Promise<void>;
   setGridSize: (campaignId: string, size: number) => Promise<void>;
   setShowGrid: (campaignId: string, show: boolean) => Promise<void>;
+  setCanvasSize: (campaignId: string, w: number, h: number) => Promise<void>;
   addShape: (campaignId: string, shape: MapShape) => Promise<void>;
   removeShape: (campaignId: string, shapeId: string) => Promise<void>;
   clearShapes: (campaignId: string) => Promise<void>;
@@ -150,9 +164,20 @@ export const useMap = create<MapStore>((set, get) => ({
           if (payload.eventType === 'DELETE') {
             set({ state: DEFAULT_STATE });
           } else {
-            set({ state: rowToState(payload.new as StateRow) });
+            const newState = rowToState(payload.new as StateRow);
+            // Guard: if the realtime payload arrives with background_url=null but
+            // our local state already has a background, preserve it. Large base64
+            // data URLs can exceed Supabase Realtime's max message size, causing
+            // the field to appear null in the payload even though it's set in DB.
+            // We only clear the background when the user explicitly removes it
+            // (which goes through setBackground with an optimistic local clear first).
+            if (!newState.background_url) {
+              const currentBg = get().state.background_url;
+              if (currentBg) newState.background_url = currentBg;
+            }
+            set({ state: newState });
           }
-        }
+        },
       )
       .on(
         'postgres_changes',
@@ -169,7 +194,7 @@ export const useMap = create<MapStore>((set, get) => ({
             const old = payload.old as Partial<TokenRow>;
             set({ tokens: tokens.filter((x) => x.id !== old.id) });
           }
-        }
+        },
       )
       .subscribe();
     return () => {
@@ -179,12 +204,32 @@ export const useMap = create<MapStore>((set, get) => ({
 
   clear: () => set({ state: DEFAULT_STATE, tokens: [], loaded: false, error: null }),
 
-  setBackground: async (campaignId, url) => {
+  setBackground: async (campaignId, url, w, h) => {
     const prev = get().state;
-    set({ state: { ...prev, background_url: url } });
+    // Optimistic update — sets local background (and optional canvas size) immediately.
+    // Combining both into one upsert avoids the race condition where two separate
+    // upserts arrive in different realtime events with stale width/height defaults.
+    const nextState: MapState = { ...prev, background_url: url };
+    if (w !== undefined && h !== undefined) {
+      nextState.width = w;
+      nextState.height = h;
+    }
+    set({ state: nextState });
+    const patch: Record<string, unknown> = { campaign_id: campaignId, background_url: url };
+    if (w !== undefined) patch.width = w;
+    if (h !== undefined) patch.height = h;
     const { error } = await supabase
       .from('map_state')
-      .upsert({ campaign_id: campaignId, background_url: url }, { onConflict: 'campaign_id' });
+      .upsert(patch, { onConflict: 'campaign_id' });
+    if (error) set({ state: prev, error: error.message });
+  },
+
+  setCanvasSize: async (campaignId, w, h) => {
+    const prev = get().state;
+    set({ state: { ...prev, width: w, height: h } });
+    const { error } = await supabase
+      .from('map_state')
+      .upsert({ campaign_id: campaignId, width: w, height: h }, { onConflict: 'campaign_id' });
     if (error) set({ state: prev, error: error.message });
   },
 
