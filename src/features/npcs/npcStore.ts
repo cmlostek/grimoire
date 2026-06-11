@@ -62,6 +62,14 @@ export const FACTION_COLORS = [
   '#be123c', '#6d28d9', '#0f766e', '#c2410c',
 ];
 
+export type NpcPermission = {
+  npc_id: string;
+  user_id: string;
+  can_view: boolean;
+};
+
+export const EMPTY_PERMS: readonly NpcPermission[] = Object.freeze([]);
+
 type Row = Record<string, unknown>;
 
 function rowTo(r: Row): NPC {
@@ -90,6 +98,8 @@ interface NpcState {
   npcs: NPC[];
   activeNpcId: string | null;
   loaded: boolean;
+  /** Per-NPC permission rows, keyed by NPC id. */
+  permissions: Record<string, NpcPermission[]>;
 
   loadForCampaign(id: string): Promise<void>;
   subscribe(id: string): () => void;
@@ -99,12 +109,15 @@ interface NpcState {
   update(id: string, patch: NpcPatch): Promise<void>;
   remove(id: string): Promise<void>;
   setActive(id: string | null): void;
+  /** Replace the per-user view matrix for an NPC. */
+  setNpcPermissions(npcId: string, rows: NpcPermission[]): Promise<void>;
 }
 
 export const useNpcStore = create<NpcState>((set, get) => ({
   npcs: [],
   activeNpcId: null,
   loaded: false,
+  permissions: {},
 
   loadForCampaign: async (id) => {
     const { data } = await supabase
@@ -112,7 +125,25 @@ export const useNpcStore = create<NpcState>((set, get) => ({
       .select('*')
       .eq('campaign_id', id)
       .order('created_at');
-    set({ npcs: (data ?? []).map(rowTo), loaded: true });
+    const npcs = (data ?? []).map(rowTo);
+
+    // Pull per-user perms for the loaded set. Missing table (pre-migration)
+    // is tolerated — the share popover still works, perms just stay empty.
+    let permissions: Record<string, NpcPermission[]> = {};
+    if (npcs.length > 0) {
+      const ids = npcs.map((n) => n.id);
+      const { data: permRows, error } = await supabase
+        .from('npc_permissions')
+        .select('*')
+        .in('npc_id', ids);
+      if (!error && permRows) {
+        for (const r of permRows as NpcPermission[]) {
+          (permissions[r.npc_id] ||= []).push(r);
+        }
+      }
+    }
+
+    set({ npcs, permissions, loaded: true });
   },
 
   subscribe: (id) => {
@@ -125,13 +156,30 @@ export const useNpcStore = create<NpcState>((set, get) => ({
           else if (eventType === 'UPDATE')
             set((s) => ({ npcs: s.npcs.map((n) => n.id === (r as Row).id ? rowTo(r as Row) : n) }));
           else if (eventType === 'DELETE')
-            set((s) => ({ npcs: s.npcs.filter((n) => n.id !== (old as Row).id) }));
+            set((s) => ({
+              npcs: s.npcs.filter((n) => n.id !== (old as Row).id),
+              permissions: Object.fromEntries(Object.entries(s.permissions).filter(([k]) => k !== (old as Row).id)),
+            }));
+        })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'npc_permissions' },
+        ({ eventType, new: r, old }) => {
+          const permissions = { ...get().permissions };
+          if (eventType === 'DELETE') {
+            const o = old as Partial<NpcPermission>;
+            if (!o.npc_id) return;
+            permissions[o.npc_id] = (permissions[o.npc_id] ?? []).filter((p) => p.user_id !== o.user_id);
+          } else {
+            const row = r as NpcPermission;
+            const existing = (permissions[row.npc_id] ?? []).filter((p) => p.user_id !== row.user_id);
+            permissions[row.npc_id] = [...existing, row];
+          }
+          set({ permissions });
         })
       .subscribe();
     return () => { supabase.removeChannel(ch); };
   },
 
-  clear: () => set({ npcs: [], loaded: false, activeNpcId: null }),
+  clear: () => set({ npcs: [], loaded: false, activeNpcId: null, permissions: {} }),
 
   create: async (campaignId, data) => {
     const { data: row } = await supabase
@@ -182,4 +230,26 @@ export const useNpcStore = create<NpcState>((set, get) => ({
   },
 
   setActive: (id) => set({ activeNpcId: id }),
+
+  setNpcPermissions: async (npcId, rows) => {
+    const cleaned = rows.filter((r) => r.can_view);
+    const prev = get().permissions[npcId] ?? [];
+
+    // Optimistic local update.
+    set((s) => ({ permissions: { ...s.permissions, [npcId]: cleaned } }));
+
+    // Replace-all: delete existing rows for this NPC, insert the new set.
+    const delRes = await supabase.from('npc_permissions').delete().eq('npc_id', npcId);
+    if (delRes.error && !/relation .* does not exist/i.test(delRes.error.message)) {
+      set((s) => ({ permissions: { ...s.permissions, [npcId]: prev } }));
+      return;
+    }
+    if (cleaned.length > 0) {
+      const insRes = await supabase.from('npc_permissions').insert(cleaned);
+      if (insRes.error && !/relation .* does not exist/i.test(insRes.error.message)) {
+        set((s) => ({ permissions: { ...s.permissions, [npcId]: prev } }));
+        return;
+      }
+    }
+  },
 }));

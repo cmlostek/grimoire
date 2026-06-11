@@ -1,11 +1,12 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Plus, Trash2, Eye, EyeOff, User, Crown, Skull, Shield, Swords,
-  BookOpen, Coins, Sparkles, Search, Save,
+  BookOpen, Coins, Sparkles, Search, Save, Share2, Lock, Users,
 } from 'lucide-react';
 import PageHeader from '../../components/PageHeader';
 import { useSession } from '../session/sessionStore';
 import { useNpcStore, STATUS_COLORS, FACTION_COLORS, type NPC, type NPCStatus, type NpcStatBlock } from './npcStore';
+import { NpcSharePopover } from './NpcSharePopover';
 
 const NPC_ICONS = {
   user:     User,
@@ -186,6 +187,15 @@ function NpcDetail({
   const [local, setLocal] = useState(npc);
   const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [shareOpen, setShareOpen] = useState(false);
+
+  const npcPerms = useNpcStore((s) => s.permissions[npc.id]);
+  const shareSummary = useMemo(() => {
+    const sharedCount = (npcPerms ?? []).filter((p) => p.can_view).length;
+    if (npc.visibleToPlayers) return { label: 'Party', icon: 'party' as const };
+    if (sharedCount > 0) return { label: `${sharedCount} shared`, icon: 'shared' as const };
+    return { label: 'GM only', icon: 'gm' as const };
+  }, [npcPerms, npc.visibleToPlayers]);
 
   // Keep latest dirty + local in refs so we can flush on NPC switch / unmount
   // without re-running the reset effect on every keystroke.
@@ -330,18 +340,33 @@ function NpcDetail({
             >
               <Save size={12} /> {saving ? 'Saving…' : dirty ? 'Save' : 'Saved'}
             </button>
-            <button
-              onClick={() => save({ visibleToPlayers: !npc.visibleToPlayers })}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors ${
-                npc.visibleToPlayers
-                  ? 'bg-emerald-900/30 border-emerald-700/40 text-emerald-300'
-                  : 'bg-slate-800 border-slate-700 text-slate-500 hover:border-slate-600 hover:text-slate-300'
-              }`}
-              title={npc.visibleToPlayers ? 'Visible to players — click to hide' : 'GM only — click to reveal to players'}
-            >
-              {npc.visibleToPlayers ? <Eye size={12} /> : <EyeOff size={12} />}
-              {npc.visibleToPlayers ? 'Revealed' : 'GM only'}
-            </button>
+            <div className="relative">
+              <button
+                onClick={() => setShareOpen((v) => !v)}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors ${
+                  shareSummary.icon === 'party'
+                    ? 'bg-emerald-900/30 border-emerald-700/40 text-emerald-300'
+                    : shareSummary.icon === 'shared'
+                      ? 'bg-sky-900/30 border-sky-700/40 text-sky-300'
+                      : 'bg-slate-800 border-slate-700 text-slate-500 hover:border-slate-600 hover:text-slate-300'
+                }`}
+                title="Manage who can see this NPC"
+              >
+                {shareSummary.icon === 'gm'
+                  ? <Lock size={12} />
+                  : shareSummary.icon === 'party'
+                    ? <Users size={12} />
+                    : <Share2 size={12} />}
+                {shareSummary.label}
+              </button>
+              {shareOpen && (
+                <NpcSharePopover
+                  npc={npc}
+                  onClose={() => setShareOpen(false)}
+                  onStatBlockVisibilityChange={(v) => save({ statBlockVisible: v })}
+                />
+              )}
+            </div>
             <button
               onClick={() => { if (confirm(`Delete "${npc.name}"?`)) onDelete(); }}
               className="text-slate-600 hover:text-rose-400 p-1.5 rounded hover:bg-slate-800 transition-colors"
@@ -429,16 +454,15 @@ function NpcDetail({
         statBlock={local.statBlock}
         visible={local.statBlockVisible}
         isGM={isGM}
-        showToPlayers={local.visibleToPlayers && local.statBlockVisible}
+        showToPlayers={local.statBlockVisible}
         onStatBlockChange={(sb) => applyLocal({ statBlock: sb })}
-        onVisibilityChange={(v) => applyLocal({ statBlockVisible: v })}
       />
 
       {/* GM-only hint */}
-      {isGM && !npc.visibleToPlayers && (
+      {isGM && shareSummary.icon === 'gm' && (
         <div className="flex items-center gap-2 text-xs text-slate-600 border border-slate-800 rounded-lg p-3">
           <EyeOff size={12} className="shrink-0" />
-          This NPC is hidden from players. Click <strong className="text-slate-500">"GM only"</strong> above to reveal them.
+          This NPC is hidden from players. Use the <strong className="text-slate-500">Share</strong> button above to reveal them.
         </div>
       )}
     </div>
@@ -458,14 +482,12 @@ function StatBlockSection({
   isGM,
   showToPlayers,
   onStatBlockChange,
-  onVisibilityChange,
 }: {
   statBlock: NpcStatBlock;
   visible: boolean;
   isGM: boolean;
   showToPlayers: boolean;
   onStatBlockChange: (sb: NpcStatBlock) => void;
-  onVisibilityChange: (v: boolean) => void;
 }) {
   // Players see nothing if the GM hasn't revealed the stat block.
   if (!isGM && !showToPlayers) return null;
@@ -485,18 +507,17 @@ function StatBlockSection({
     <div className="border border-slate-800 rounded-lg">
       <div className="flex items-center justify-between px-4 py-2 border-b border-slate-800">
         <div className="text-xs uppercase tracking-wider text-slate-500">Stat block</div>
-        <button
-          onClick={() => onVisibilityChange(!visible)}
-          title={visible ? 'Visible to players when NPC is revealed' : 'Hidden — players see the NPC but not the stat block'}
-          className={`flex items-center gap-1.5 px-2 py-1 text-[11px] rounded border transition-colors ${
+        <span
+          className={`flex items-center gap-1.5 px-2 py-1 text-[11px] rounded border ${
             visible
               ? 'bg-emerald-900/30 border-emerald-700/40 text-emerald-300'
-              : 'bg-slate-800 border-slate-700 text-slate-500 hover:text-slate-300'
+              : 'bg-slate-800 border-slate-700 text-slate-500'
           }`}
+          title="Toggle visibility from the Share menu in the header"
         >
           {visible ? <Eye size={11} /> : <EyeOff size={11} />}
           {visible ? 'Visible' : 'Hidden'}
-        </button>
+        </span>
       </div>
 
       <div className="p-4 space-y-3 text-sm">
