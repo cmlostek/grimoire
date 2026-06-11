@@ -200,11 +200,20 @@ function NpcDetail({
     if (!dirtyRef.current) return;
     const { id: _id, campaignId: _c, ...rest } = localRef.current;
     onUpdateRef.current(rest);
+    setDirty(false);
     dirtyRef.current = false;
   };
 
-  // When switching NPCs, persist any pending edits from the previous one
-  // before swapping in the new record.
+  // Debounced auto-save: any time the user edits, persist 600ms after they
+  // stop. Guarantees writes go out even if unmount cleanup misses them.
+  useEffect(() => {
+    if (!dirty) return;
+    const handle = setTimeout(() => { flush(); }, 600);
+    return () => clearTimeout(handle);
+  }, [local, dirty]);
+
+  // When switching NPCs or leaving the tab, persist any pending edits before
+  // the component tears down.
   useEffect(() => {
     return () => { flush(); };
   }, [npc.id]);
