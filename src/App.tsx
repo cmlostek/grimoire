@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { NavLink, Route, Routes, Navigate } from 'react-router-dom';
+import { NavLink, Route, Routes, Navigate, useLocation } from 'react-router-dom';
 import { Dice6, Swords, NotebookPen, Map as MapIcon, BookOpen, Sparkles, Coins, Package, ScrollText, Users, FlaskConical, Dices, LogOut, ArrowLeftRight, Copy, Mic, Eye, EyeOff, Settings, BookMarked, Sun, Moon, PanelLeftClose, PanelLeftOpen, Radio } from 'lucide-react';
 import DiceRoller from './features/dice/DiceRoller';
 import { QuickDice } from './features/dice/QuickDice';
@@ -96,6 +96,14 @@ function AppShell() {
   const { mode, toggle: toggleMode } = useTheme();
   const [collapsed, setCollapsed] = useSidebarCollapsed();
   const isGM = role === 'gm';
+
+  // ── Page title ────────────────────────────────────────────────────────────
+  const location = useLocation();
+  useEffect(() => {
+    const page = nav.find((n) => location.pathname.startsWith(n.to));
+    const pageName = page?.label ?? 'Grimoire';
+    document.title = campaignName ? `${pageName} · ${campaignName}` : `${pageName} · Grimoire`;
+  }, [location.pathname, campaignName]);
 
   const loadSettings = useCampaignSettings((s) => s.load);
   const subscribeSettings = useCampaignSettings((s) => s.subscribe);

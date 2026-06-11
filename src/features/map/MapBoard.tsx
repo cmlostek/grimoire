@@ -95,6 +95,26 @@ export default function MapBoard() {
   // Track whether we've performed the initial fit-to-screen (once per load).
   const didFitRef = useRef(false);
 
+  // ── Touch support refs ────────────────────────────────────────────────────
+  // Assigned every render so touch event handlers (attached once via
+  // addEventListener) always read the latest values without stale closures.
+  const zoomRef   = useRef(zoom);   zoomRef.current   = zoom;
+  const panRef    = useRef(pan);    panRef.current    = pan;
+  const localDragRef = useRef(localDrag); localDragRef.current = localDrag;
+  const snapRef = useRef({ grid: mapShowGrid, size: mapGridSize });
+  snapRef.current = { grid: mapShowGrid, size: mapGridSize };
+
+  // Extra refs needed by touch token-placement and ping handlers
+  const campaignIdRef  = useRef(campaignId);  campaignIdRef.current  = campaignId;
+  const tokenNameRef   = useRef(tokenName);   tokenNameRef.current   = tokenName;
+  const tokenEmojiRef  = useRef(tokenEmoji);  tokenEmojiRef.current  = tokenEmoji;
+
+  type TouchMode = 'none' | 'pan' | 'pinch' | 'drag';
+  const touchModeRef  = useRef<TouchMode>('none');
+  const touchPinchRef = useRef({ dist: 1, zoom: 1, midX: 0, midY: 0, panX: 0, panY: 0 });
+  const touchPanRef   = useRef({ startX: 0, startY: 0, panX: 0, panY: 0 });
+  const touchDragRef  = useRef({ tokenId: '', ox: 0, oy: 0 });
+
   // ── Presence / pings ─────────────────────────────────────────────────────
   const [pings, setPings] = useState<Ping[]>([]);
   const [viewers, setViewers] = useState<Presence[]>([]);
@@ -208,6 +228,182 @@ export default function MapBoard() {
     return () => svg.removeEventListener('wheel', onWheel);
   }, [onWheel]);
 
+  // ── Touch handlers (iPad: pinch-zoom, pan, token drag) ────────────────────
+  const onTouchStart = useCallback(
+    (e: TouchEvent) => {
+      e.preventDefault();
+      const svg = svgRef.current;
+      if (!svg) return;
+      const rect = svg.getBoundingClientRect();
+
+      if (e.touches.length >= 2) {
+        // Two-finger gesture — start pinch+pan
+        touchModeRef.current = 'pinch';
+        const t0 = e.touches[0];
+        const t1 = e.touches[1];
+        touchPinchRef.current = {
+          dist: Math.max(1, Math.hypot(t1.clientX - t0.clientX, t1.clientY - t0.clientY)),
+          zoom: zoomRef.current,
+          midX: (t0.clientX + t1.clientX) / 2 - rect.left,
+          midY: (t0.clientY + t1.clientY) / 2 - rect.top,
+          panX: panRef.current.x,
+          panY: panRef.current.y,
+        };
+      } else {
+        const t = e.touches[0];
+        const lx = (t.clientX - rect.left - panRef.current.x) / zoomRef.current;
+        const ly = (t.clientY - rect.top  - panRef.current.y) / zoomRef.current;
+
+        // Ping tool: single tap broadcasts a ping
+        if (tool === 'ping') {
+          broadcastPingRef.current(lx, ly);
+          return;
+        }
+
+        // Token tool: tap to place a new token (GM only)
+        if (tool === 'token' && isGM) {
+          const cId = campaignIdRef.current;
+          if (!cId) return;
+          const { grid, size } = snapRef.current;
+          const sx = grid && size > 1 ? Math.round(lx / size) * size : lx;
+          const sy = grid && size > 1 ? Math.round(ly / size) * size : ly;
+          void useMap.getState().addToken(cId, {
+            name: tokenNameRef.current || 'Token',
+            x: sx,
+            y: sy,
+            color: '#94a3b8',
+            emoji: tokenEmojiRef.current || undefined,
+            size: Math.max(30, size * 0.8),
+            owner_user_id: userId,
+            hidden_from_players: false,
+          });
+          return;
+        }
+
+        // Check for a draggable token under the touch point (select mode only)
+        if (tool === 'select') {
+          const toks = useMap.getState().tokens;
+          const hit = [...toks].reverse().find((tok) => {
+            const ok = isGM || (tok.owner_user_id === userId && !tok.hidden_from_players);
+            // Slightly enlarged hit radius for finger-friendly targeting
+            return ok && Math.hypot(lx - tok.x, ly - tok.y) <= tok.size / 2 + 10 / zoomRef.current;
+          });
+          if (hit) {
+            touchModeRef.current = 'drag';
+            touchDragRef.current = { tokenId: hit.id, ox: lx - hit.x, oy: ly - hit.y };
+            setDraggingTokenId(hit.id);
+            setLocalDrag({ id: hit.id, x: hit.x, y: hit.y });
+            return;
+          }
+        }
+
+        // Default: single-finger pan
+        touchModeRef.current = 'pan';
+        touchPanRef.current = {
+          startX: t.clientX - rect.left,
+          startY: t.clientY - rect.top,
+          panX: panRef.current.x,
+          panY: panRef.current.y,
+        };
+      }
+    },
+    [tool, isGM, userId],
+  );
+
+  const onTouchMove = useCallback(
+    (e: TouchEvent) => {
+      e.preventDefault();
+      const svg = svgRef.current;
+      if (!svg) return;
+      const rect = svg.getBoundingClientRect();
+
+      if (touchModeRef.current === 'pinch' && e.touches.length >= 2) {
+        const t0 = e.touches[0];
+        const t1 = e.touches[1];
+        const { dist: sd, zoom: sz, midX, midY, panX, panY } = touchPinchRef.current;
+        const d = Math.hypot(t1.clientX - t0.clientX, t1.clientY - t0.clientY);
+        const newZoom = Math.max(0.05, Math.min(10, sz * (d / sd)));
+        // Current midpoint between fingers (SVG-local CSS pixels)
+        const cx = (t0.clientX + t1.clientX) / 2 - rect.left;
+        const cy = (t0.clientY + t1.clientY) / 2 - rect.top;
+        // Keep the logical point that was under the initial pinch centre fixed
+        const lx = (midX - panX) / sz;
+        const ly = (midY - panY) / sz;
+        setZoom(newZoom);
+        setPan({ x: cx - lx * newZoom, y: cy - ly * newZoom });
+
+      } else if (touchModeRef.current === 'pan' && e.touches.length === 1) {
+        const t = e.touches[0];
+        const { startX, startY, panX, panY } = touchPanRef.current;
+        setPan({
+          x: panX + (t.clientX - rect.left - startX),
+          y: panY + (t.clientY - rect.top  - startY),
+        });
+
+      } else if (touchModeRef.current === 'drag' && e.touches.length === 1) {
+        const t = e.touches[0];
+        const lx = (t.clientX - rect.left - panRef.current.x) / zoomRef.current;
+        const ly = (t.clientY - rect.top  - panRef.current.y) / zoomRef.current;
+        const { tokenId, ox, oy } = touchDragRef.current;
+        setLocalDrag({ id: tokenId, x: lx - ox, y: ly - oy });
+      }
+    },
+    [],
+  );
+
+  const onTouchEnd = useCallback(
+    (e: TouchEvent) => {
+      e.preventDefault();
+
+      if (touchModeRef.current === 'drag') {
+        const { tokenId } = touchDragRef.current;
+        const drag = localDragRef.current;
+        if (tokenId && drag) {
+          // Snap to grid on commit (same as mouse drag)
+          const { grid, size } = snapRef.current;
+          const x = grid && size > 1 ? Math.round(drag.x / size) * size : drag.x;
+          const y = grid && size > 1 ? Math.round(drag.y / size) * size : drag.y;
+          void useMap.getState().updateToken(tokenId, { x, y });
+        }
+        setDraggingTokenId(null);
+        setLocalDrag(null);
+      }
+
+      if (e.touches.length === 1) {
+        // Lifting one finger during a pinch — continue as a single-finger pan
+        const svg = svgRef.current;
+        if (!svg) return;
+        const rect = svg.getBoundingClientRect();
+        const t = e.touches[0];
+        touchModeRef.current = 'pan';
+        touchPanRef.current = {
+          startX: t.clientX - rect.left,
+          startY: t.clientY - rect.top,
+          panX: panRef.current.x,
+          panY: panRef.current.y,
+        };
+      } else if (e.touches.length === 0) {
+        touchModeRef.current = 'none';
+      }
+    },
+    [],
+  );
+
+  useEffect(() => {
+    const svg = svgRef.current;
+    if (!svg) return;
+    svg.addEventListener('touchstart',  onTouchStart, { passive: false });
+    svg.addEventListener('touchmove',   onTouchMove,  { passive: false });
+    svg.addEventListener('touchend',    onTouchEnd,   { passive: false });
+    svg.addEventListener('touchcancel', onTouchEnd,   { passive: false });
+    return () => {
+      svg.removeEventListener('touchstart',  onTouchStart);
+      svg.removeEventListener('touchmove',   onTouchMove);
+      svg.removeEventListener('touchend',    onTouchEnd);
+      svg.removeEventListener('touchcancel', onTouchEnd);
+    };
+  }, [onTouchStart, onTouchMove, onTouchEnd]);
+
   // ── Presence channel ──────────────────────────────────────────────────────
   useEffect(() => {
     if (!campaignId || !userId) return;
@@ -268,6 +464,11 @@ export default function MapBoard() {
     setPings((curr) => [...curr, ping]);
     window.setTimeout(() => setPings((curr) => curr.filter((x) => x.id !== ping.id)), 2200);
   };
+
+  // Keep a stable ref so touch handlers can call broadcastPing without
+  // needing it in their useCallback deps.
+  const broadcastPingRef = useRef(broadcastPing);
+  broadcastPingRef.current = broadcastPing;
 
   // ── Token drag logic ──────────────────────────────────────────────────────
   const canDragToken = (t: MapToken) =>
@@ -739,7 +940,7 @@ export default function MapBoard() {
           <svg
             ref={svgRef}
             className="absolute inset-0 w-full h-full select-none"
-            style={{ cursor: svgCursor }}
+            style={{ cursor: svgCursor, touchAction: 'none' }}
             onMouseDown={onMouseDown}
             onMouseMove={onMouseMove}
             onMouseUp={onMouseUp}

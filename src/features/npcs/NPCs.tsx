@@ -1,11 +1,12 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Plus, Trash2, Eye, EyeOff, User, Crown, Skull, Shield, Swords,
-  BookOpen, Coins, Sparkles, Search, Save,
+  BookOpen, Coins, Sparkles, Search, Save, Share2, Lock, Users,
 } from 'lucide-react';
 import PageHeader from '../../components/PageHeader';
 import { useSession } from '../session/sessionStore';
 import { useNpcStore, STATUS_COLORS, FACTION_COLORS, type NPC, type NPCStatus, type NpcStatBlock } from './npcStore';
+import { NpcSharePopover } from './NpcSharePopover';
 
 const NPC_ICONS = {
   user:     User,
@@ -186,7 +187,59 @@ function NpcDetail({
   const [local, setLocal] = useState(npc);
   const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [shareOpen, setShareOpen] = useState(false);
+
+  const npcPerms = useNpcStore((s) => s.permissions[npc.id]);
+  const shareSummary = useMemo(() => {
+    const sharedCount = (npcPerms ?? []).filter((p) => p.can_view).length;
+    if (npc.visibleToPlayers) return { label: 'Party', icon: 'party' as const };
+    if (sharedCount > 0) return { label: `${sharedCount} shared`, icon: 'shared' as const };
+    return { label: 'GM only', icon: 'gm' as const };
+  }, [npcPerms, npc.visibleToPlayers]);
+
+  // Keep latest dirty + local in refs so we can flush on NPC switch / unmount
+  // without re-running the reset effect on every keystroke.
+  const dirtyRef = useRef(dirty);
+  const localRef = useRef(local);
+  const onUpdateRef = useRef(onUpdate);
+  useEffect(() => { dirtyRef.current = dirty; }, [dirty]);
+  useEffect(() => { localRef.current = local; }, [local]);
+  useEffect(() => { onUpdateRef.current = onUpdate; }, [onUpdate]);
+
+  const flush = () => {
+    if (!dirtyRef.current) return;
+    const { id: _id, campaignId: _c, ...rest } = localRef.current;
+    onUpdateRef.current(rest);
+    setDirty(false);
+    dirtyRef.current = false;
+  };
+
+  // Debounced auto-save: any time the user edits, persist 600ms after they
+  // stop. Guarantees writes go out even if unmount cleanup misses them.
+  useEffect(() => {
+    if (!dirty) return;
+    const handle = setTimeout(() => { flush(); }, 600);
+    return () => clearTimeout(handle);
+  }, [local, dirty]);
+
+  // When switching NPCs or leaving the tab, persist any pending edits before
+  // the component tears down.
+  useEffect(() => {
+    return () => { flush(); };
+  }, [npc.id]);
+
   useEffect(() => { setLocal(npc); setDirty(false); }, [npc.id]);
+
+  // Warn on tab/window close if there are unsaved edits.
+  useEffect(() => {
+    const handler = (e: BeforeUnloadEvent) => {
+      if (!dirtyRef.current) return;
+      e.preventDefault();
+      e.returnValue = '';
+    };
+    window.addEventListener('beforeunload', handler);
+    return () => window.removeEventListener('beforeunload', handler);
+  }, []);
 
   const applyLocal = (patch: Partial<NPC>) => {
     setLocal((p) => ({ ...p, ...patch }));
@@ -202,7 +255,7 @@ function NpcDetail({
   const saveAll = async () => {
     setSaving(true);
     const { id: _id, campaignId: _c, ...rest } = local;
-    onUpdate(rest);
+    await onUpdate(rest);
     setDirty(false);
     setSaving(false);
   };
@@ -275,27 +328,45 @@ function NpcDetail({
         {/* GM controls */}
         {isGM && (
           <div className="flex items-center gap-2 shrink-0 pt-1">
-            {dirty && (
-              <button
-                onClick={saveAll}
-                disabled={saving}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-amber-700 hover:bg-amber-600 disabled:opacity-50 text-white transition-colors"
-              >
-                <Save size={12} /> {saving ? 'Saving…' : 'Save'}
-              </button>
-            )}
             <button
-              onClick={() => save({ visibleToPlayers: !npc.visibleToPlayers })}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors ${
-                npc.visibleToPlayers
-                  ? 'bg-emerald-900/30 border-emerald-700/40 text-emerald-300'
-                  : 'bg-slate-800 border-slate-700 text-slate-500 hover:border-slate-600 hover:text-slate-300'
-              }`}
-              title={npc.visibleToPlayers ? 'Visible to players — click to hide' : 'GM only — click to reveal to players'}
+              onClick={saveAll}
+              disabled={!dirty || saving}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors ${
+                dirty
+                  ? 'bg-amber-700 hover:bg-amber-600 text-white'
+                  : 'bg-slate-800 border border-slate-700 text-slate-500 cursor-default'
+              } disabled:opacity-60`}
+              title={dirty ? 'Save changes' : 'No unsaved changes'}
             >
-              {npc.visibleToPlayers ? <Eye size={12} /> : <EyeOff size={12} />}
-              {npc.visibleToPlayers ? 'Revealed' : 'GM only'}
+              <Save size={12} /> {saving ? 'Saving…' : dirty ? 'Save' : 'Saved'}
             </button>
+            <div className="relative">
+              <button
+                onClick={() => setShareOpen((v) => !v)}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors ${
+                  shareSummary.icon === 'party'
+                    ? 'bg-emerald-900/30 border-emerald-700/40 text-emerald-300'
+                    : shareSummary.icon === 'shared'
+                      ? 'bg-sky-900/30 border-sky-700/40 text-sky-300'
+                      : 'bg-slate-800 border-slate-700 text-slate-500 hover:border-slate-600 hover:text-slate-300'
+                }`}
+                title="Manage who can see this NPC"
+              >
+                {shareSummary.icon === 'gm'
+                  ? <Lock size={12} />
+                  : shareSummary.icon === 'party'
+                    ? <Users size={12} />
+                    : <Share2 size={12} />}
+                {shareSummary.label}
+              </button>
+              {shareOpen && (
+                <NpcSharePopover
+                  npc={npc}
+                  onClose={() => setShareOpen(false)}
+                  onStatBlockVisibilityChange={(v) => save({ statBlockVisible: v })}
+                />
+              )}
+            </div>
             <button
               onClick={() => { if (confirm(`Delete "${npc.name}"?`)) onDelete(); }}
               className="text-slate-600 hover:text-rose-400 p-1.5 rounded hover:bg-slate-800 transition-colors"
@@ -383,16 +454,15 @@ function NpcDetail({
         statBlock={local.statBlock}
         visible={local.statBlockVisible}
         isGM={isGM}
-        showToPlayers={local.visibleToPlayers && local.statBlockVisible}
-        onStatBlockChange={(sb) => save({ statBlock: sb })}
-        onVisibilityChange={(v) => save({ statBlockVisible: v })}
+        showToPlayers={local.statBlockVisible}
+        onStatBlockChange={(sb) => applyLocal({ statBlock: sb })}
       />
 
       {/* GM-only hint */}
-      {isGM && !npc.visibleToPlayers && (
+      {isGM && shareSummary.icon === 'gm' && (
         <div className="flex items-center gap-2 text-xs text-slate-600 border border-slate-800 rounded-lg p-3">
           <EyeOff size={12} className="shrink-0" />
-          This NPC is hidden from players. Click <strong className="text-slate-500">"GM only"</strong> above to reveal them.
+          This NPC is hidden from players. Use the <strong className="text-slate-500">Share</strong> button above to reveal them.
         </div>
       )}
     </div>
@@ -412,25 +482,20 @@ function StatBlockSection({
   isGM,
   showToPlayers,
   onStatBlockChange,
-  onVisibilityChange,
 }: {
   statBlock: NpcStatBlock;
   visible: boolean;
   isGM: boolean;
   showToPlayers: boolean;
   onStatBlockChange: (sb: NpcStatBlock) => void;
-  onVisibilityChange: (v: boolean) => void;
 }) {
-  const [local, setLocal] = useState(statBlock);
-  useEffect(() => setLocal(statBlock), [statBlock]);
-
   // Players see nothing if the GM hasn't revealed the stat block.
   if (!isGM && !showToPlayers) return null;
 
+  const local = statBlock;
   const setField = <K extends keyof NpcStatBlock>(k: K, v: NpcStatBlock[K]) => {
-    setLocal((p) => ({ ...p, [k]: v }));
+    onStatBlockChange({ ...local, [k]: v });
   };
-  const flush = () => onStatBlockChange(local);
 
   if (!isGM) {
     // Player read-only view
@@ -442,18 +507,17 @@ function StatBlockSection({
     <div className="border border-slate-800 rounded-lg">
       <div className="flex items-center justify-between px-4 py-2 border-b border-slate-800">
         <div className="text-xs uppercase tracking-wider text-slate-500">Stat block</div>
-        <button
-          onClick={() => onVisibilityChange(!visible)}
-          title={visible ? 'Visible to players when NPC is revealed' : 'Hidden — players see the NPC but not the stat block'}
-          className={`flex items-center gap-1.5 px-2 py-1 text-[11px] rounded border transition-colors ${
+        <span
+          className={`flex items-center gap-1.5 px-2 py-1 text-[11px] rounded border ${
             visible
               ? 'bg-emerald-900/30 border-emerald-700/40 text-emerald-300'
-              : 'bg-slate-800 border-slate-700 text-slate-500 hover:text-slate-300'
+              : 'bg-slate-800 border-slate-700 text-slate-500'
           }`}
+          title="Toggle visibility from the Share menu in the header"
         >
           {visible ? <Eye size={11} /> : <EyeOff size={11} />}
           {visible ? 'Visible' : 'Hidden'}
-        </button>
+        </span>
       </div>
 
       <div className="p-4 space-y-3 text-sm">
@@ -461,7 +525,7 @@ function StatBlockSection({
           <input
             value={local.creatureType ?? ''}
             onChange={(e) => setField('creatureType', e.target.value)}
-            onBlur={flush}
+
             placeholder="Medium humanoid (elf), neutral good"
             className="w-full bg-slate-800 border border-slate-700 rounded px-2 py-1"
           />
@@ -473,7 +537,7 @@ function StatBlockSection({
               type="number"
               value={local.ac ?? ''}
               onChange={(e) => setField('ac', e.target.value === '' ? undefined : parseInt(e.target.value, 10))}
-              onBlur={flush}
+
               className="w-full bg-slate-800 border border-slate-700 rounded px-2 py-1"
             />
           </FormRow>
@@ -482,7 +546,7 @@ function StatBlockSection({
               type="number"
               value={local.hpCurrent ?? ''}
               onChange={(e) => setField('hpCurrent', e.target.value === '' ? undefined : parseInt(e.target.value, 10))}
-              onBlur={flush}
+
               className="w-full bg-slate-800 border border-slate-700 rounded px-2 py-1"
             />
           </FormRow>
@@ -491,7 +555,7 @@ function StatBlockSection({
               type="number"
               value={local.hpMax ?? ''}
               onChange={(e) => setField('hpMax', e.target.value === '' ? undefined : parseInt(e.target.value, 10))}
-              onBlur={flush}
+
               className="w-full bg-slate-800 border border-slate-700 rounded px-2 py-1"
             />
           </FormRow>
@@ -499,7 +563,7 @@ function StatBlockSection({
             <input
               value={local.cr ?? ''}
               onChange={(e) => setField('cr', e.target.value || undefined)}
-              onBlur={flush}
+
               placeholder="1/4"
               className="w-full bg-slate-800 border border-slate-700 rounded px-2 py-1"
             />
@@ -511,7 +575,7 @@ function StatBlockSection({
             <input
               value={local.hitDice ?? ''}
               onChange={(e) => setField('hitDice', e.target.value || undefined)}
-              onBlur={flush}
+
               placeholder="3d8 + 3"
               className="w-full bg-slate-800 border border-slate-700 rounded px-2 py-1"
             />
@@ -520,7 +584,7 @@ function StatBlockSection({
             <input
               value={local.speed ?? ''}
               onChange={(e) => setField('speed', e.target.value || undefined)}
-              onBlur={flush}
+
               placeholder="30 ft., fly 60 ft."
               className="w-full bg-slate-800 border border-slate-700 rounded px-2 py-1"
             />
@@ -537,7 +601,7 @@ function StatBlockSection({
                   type="number"
                   value={local[a] ?? ''}
                   onChange={(e) => setField(a, e.target.value === '' ? undefined : parseInt(e.target.value, 10))}
-                  onBlur={flush}
+    
                   className="w-full bg-slate-800 border border-slate-700 rounded px-1 py-1 text-center"
                   placeholder="10"
                 />
@@ -550,7 +614,7 @@ function StatBlockSection({
           <input
             value={local.skills ?? ''}
             onChange={(e) => setField('skills', e.target.value || undefined)}
-            onBlur={flush}
+
             placeholder="Perception +5, Stealth +6"
             className="w-full bg-slate-800 border border-slate-700 rounded px-2 py-1"
           />
@@ -560,7 +624,7 @@ function StatBlockSection({
           <input
             value={local.senses ?? ''}
             onChange={(e) => setField('senses', e.target.value || undefined)}
-            onBlur={flush}
+
             placeholder="Darkvision 60 ft., passive Perception 15"
             className="w-full bg-slate-800 border border-slate-700 rounded px-2 py-1"
           />
@@ -570,7 +634,7 @@ function StatBlockSection({
           <input
             value={local.languages ?? ''}
             onChange={(e) => setField('languages', e.target.value || undefined)}
-            onBlur={flush}
+
             placeholder="Common, Elvish"
             className="w-full bg-slate-800 border border-slate-700 rounded px-2 py-1"
           />
@@ -581,7 +645,7 @@ function StatBlockSection({
             <input
               value={local.damageResistances ?? ''}
               onChange={(e) => setField('damageResistances', e.target.value || undefined)}
-              onBlur={flush}
+
               className="w-full bg-slate-800 border border-slate-700 rounded px-2 py-1"
             />
           </FormRow>
@@ -589,7 +653,7 @@ function StatBlockSection({
             <input
               value={local.damageImmunities ?? ''}
               onChange={(e) => setField('damageImmunities', e.target.value || undefined)}
-              onBlur={flush}
+
               className="w-full bg-slate-800 border border-slate-700 rounded px-2 py-1"
             />
           </FormRow>
@@ -597,7 +661,7 @@ function StatBlockSection({
             <input
               value={local.conditionImmunities ?? ''}
               onChange={(e) => setField('conditionImmunities', e.target.value || undefined)}
-              onBlur={flush}
+
               className="w-full bg-slate-800 border border-slate-700 rounded px-2 py-1"
             />
           </FormRow>
@@ -607,7 +671,7 @@ function StatBlockSection({
           <textarea
             value={local.traits ?? ''}
             onChange={(e) => setField('traits', e.target.value || undefined)}
-            onBlur={flush}
+
             placeholder="Pack Tactics. The NPC has advantage on attack rolls…"
             rows={3}
             className="w-full bg-slate-800 border border-slate-700 rounded px-2 py-1.5 text-sm resize-none leading-relaxed"
@@ -618,7 +682,7 @@ function StatBlockSection({
           <textarea
             value={local.actions ?? ''}
             onChange={(e) => setField('actions', e.target.value || undefined)}
-            onBlur={flush}
+
             placeholder="Longsword. Melee Weapon Attack: +5 to hit, reach 5 ft., one target. Hit: 7 (1d8 + 3) slashing damage."
             rows={4}
             className="w-full bg-slate-800 border border-slate-700 rounded px-2 py-1.5 text-sm resize-none leading-relaxed"
