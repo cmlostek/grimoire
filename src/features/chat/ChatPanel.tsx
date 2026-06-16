@@ -430,9 +430,17 @@ function Composer({
   catalog: import('./catalog').CatalogEntry[];
 }) {
   const [value, setValue] = useState('');
-  const [whisperTo, setWhisperTo] = useState<ChatMember | null>(null);
   const [highlight, setHighlight] = useState(0);
   const [lastWhisperId, setLastWhisperId] = useState<string | null>(null);
+
+  // Whisper target now lives in the panel store so other surfaces (e.g. the
+  // dashboard Campaign Members panel) can imperatively start a whisper.
+  const whisperTargetId = useChatPanel((s) => s.whisperTargetId);
+  const setWhisperTargetId = useChatPanel((s) => s.setWhisperTarget);
+  const whisperTo = useMemo(
+    () => (whisperTargetId ? members.find((m) => m.userId === whisperTargetId) ?? null : null),
+    [whisperTargetId, members]
+  );
 
   // Hydrate last-whisper memory when switching campaigns.
   useEffect(() => {
@@ -465,7 +473,7 @@ function Composer({
   }, [candidates.length, whisperCmd?.query]);
 
   const pickWhisper = (m: ChatMember) => {
-    setWhisperTo(m);
+    setWhisperTargetId(m.userId);
     setLastWhisperId(m.userId);
     writeLastWhisper(campaignId, m.userId);
     setValue('');
@@ -489,12 +497,12 @@ function Composer({
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape' && !value) {
         e.preventDefault();
-        setWhisperTo(null);
+        setWhisperTargetId(null);
       }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [whisperTo, pickerActive, value]);
+  }, [whisperTo, pickerActive, value, setWhisperTargetId]);
 
   const submit = async () => {
     if (pickerActive) return; // Enter is consumed by the picker
@@ -512,7 +520,7 @@ function Composer({
   return (
     <div className="border-t border-slate-800 bg-slate-900">
       {whisperTo && (
-        <WhisperBar member={whisperTo} onCancel={() => setWhisperTo(null)} />
+        <WhisperBar member={whisperTo} onCancel={() => setWhisperTargetId(null)} />
       )}
       <div className="relative px-2 py-2 flex items-end gap-2">
         {pickerActive && (

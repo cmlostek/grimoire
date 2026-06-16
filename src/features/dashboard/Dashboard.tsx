@@ -1,10 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Pencil, Check, X, UserPlus } from 'lucide-react';
+import { Pencil, Check, X, UserPlus, MessageCircle } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { useSession } from '../session/sessionStore';
 import { useParty } from '../party/partyStore';
 import { CharCard } from '../party/Party';
 import ChatPanel from '../chat/ChatPanel';
+import { useChat, type ChatMember } from '../chat/chatStore';
+import { useChatPanel } from '../chat/chatPanelStore';
 
 /**
  * Player dashboard — landing page after entering a campaign. Phase 1: display
@@ -89,10 +91,8 @@ export default function Dashboard() {
           )}
         </Section>
 
-        <Section title="Friends in this campaign">
-          <div className="text-sm text-slate-500 italic">
-            Coming in Phase 3 — star party members for quick whispers and mentions.
-          </div>
+        <Section title="Campaign members">
+          <CampaignMembersPanel selfId={userId} />
         </Section>
       </div>
 
@@ -252,6 +252,75 @@ const COLOR_PRESETS = [
   '#94a3b8', '#f87171', '#fb923c', '#fbbf24', '#4ade80',
   '#22d3ee', '#60a5fa', '#a78bfa', '#f472b6', '#e879f9',
 ];
+
+/**
+ * Lists every other campaign member with their color, role, and an at-a-glance
+ * Whisper affordance. Click a row → sets them as the chat whisper recipient.
+ * Avatars are currently a colored initial; real image upload comes later.
+ */
+function CampaignMembersPanel({ selfId }: { selfId: string | null }) {
+  const membersMap = useChat((s) => s.members);
+  const setWhisperTarget = useChatPanel((s) => s.setWhisperTarget);
+
+  const others = useMemo<ChatMember[]>(() => {
+    const list = Object.values(membersMap).filter((m) => m.userId !== selfId);
+    return list.sort((a, b) => {
+      // GMs first, then by display name.
+      if (a.role !== b.role) return a.role === 'gm' ? -1 : 1;
+      return a.displayName.localeCompare(b.displayName);
+    });
+  }, [membersMap, selfId]);
+
+  if (others.length === 0) {
+    return (
+      <div className="text-sm text-slate-500 italic">
+        You're the only one here so far. Share the campaign join code to invite players.
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-1.5">
+      {others.map((m) => (
+        <button
+          key={m.userId}
+          onClick={() => setWhisperTarget(m.userId)}
+          title={`Whisper @${m.displayName}`}
+          className="w-full flex items-center gap-3 px-3 py-2 rounded bg-slate-900 hover:bg-slate-800 border border-slate-800 hover:border-slate-700 transition-colors group"
+        >
+          <MemberAvatar color={m.color} name={m.displayName} />
+          <div className="min-w-0 flex-1 text-left">
+            <div className="text-sm font-medium truncate" style={{ color: m.color }}>
+              {m.displayName}
+            </div>
+            <div className="text-[10px] uppercase tracking-wider text-slate-500">
+              {m.role === 'gm' ? 'Game Master' : 'Player'}
+            </div>
+          </div>
+          <span className="text-[10px] uppercase tracking-wider text-slate-600 group-hover:text-sky-300 flex items-center gap-1">
+            <MessageCircle size={11} /> Whisper
+          </span>
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function MemberAvatar({ color, name }: { color: string; name: string }) {
+  const initial = (name || '?').slice(0, 1).toUpperCase();
+  return (
+    <div
+      className="h-9 w-9 rounded-full border flex items-center justify-center text-sm font-serif shrink-0"
+      style={{
+        borderColor: color,
+        backgroundColor: `color-mix(in srgb, ${color} 22%, transparent)`,
+        color,
+      }}
+    >
+      {initial}
+    </div>
+  );
+}
 
 /**
  * Shown on the dashboard when the player doesn't own a character yet.
