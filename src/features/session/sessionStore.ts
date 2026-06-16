@@ -40,6 +40,11 @@ type SessionState = {
   updateMyColor: (color: string) => Promise<void>;
   updateMyBio: (bio: string) => Promise<void>;
   updateMyDisplayName: (name: string) => Promise<void>;
+  /** Global avatar storage path (in the `avatars` bucket). */
+  myAvatarPath: string | null;
+  loadMyProfile: () => Promise<void>;
+  uploadMyAvatar: (file: File) => Promise<{ ok: true } | { ok: false; error: string }>;
+  removeMyAvatar: () => Promise<void>;
 };
 
 const ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
@@ -61,6 +66,7 @@ export const useSession = create<SessionState>((set, get) => ({
   displayName: null,
   myColor: null,
   myBio: null,
+  myAvatarPath: null,
   loading: true,
   error: null,
   myCampaigns: [],
@@ -357,6 +363,79 @@ export const useSession = create<SessionState>((set, get) => ({
       set({ myBio: prev });
       console.error('[session] updateMyBio failed', error);
     }
+  },
+
+  loadMyProfile: async () => {
+    const uid = get().userId;
+    if (!uid) return;
+    const { data, error } = await supabase
+      .from('user_profiles')
+      .select('avatar_path')
+      .eq('user_id', uid)
+      .maybeSingle();
+    if (error) {
+      console.error('[session] loadMyProfile failed', error);
+      return;
+    }
+    set({ myAvatarPath: (data?.avatar_path as string | null) ?? null });
+  },
+
+  uploadMyAvatar: async (file) => {
+    const uid = get().userId;
+    if (!uid) return { ok: false, error: 'Not signed in' };
+    if (!file.type.startsWith('image/')) return { ok: false, error: 'Pick an image file.' };
+    if (file.size > 2 * 1024 * 1024) return { ok: false, error: 'Image must be under 2 MB.' };
+
+    // Use a fresh path per upload so the public URL changes — sidesteps CDN
+    // caching of the old image.
+    const ext = (file.name.split('.').pop() ?? 'png').toLowerCase().replace(/[^a-z0-9]/g, '') || 'png';
+    const path = `${uid}/${crypto.randomUUID()}.${ext}`;
+
+    const prevPath = get().myAvatarPath;
+
+    const { error: upErr } = await supabase.storage
+      .from('avatars')
+      .upload(path, file, { contentType: file.type, upsert: false });
+    if (upErr) {
+      console.error('[session] avatar upload failed', upErr);
+      return { ok: false, error: upErr.message };
+    }
+
+    const { error: dbErr } = await supabase
+      .from('user_profiles')
+      .upsert({ user_id: uid, avatar_path: path, updated_at: new Date().toISOString() });
+    if (dbErr) {
+      console.error('[session] avatar row write failed', dbErr);
+      // Roll back the storage upload to avoid orphans.
+      await supabase.storage.from('avatars').remove([path]);
+      return { ok: false, error: dbErr.message };
+    }
+
+    set({ myAvatarPath: path });
+
+    // Best-effort cleanup of the previous file.
+    if (prevPath && prevPath !== path) {
+      void supabase.storage.from('avatars').remove([prevPath]);
+    }
+
+    return { ok: true };
+  },
+
+  removeMyAvatar: async () => {
+    const uid = get().userId;
+    if (!uid) return;
+    const prev = get().myAvatarPath;
+    if (!prev) return;
+    set({ myAvatarPath: null });
+    const { error } = await supabase
+      .from('user_profiles')
+      .upsert({ user_id: uid, avatar_path: null, updated_at: new Date().toISOString() });
+    if (error) {
+      set({ myAvatarPath: prev });
+      console.error('[session] removeMyAvatar failed', error);
+      return;
+    }
+    void supabase.storage.from('avatars').remove([prev]);
   },
 
   updateMyDisplayName: async (name) => {

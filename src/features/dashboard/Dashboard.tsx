@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Pencil, Check, X, UserPlus, MessageCircle } from 'lucide-react';
+import { Pencil, Check, X, UserPlus, MessageCircle, Camera, Trash2 } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { useSession } from '../session/sessionStore';
 import { useParty } from '../party/partyStore';
@@ -7,6 +7,7 @@ import { CharCard } from '../party/Party';
 import ChatPanel from '../chat/ChatPanel';
 import { useChat, type ChatMember } from '../chat/chatStore';
 import { useChatPanel } from '../chat/chatPanelStore';
+import { useProfiles, avatarPublicUrl } from '../profiles/profilesStore';
 
 /**
  * Player dashboard — landing page after entering a campaign. Phase 1: display
@@ -23,6 +24,15 @@ export default function Dashboard() {
   const updateMyDisplayName = useSession((s) => s.updateMyDisplayName);
   const updateMyColor = useSession((s) => s.updateMyColor);
   const updateMyBio = useSession((s) => s.updateMyBio);
+  const myAvatarPath = useSession((s) => s.myAvatarPath);
+  const loadMyProfile = useSession((s) => s.loadMyProfile);
+  const uploadMyAvatar = useSession((s) => s.uploadMyAvatar);
+  const removeMyAvatar = useSession((s) => s.removeMyAvatar);
+
+  // Hydrate the global profile (avatar) for this user on mount.
+  useEffect(() => {
+    void loadMyProfile();
+  }, [userId, loadMyProfile]);
 
   const party = useParty((s) => s.party);
   const partyLoaded = useParty((s) => s.loaded);
@@ -52,7 +62,13 @@ export default function Dashboard() {
       {/* ── Profile column ─────────────────────────────────────────────── */}
       <div className="flex-1 min-w-0 overflow-y-auto px-6 py-6 space-y-6">
         <div className="flex items-center gap-4">
-          <Avatar color={myColor ?? '#94a3b8'} initial={(displayName ?? '?').slice(0, 1).toUpperCase()} />
+          <AvatarUpload
+            color={myColor ?? '#94a3b8'}
+            initial={(displayName ?? '?').slice(0, 1).toUpperCase()}
+            path={myAvatarPath}
+            onUpload={uploadMyAvatar}
+            onRemove={removeMyAvatar}
+          />
           <div className="min-w-0 flex-1">
             <DisplayNameEditor value={displayName ?? ''} onSave={updateMyDisplayName} />
             <div className="text-xs text-slate-500 mt-1">
@@ -113,18 +129,78 @@ function Section({ title, children }: { title: string; children: React.ReactNode
   );
 }
 
-function Avatar({ color, initial }: { color: string; initial: string }) {
+function AvatarUpload({
+  color,
+  initial,
+  path,
+  onUpload,
+  onRemove,
+}: {
+  color: string;
+  initial: string;
+  path: string | null;
+  onUpload: (file: File) => Promise<{ ok: true } | { ok: false; error: string }>;
+  onRemove: () => Promise<void>;
+}) {
+  const fileRef = useRef<HTMLInputElement>(null);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  const url = avatarPublicUrl(path);
+  const has = url != null;
+
+  const pick = () => fileRef.current?.click();
+  const onFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = ''; // allow re-picking the same filename
+    if (!file) return;
+    setBusy(true);
+    setErr(null);
+    const res = await onUpload(file);
+    setBusy(false);
+    if (!res.ok) setErr(res.error);
+  };
+
   return (
-    <div
-      className="h-16 w-16 rounded-full border-2 flex items-center justify-center text-xl font-serif text-slate-100 shrink-0"
-      style={{
-        borderColor: color,
-        backgroundColor: `color-mix(in srgb, ${color} 22%, transparent)`,
-        color,
-      }}
-      title="Avatar (upload coming in Phase 3)"
-    >
-      {initial}
+    <div className="flex items-center gap-2">
+      <input
+        ref={fileRef}
+        type="file"
+        accept="image/png,image/jpeg,image/webp,image/gif"
+        className="hidden"
+        onChange={onFile}
+      />
+      <button
+        onClick={pick}
+        disabled={busy}
+        title={has ? 'Change avatar' : 'Upload avatar'}
+        className="relative h-16 w-16 rounded-full border-2 overflow-hidden shrink-0 group disabled:opacity-60"
+        style={{
+          borderColor: color,
+          backgroundColor: has ? '#020617' : `color-mix(in srgb, ${color} 22%, transparent)`,
+          color,
+        }}
+      >
+        {has ? (
+          <img src={url!} alt="" className="h-full w-full object-cover" />
+        ) : (
+          <span className="flex items-center justify-center h-full w-full text-xl font-serif">{initial}</span>
+        )}
+        <span className="absolute inset-0 bg-slate-950/70 text-slate-100 text-[10px] uppercase tracking-wider flex items-center justify-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+          <Camera size={12} /> {has ? 'Change' : 'Upload'}
+        </span>
+      </button>
+      {has && (
+        <button
+          onClick={() => { void onRemove(); }}
+          title="Remove avatar"
+          disabled={busy}
+          className="p-1.5 rounded text-slate-500 hover:text-rose-300 hover:bg-slate-800 disabled:opacity-50"
+        >
+          <Trash2 size={13} />
+        </button>
+      )}
+      {err && <span className="text-[11px] text-rose-300">{err}</span>}
     </div>
   );
 }
@@ -261,6 +337,8 @@ const COLOR_PRESETS = [
 function CampaignMembersPanel({ selfId }: { selfId: string | null }) {
   const membersMap = useChat((s) => s.members);
   const setWhisperTarget = useChatPanel((s) => s.setWhisperTarget);
+  const profiles = useProfiles((s) => s.profiles);
+  const loadProfiles = useProfiles((s) => s.loadFor);
 
   const others = useMemo<ChatMember[]>(() => {
     const list = Object.values(membersMap).filter((m) => m.userId !== selfId);
@@ -270,6 +348,11 @@ function CampaignMembersPanel({ selfId }: { selfId: string | null }) {
       return a.displayName.localeCompare(b.displayName);
     });
   }, [membersMap, selfId]);
+
+  useEffect(() => {
+    if (others.length === 0) return;
+    void loadProfiles(others.map((m) => m.userId));
+  }, [others, loadProfiles]);
 
   if (others.length === 0) {
     return (
@@ -288,7 +371,7 @@ function CampaignMembersPanel({ selfId }: { selfId: string | null }) {
           title={`Whisper @${m.displayName}`}
           className="w-full flex items-center gap-3 px-3 py-2 rounded bg-slate-900 hover:bg-slate-800 border border-slate-800 hover:border-slate-700 transition-colors group"
         >
-          <MemberAvatar color={m.color} name={m.displayName} />
+          <MemberAvatar color={m.color} name={m.displayName} url={avatarPublicUrl(profiles[m.userId]?.avatarPath ?? null)} />
           <div className="min-w-0 flex-1 text-left">
             <div className="text-sm font-medium truncate" style={{ color: m.color }}>
               {m.displayName}
@@ -306,18 +389,18 @@ function CampaignMembersPanel({ selfId }: { selfId: string | null }) {
   );
 }
 
-function MemberAvatar({ color, name }: { color: string; name: string }) {
+function MemberAvatar({ color, name, url }: { color: string; name: string; url: string | null }) {
   const initial = (name || '?').slice(0, 1).toUpperCase();
   return (
     <div
-      className="h-9 w-9 rounded-full border flex items-center justify-center text-sm font-serif shrink-0"
+      className="h-9 w-9 rounded-full border overflow-hidden flex items-center justify-center text-sm font-serif shrink-0"
       style={{
         borderColor: color,
-        backgroundColor: `color-mix(in srgb, ${color} 22%, transparent)`,
+        backgroundColor: url ? '#020617' : `color-mix(in srgb, ${color} 22%, transparent)`,
         color,
       }}
     >
-      {initial}
+      {url ? <img src={url} alt="" className="h-full w-full object-cover" /> : initial}
     </div>
   );
 }
