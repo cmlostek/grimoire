@@ -1,7 +1,6 @@
 import { useEffect, useState } from 'react';
 import { NavLink, Route, Routes, Navigate, useLocation } from 'react-router-dom';
-import { Dice6, Swords, NotebookPen, Map as MapIcon, BookOpen, Sparkles, Coins, Package, ScrollText, Users, FlaskConical, Dices, LogOut, ArrowLeftRight, Copy, Mic, Eye, EyeOff, Settings, BookMarked, Sun, Moon, PanelLeftClose, PanelLeftOpen, Radio, LayoutDashboard } from 'lucide-react';
-import DiceRoller from './features/dice/DiceRoller';
+import { Swords, NotebookPen, Map as MapIcon, BookOpen, Sparkles, Coins, Package, ScrollText, Users, FlaskConical, Dices, LogOut, ArrowLeftRight, Copy, Mic, Eye, EyeOff, Settings, BookMarked, Sun, Moon, PanelLeftClose, PanelLeftOpen, Radio, LayoutDashboard } from 'lucide-react';
 import { QuickDice } from './features/dice/QuickDice';
 import { useQuickDice } from './features/dice/quickDiceStore';
 import ChatPanel from './features/chat/ChatPanel';
@@ -27,13 +26,12 @@ import { useRecording } from './features/transcription/recordingStore';
 type NavItem = {
   to: string;
   label: string;
-  icon: typeof Dice6;
+  icon: typeof Swords;
   gmOnly?: boolean;
 };
 
 const nav: NavItem[] = [
   { to: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
-  { to: '/dice', label: 'Dice', icon: Dice6 },
   { to: '/initiative', label: 'Initiative', icon: Swords },
   { to: '/party', label: 'Party', icon: Users },
   { to: '/notes', label: 'Notes', icon: NotebookPen },
@@ -390,7 +388,8 @@ function AppShell() {
         <Routes>
           <Route path="/" element={<Navigate to="/dashboard" replace />} />
           <Route path="/dashboard" element={<Dashboard />} />
-          <Route path="/dice" element={<DiceRoller />} />
+          {/* /dice is now a tab inside /dashboard — keep the URL working as a redirect. */}
+          <Route path="/dice" element={<Navigate to="/dashboard" replace />} />
           <Route path="/initiative" element={<Initiative />} />
           <Route path="/notes" element={<Notes />} />
           <Route path="/npcs" element={<NPCs />} />

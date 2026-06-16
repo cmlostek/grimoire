@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Pencil, Check, X, UserPlus, MessageCircle, Camera, Trash2 } from 'lucide-react';
+import { Pencil, Check, X, UserPlus, MessageCircle, Camera, Trash2, User as UserIcon, Dice6, Shield, UserMinus } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { useSession } from '../session/sessionStore';
 import { useParty } from '../party/partyStore';
@@ -8,6 +8,10 @@ import ChatPanel from '../chat/ChatPanel';
 import { useChat, type ChatMember } from '../chat/chatStore';
 import { useChatPanel } from '../chat/chatPanelStore';
 import { useProfiles, avatarPublicUrl } from '../profiles/profilesStore';
+import { supabase } from '../../lib/supabase';
+import DiceRoller from '../dice/DiceRoller';
+
+type DashboardTab = 'profile' | 'dice' | 'manage';
 
 /**
  * Player dashboard — landing page after entering a campaign. Phase 1: display
@@ -57,11 +61,18 @@ export default function Dashboard() {
     [party, userId]
   );
 
+  const isGM = role === 'gm';
+  const [tab, setTab] = useState<DashboardTab>('profile');
+  // If the user was on Manage when their role changed, snap them back.
+  useEffect(() => {
+    if (tab === 'manage' && !isGM) setTab('profile');
+  }, [tab, isGM]);
+
   return (
     <div className="h-full overflow-hidden flex flex-col lg:flex-row">
-      {/* ── Profile column ─────────────────────────────────────────────── */}
-      <div className="flex-1 min-w-0 overflow-y-auto px-6 py-6 space-y-6">
-        <div className="flex items-center gap-4">
+      {/* ── Main column (profile header + tabs + tab content) ──────────── */}
+      <div className="flex-1 min-w-0 flex flex-col overflow-hidden">
+        <div className="px-6 pt-6 pb-3 flex items-center gap-4">
           <AvatarUpload
             color={myColor ?? '#94a3b8'}
             initial={(displayName ?? '?').slice(0, 1).toUpperCase()}
@@ -72,44 +83,63 @@ export default function Dashboard() {
           <div className="min-w-0 flex-1">
             <DisplayNameEditor value={displayName ?? ''} onSave={updateMyDisplayName} />
             <div className="text-xs text-slate-500 mt-1">
-              <span className={role === 'gm' ? 'text-emerald-400' : 'text-sky-400'}>
-                {role === 'gm' ? 'Game Master' : 'Player'}
+              <span className={isGM ? 'text-emerald-400' : 'text-sky-400'}>
+                {isGM ? 'Game Master' : 'Player'}
               </span>
             </div>
           </div>
         </div>
 
-        <Section title="Chat color">
-          <ColorPicker value={myColor ?? '#94a3b8'} onChange={updateMyColor} />
-        </Section>
+        <TabBar tab={tab} setTab={setTab} isGM={isGM} />
 
-        <Section title="About">
-          <BioEditor value={myBio ?? ''} onSave={updateMyBio} />
-        </Section>
+        <div className="flex-1 overflow-y-auto">
+          {tab === 'profile' && (
+            <div className="px-6 py-6 space-y-6">
+              <Section title="Chat color">
+                <ColorPicker value={myColor ?? '#94a3b8'} onChange={updateMyColor} />
+              </Section>
 
-        <Section title="Character sheet">
-          {!partyLoaded ? (
-            <div className="text-sm text-slate-500">Loading…</div>
-          ) : myCharacter ? (
-            <CharCard
-              m={myCharacter}
-              userId={userId}
-              isGM={role === 'gm'}
-              editable={true}
-              memberNames={{}}
-              onUpdate={(patch) => updateMember(myCharacter.id, patch)}
-              onRemove={() => removeMember(myCharacter.id)}
-              onClaim={() => claimMember(myCharacter.id)}
-              onUnclaim={() => unclaimMember(myCharacter.id)}
-            />
-          ) : (
-            <NoCharacterCTA party={party} role={role} onClaim={claimMember} />
+              <Section title="About">
+                <BioEditor value={myBio ?? ''} onSave={updateMyBio} />
+              </Section>
+
+              <Section title="Character sheet">
+                {!partyLoaded ? (
+                  <div className="text-sm text-slate-500">Loading…</div>
+                ) : myCharacter ? (
+                  <CharCard
+                    m={myCharacter}
+                    userId={userId}
+                    isGM={isGM}
+                    editable={true}
+                    memberNames={{}}
+                    onUpdate={(patch) => updateMember(myCharacter.id, patch)}
+                    onRemove={() => removeMember(myCharacter.id)}
+                    onClaim={() => claimMember(myCharacter.id)}
+                    onUnclaim={() => unclaimMember(myCharacter.id)}
+                  />
+                ) : (
+                  <NoCharacterCTA party={party} role={role} onClaim={claimMember} />
+                )}
+              </Section>
+
+              <Section title="Campaign members">
+                <CampaignMembersPanel selfId={userId} />
+              </Section>
+            </div>
           )}
-        </Section>
 
-        <Section title="Campaign members">
-          <CampaignMembersPanel selfId={userId} />
-        </Section>
+          {tab === 'dice' && (
+            // DiceRoller already renders its own PageHeader, padding, etc.
+            <DiceRoller />
+          )}
+
+          {tab === 'manage' && isGM && (
+            <div className="px-6 py-6">
+              <CampaignManagementPanel selfId={userId} campaignId={campaignId ?? ''} />
+            </div>
+          )}
+        </div>
       </div>
 
       {/* ── Embedded chat column / row ─────────────────────────────────── */}
@@ -117,6 +147,165 @@ export default function Dashboard() {
         <ChatPanel variant="embedded" />
       </div>
     </div>
+  );
+}
+
+function TabBar({
+  tab,
+  setTab,
+  isGM,
+}: {
+  tab: DashboardTab;
+  setTab: (t: DashboardTab) => void;
+  isGM: boolean;
+}) {
+  const tabs: { id: DashboardTab; label: string; icon: typeof UserIcon; gmOnly?: boolean }[] = [
+    { id: 'profile', label: 'Profile', icon: UserIcon },
+    { id: 'dice', label: 'Dice', icon: Dice6 },
+    { id: 'manage', label: 'Campaign Management', icon: Shield, gmOnly: true },
+  ];
+  return (
+    <div className="border-b border-slate-800 px-4 flex gap-1 overflow-x-auto">
+      {tabs
+        .filter((t) => !t.gmOnly || isGM)
+        .map((t) => {
+          const active = t.id === tab;
+          return (
+            <button
+              key={t.id}
+              onClick={() => setTab(t.id)}
+              className={`flex items-center gap-1.5 px-3 py-2 text-xs uppercase tracking-wider border-b-2 -mb-px transition-colors ${
+                active
+                  ? 'text-slate-100 border-sky-500'
+                  : 'text-slate-500 border-transparent hover:text-slate-300'
+              }`}
+            >
+              <t.icon size={12} />
+              {t.label}
+            </button>
+          );
+        })}
+    </div>
+  );
+}
+
+/**
+ * GM-only Campaign Management panel — lists every member with a Remove
+ * button. Removal cascades party_members rows the player owned via the
+ * existing campaign_members ON DELETE CASCADE chain (set via the schema).
+ * RLS allows is_gm() to delete.
+ */
+function CampaignManagementPanel({
+  selfId,
+  campaignId,
+}: {
+  selfId: string | null;
+  campaignId: string;
+}) {
+  const membersMap = useChat((s) => s.members);
+  const profiles = useProfiles((s) => s.profiles);
+  const loadProfiles = useProfiles((s) => s.loadFor);
+  const [confirmingId, setConfirmingId] = useState<string | null>(null);
+  const [busyId, setBusyId] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const members = useMemo(() => {
+    return Object.values(membersMap).sort((a, b) => {
+      // Self first (read-only), then GMs, then players by name.
+      if (a.userId === selfId) return -1;
+      if (b.userId === selfId) return 1;
+      if (a.role !== b.role) return a.role === 'gm' ? -1 : 1;
+      return a.displayName.localeCompare(b.displayName);
+    });
+  }, [membersMap, selfId]);
+
+  useEffect(() => {
+    if (members.length === 0) return;
+    void loadProfiles(members.map((m) => m.userId));
+  }, [members, loadProfiles]);
+
+  const remove = async (m: ChatMember) => {
+    if (m.userId === selfId) return;
+    setBusyId(m.userId);
+    setError(null);
+    const { error: err } = await supabase
+      .from('campaign_members')
+      .delete()
+      .eq('campaign_id', campaignId)
+      .eq('user_id', m.userId);
+    setBusyId(null);
+    setConfirmingId(null);
+    if (err) {
+      setError(`Couldn't remove ${m.displayName}: ${err.message}`);
+      return;
+    }
+    // The realtime sub on chat_messages / members updates the list.
+  };
+
+  return (
+    <Section title="Campaign management">
+      <div className="text-[12px] text-slate-500 mb-3">
+        Remove members from the campaign. They lose access immediately and any
+        characters they owned become unclaimed. Your own row can't be removed
+        here — use Switch campaign in the sidebar to leave.
+      </div>
+      {error && (
+        <div className="text-[12px] text-rose-300 mb-3 px-3 py-2 bg-rose-950/40 border border-rose-900 rounded">
+          {error}
+        </div>
+      )}
+      <div className="space-y-1.5">
+        {members.map((m) => {
+          const isSelf = m.userId === selfId;
+          const url = avatarPublicUrl(profiles[m.userId]?.avatarPath ?? null);
+          const confirming = confirmingId === m.userId;
+          return (
+            <div
+              key={m.userId}
+              className="flex items-center gap-3 px-3 py-2 rounded bg-slate-900 border border-slate-800"
+            >
+              <MemberAvatar color={m.color} name={m.displayName} url={url} />
+              <div className="min-w-0 flex-1">
+                <div className="text-sm font-medium truncate" style={{ color: m.color }}>
+                  {m.displayName}
+                </div>
+                <div className="text-[10px] uppercase tracking-wider text-slate-500">
+                  {m.role === 'gm' ? 'Game Master' : 'Player'}
+                  {isSelf && ' · you'}
+                </div>
+              </div>
+              {!isSelf && (
+                confirming ? (
+                  <div className="flex items-center gap-1">
+                    <button
+                      onClick={() => remove(m)}
+                      disabled={busyId === m.userId}
+                      className="px-2 py-1 text-[11px] bg-rose-700 hover:bg-rose-600 disabled:opacity-50 text-white rounded"
+                    >
+                      {busyId === m.userId ? 'Removing…' : 'Remove'}
+                    </button>
+                    <button
+                      onClick={() => setConfirmingId(null)}
+                      className="px-2 py-1 text-[11px] bg-slate-700 hover:bg-slate-600 text-slate-200 rounded"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                ) : (
+                  <button
+                    onClick={() => setConfirmingId(m.userId)}
+                    title={`Remove ${m.displayName}`}
+                    className="p-1.5 text-slate-500 hover:text-rose-300 hover:bg-slate-800 rounded flex items-center gap-1 text-[11px]"
+                  >
+                    <UserMinus size={13} /> Remove
+                  </button>
+                )
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </Section>
   );
 }
 
