@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { MessageCircle, X, Send, Pencil, Trash2, Check, Palette } from 'lucide-react';
+import { MessageCircle, X, Send, Pencil, Trash2, Check, Palette, HelpCircle } from 'lucide-react';
 import { useChat, type ChatMember, type ChatMessage } from './chatStore';
 import { useChatPanel } from './chatPanelStore';
 import { useSession } from '../session/sessionStore';
@@ -98,6 +98,7 @@ export default function ChatPanel() {
           <span className="font-medium">Party Chat</span>
         </div>
         <div className="flex items-center gap-1">
+          <SyntaxHelp />
           <MyColorSwatch />
           <button
             onClick={close}
@@ -494,8 +495,8 @@ function Composer({
   };
 
   const placeholder = whisperTo
-    ? `Whispering to ${whisperTo.displayName}…  (Esc to cancel)`
-    : 'Send a message…  (@ players · # content · /w to whisper)';
+    ? `Message @${whisperTo.displayName}`
+    : 'Message @party';
 
   return (
     <div className="border-t border-slate-800 bg-slate-900">
@@ -615,6 +616,69 @@ function MyColorSwatch() {
             />
             Custom hex
           </label>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** Small "?" button in the chat header. Click reveals a syntax cheatsheet. */
+function SyntaxHelp() {
+  const [open, setOpen] = useState(false);
+  const wrapRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onClickAway = (e: MouseEvent) => {
+      if (!wrapRef.current?.contains(e.target as Node)) setOpen(false);
+    };
+    const onEsc = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setOpen(false);
+    };
+    window.addEventListener('mousedown', onClickAway);
+    window.addEventListener('keydown', onEsc);
+    return () => {
+      window.removeEventListener('mousedown', onClickAway);
+      window.removeEventListener('keydown', onEsc);
+    };
+  }, [open]);
+
+  return (
+    <div ref={wrapRef} className="relative">
+      <button
+        onClick={() => setOpen((v) => !v)}
+        title="Chat syntax"
+        className="p-1 rounded hover:bg-slate-800 text-slate-400 hover:text-slate-200"
+      >
+        <HelpCircle size={14} />
+      </button>
+      {open && (
+        <div className="absolute right-0 top-8 z-30 bg-slate-900 border border-slate-700 rounded-md shadow-xl p-3 w-60 text-[12px]">
+          <div className="text-[10px] uppercase tracking-wider text-slate-500 mb-2">
+            Chat syntax
+          </div>
+          <ul className="space-y-1.5 text-slate-300">
+            <li>
+              <span className="font-mono text-slate-100">@</span>
+              <span className="text-slate-500"> — mention a player</span>
+            </li>
+            <li>
+              <span className="font-mono text-slate-100">#</span>
+              <span className="text-slate-500"> — link a note, NPC, item, spell</span>
+            </li>
+            <li>
+              <span className="font-mono text-slate-100">/w</span>
+              <span className="text-slate-500"> — whisper to a player</span>
+            </li>
+            <li>
+              <span className="font-mono text-slate-100">/w</span>
+              <span className="text-slate-500"> alone — repeat last whisper</span>
+            </li>
+            <li>
+              <span className="font-mono text-slate-100">Right-click</span>
+              <span className="text-slate-500"> a chip — copy ID</span>
+            </li>
+          </ul>
         </div>
       )}
     </div>
