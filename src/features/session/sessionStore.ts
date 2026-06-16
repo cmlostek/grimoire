@@ -22,6 +22,7 @@ type SessionState = {
   joinCode: string | null;
   role: Role | null;
   displayName: string | null;
+  myColor: string | null;
   loading: boolean;
   error: string | null;
   myCampaigns: CampaignSummary[];
@@ -35,6 +36,7 @@ type SessionState = {
   joinCampaign: (code: string, displayName: string) => Promise<void>;
   switchToCampaign: (campaignId: string) => Promise<void>;
   leaveCurrent: () => void;
+  updateMyColor: (color: string) => Promise<void>;
 };
 
 const ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
@@ -54,6 +56,7 @@ export const useSession = create<SessionState>((set, get) => ({
   joinCode: null,
   role: null,
   displayName: null,
+  myColor: null,
   loading: true,
   error: null,
   myCampaigns: [],
@@ -76,7 +79,7 @@ export const useSession = create<SessionState>((set, get) => ({
       }
       const { data: mem, error } = await supabase
         .from('campaign_members')
-        .select('role, display_name, campaigns!inner(id, name, join_code)')
+        .select('role, display_name, color, campaigns!inner(id, name, join_code)')
         .eq('campaign_id', stored)
         .eq('user_id', uid)
         .maybeSingle();
@@ -96,6 +99,7 @@ export const useSession = create<SessionState>((set, get) => ({
         joinCode: campaign.join_code,
         role: mem.role as Role,
         displayName: mem.display_name,
+        myColor: (mem.color as string | null) ?? '#94a3b8',
         loading: false,
       });
       get().refreshMyCampaigns();
@@ -143,6 +147,7 @@ export const useSession = create<SessionState>((set, get) => ({
       joinCode: null,
       role: null,
       displayName: null,
+      myColor: null,
       error: null,
       myCampaigns: [],
     });
@@ -182,7 +187,7 @@ export const useSession = create<SessionState>((set, get) => ({
     if (!uid) return;
     const { data: mem, error } = await supabase
       .from('campaign_members')
-      .select('role, display_name, campaigns!inner(id, name, join_code)')
+      .select('role, display_name, color, campaigns!inner(id, name, join_code)')
       .eq('campaign_id', campaignId)
       .eq('user_id', uid)
       .maybeSingle();
@@ -203,6 +208,7 @@ export const useSession = create<SessionState>((set, get) => ({
       joinCode: campaign.join_code,
       role: mem.role as Role,
       displayName: mem.display_name as string,
+      myColor: (mem.color as string | null) ?? '#94a3b8',
       error: null,
     });
   },
@@ -234,6 +240,7 @@ export const useSession = create<SessionState>((set, get) => ({
         joinCode: campaign.join_code,
         role: 'gm',
         displayName,
+        myColor: '#94a3b8',
         loading: false,
       });
       get().refreshMyCampaigns();
@@ -258,13 +265,15 @@ export const useSession = create<SessionState>((set, get) => ({
       if (!campaign) throw new Error(`No campaign with code "${upper}"`);
       const { data: existing } = await supabase
         .from('campaign_members')
-        .select('role')
+        .select('role, color')
         .eq('campaign_id', campaign.id)
         .eq('user_id', uid)
         .maybeSingle();
       let role: Role = 'player';
+      let color = '#94a3b8';
       if (existing) {
         role = existing.role as Role;
+        color = (existing.color as string | null) ?? '#94a3b8';
       } else {
         const { error: mErr } = await supabase.from('campaign_members').insert({
           campaign_id: campaign.id,
@@ -282,6 +291,7 @@ export const useSession = create<SessionState>((set, get) => ({
         joinCode: campaign.join_code,
         role,
         displayName,
+        myColor: color,
         loading: false,
       });
       get().refreshMyCampaigns();
@@ -299,8 +309,26 @@ export const useSession = create<SessionState>((set, get) => ({
       joinCode: null,
       role: null,
       displayName: null,
+      myColor: null,
       error: null,
     });
+  },
+
+  updateMyColor: async (color) => {
+    const uid = get().userId;
+    const cid = get().campaignId;
+    if (!uid || !cid) return;
+    const prev = get().myColor;
+    set({ myColor: color });
+    const { error } = await supabase
+      .from('campaign_members')
+      .update({ color })
+      .eq('campaign_id', cid)
+      .eq('user_id', uid);
+    if (error) {
+      set({ myColor: prev });
+      console.error('[session] updateMyColor failed', error);
+    }
   },
 }));
 

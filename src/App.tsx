@@ -4,6 +4,7 @@ import { Dice6, Swords, NotebookPen, Map as MapIcon, BookOpen, Sparkles, Coins, 
 import DiceRoller from './features/dice/DiceRoller';
 import { QuickDice } from './features/dice/QuickDice';
 import { useQuickDice } from './features/dice/quickDiceStore';
+import ChatPanel from './features/chat/ChatPanel';
 import Initiative from './features/initiative/Initiative';
 import Notes from './features/notes/Notes';
 import MapBoard from './features/map/MapBoard';
@@ -403,6 +404,7 @@ function AppShell() {
         </Routes>
       </main>
       <QuickDice />
+      <ChatPanel />
     </div>
   );
 }

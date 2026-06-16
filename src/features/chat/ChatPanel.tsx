@@ -1,0 +1,622 @@
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { MessageCircle, X, Send, Pencil, Trash2, Check, Palette } from 'lucide-react';
+import { useChat, type ChatMember, type ChatMessage } from './chatStore';
+import { useChatPanel } from './chatPanelStore';
+import { useSession } from '../session/sessionStore';
+import MentionTextarea from './MentionTextarea';
+import { extractMentionIds, parseSegments, filterMembers } from './mentions';
+import { useCatalog, type CatalogKind } from './catalog';
+import { useChatCatalog } from './useChatCatalog';
+import { KIND_FG, KIND_PILL_BG, KIND_ICON_CHAR } from './chips';
+import ChipContextMenu from './ChipContextMenu';
+import {
+  WhisperBar,
+  WhisperPicker,
+  detectWhisperCommand,
+  readLastWhisper,
+  writeLastWhisper,
+  useWhisperKeyboard,
+} from './WhisperUI';
+import { useNotes } from '../notes/notesStore';
+import { useNpcStore } from '../npcs/npcStore';
+
+/**
+ * Floating chat. When closed, renders a small bottom-right button. When open,
+ * renders the panel itself (also bottom-right) and hides the button.
+ */
+export default function ChatPanel() {
+  const open = useChatPanel((s) => s.open);
+  const openPanel = useChatPanel((s) => s.openPanel);
+  const close = useChatPanel((s) => s.close);
+  const campaignId = useSession((s) => s.campaignId);
+  const userId = useSession((s) => s.userId);
+
+  const messages = useChat((s) => s.messages);
+  const members = useChat((s) => s.members);
+  const loaded = useChat((s) => s.loaded);
+  const loadForCampaign = useChat((s) => s.loadForCampaign);
+  const subscribe = useChat((s) => s.subscribe);
+  const clear = useChat((s) => s.clear);
+  const send = useChat((s) => s.send);
+
+  const scrollerRef = useRef<HTMLDivElement>(null);
+  const catalog = useCatalog();
+  useChatCatalog(campaignId);
+
+  // Load + subscribe once per campaign; clear on unmount.
+  useEffect(() => {
+    if (!campaignId) return;
+    loadForCampaign(campaignId);
+    const unsub = subscribe(campaignId);
+    return () => {
+      unsub();
+      clear();
+    };
+  }, [campaignId, loadForCampaign, subscribe, clear]);
+
+  // Auto-scroll to bottom when new messages arrive or the panel opens.
+  useEffect(() => {
+    if (!open) return;
+    const el = scrollerRef.current;
+    if (!el) return;
+    el.scrollTop = el.scrollHeight;
+  }, [open, messages.length]);
+
+  // Esc closes the panel.
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') close();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [open, close]);
+
+  if (!campaignId || !userId) return null;
+
+  if (!open) {
+    return (
+      <button
+        onClick={openPanel}
+        title="Party chat"
+        className="fixed bottom-4 right-4 z-40 h-12 w-12 rounded-full bg-slate-900 border border-slate-700 hover:bg-slate-800 text-slate-200 shadow-lg flex items-center justify-center"
+        style={{ color: 'var(--ac-200)' }}
+      >
+        <MessageCircle size={20} />
+      </button>
+    );
+  }
+
+  return (
+    <div
+      className="fixed bottom-4 right-4 z-40 w-96 h-[32rem] bg-slate-950 border border-slate-700 rounded-lg shadow-2xl overflow-hidden flex flex-col"
+    >
+      <div className="flex items-center justify-between px-3 py-2 border-b border-slate-800 bg-slate-900">
+        <div className="flex items-center gap-2 text-sm text-slate-200">
+          <MessageCircle size={14} style={{ color: 'var(--ac-400)' }} />
+          <span className="font-medium">Party Chat</span>
+        </div>
+        <div className="flex items-center gap-1">
+          <MyColorSwatch />
+          <button
+            onClick={close}
+            className="p-1 rounded hover:bg-slate-800 text-slate-400 hover:text-slate-200"
+            title="Close (Esc)"
+          >
+            <X size={14} />
+          </button>
+        </div>
+      </div>
+
+      <div ref={scrollerRef} className="flex-1 overflow-y-auto px-3 py-2 space-y-2">
+        {!loaded && (
+          <div className="text-xs text-slate-500 text-center py-6">Loading messages…</div>
+        )}
+        {loaded && messages.length === 0 && (
+          <div className="text-xs text-slate-500 text-center py-6">
+            No messages yet. Say hello!
+          </div>
+        )}
+        {messages.map((m) => (
+          <MessageRow
+            key={m.id}
+            msg={m}
+            mine={m.senderId === userId}
+            mentionsMe={m.mentions.includes(userId)}
+            senderName={members[m.senderId]?.displayName ?? 'Unknown'}
+            senderColor={members[m.senderId]?.color ?? '#94a3b8'}
+            members={members}
+            selfId={userId}
+          />
+        ))}
+      </div>
+
+      <Composer
+        campaignId={campaignId}
+        members={Object.values(members)}
+        selfId={userId}
+        catalog={catalog}
+        onSend={(body, opts) =>
+          send(campaignId, body, {
+            mentions: extractMentionIds(body),
+            whisperTo: opts?.whisperTo,
+          })
+        }
+      />
+    </div>
+  );
+}
+
+function MessageRow({
+  msg,
+  mine,
+  mentionsMe,
+  senderName,
+  senderColor,
+  members,
+  selfId,
+}: {
+  msg: ChatMessage;
+  mine: boolean;
+  mentionsMe: boolean;
+  senderName: string;
+  senderColor: string;
+  members: Record<string, ChatMember>;
+  selfId: string;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(msg.body);
+  const editMsg = useChat((s) => s.edit);
+  const removeMsg = useChat((s) => s.remove);
+
+  const isWhisper = msg.whisperTo != null;
+  const isDeleted = msg.deletedAt != null;
+
+  const time = useMemo(() => {
+    const d = new Date(msg.createdAt);
+    return d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  }, [msg.createdAt]);
+
+  const startEdit = () => {
+    setDraft(msg.body);
+    setEditing(true);
+  };
+  const cancelEdit = () => {
+    setEditing(false);
+    setDraft(msg.body);
+  };
+  const saveEdit = async () => {
+    const next = draft.trim();
+    if (!next || next === msg.body) {
+      cancelEdit();
+      return;
+    }
+    await editMsg(msg.id, next);
+    setEditing(false);
+  };
+
+  if (isDeleted) {
+    return (
+      <div className="text-[11px] italic text-slate-600 px-1">
+        <span style={{ color: senderColor }}>{senderName}</span> deleted a message
+      </div>
+    );
+  }
+
+  return (
+    <div
+      className={`group text-sm leading-snug ${
+        mentionsMe ? 'border-l-2 pl-2 -ml-2' : ''
+      }`}
+      style={mentionsMe ? { borderColor: 'var(--ac-400)', background: 'color-mix(in srgb, var(--ac-900) 12%, transparent)' } : undefined}
+    >
+      <div className="flex items-baseline gap-2 mb-0.5">
+        <span className="font-medium text-[12px]" style={{ color: senderColor }}>
+          {senderName}
+        </span>
+        <span className="text-[10px] text-slate-600">{time}</span>
+        {msg.editedAt && (
+          <span className="text-[10px] text-slate-600" title={`Edited ${new Date(msg.editedAt).toLocaleString()}`}>
+            (edited)
+          </span>
+        )}
+        {isWhisper && msg.whisperTo && (
+          <span className="text-[10px] text-slate-500 italic flex items-baseline gap-0.5">
+            <span>whisper →</span>
+            {msg.whisperTo.map((uid, i) => {
+              const m = members[uid];
+              const name = m?.displayName ?? 'unknown';
+              const color = m?.color ?? '#94a3b8';
+              return (
+                <span key={uid} className="not-italic">
+                  {i > 0 && <span className="text-slate-600">,</span>}
+                  <span style={{ color }}>@{name}</span>
+                </span>
+              );
+            })}
+          </span>
+        )}
+        {mine && !editing && (
+          <span className="ml-auto opacity-0 group-hover:opacity-100 flex gap-1">
+            <button
+              onClick={startEdit}
+              className="text-slate-500 hover:text-slate-200 p-0.5"
+              title="Edit"
+            >
+              <Pencil size={11} />
+            </button>
+            <button
+              onClick={() => removeMsg(msg.id)}
+              className="text-slate-500 hover:text-rose-300 p-0.5"
+              title="Delete"
+            >
+              <Trash2 size={11} />
+            </button>
+          </span>
+        )}
+      </div>
+      {editing ? (
+        <EditRow
+          draft={draft}
+          setDraft={setDraft}
+          members={Object.values(members)}
+          selfId={selfId}
+          onSave={saveEdit}
+          onCancel={cancelEdit}
+        />
+      ) : (
+        <MessageBody body={msg.body} members={members} whisper={isWhisper} selfId={selfId} />
+      )}
+    </div>
+  );
+}
+
+function EditRow({
+  draft,
+  setDraft,
+  members,
+  selfId,
+  onSave,
+  onCancel,
+}: {
+  draft: string;
+  setDraft: (v: string) => void;
+  members: ChatMember[];
+  selfId: string;
+  onSave: () => void;
+  onCancel: () => void;
+}) {
+  const catalog = useCatalog();
+  return (
+    <div className="flex items-end gap-1">
+      <div className="flex-1">
+        <MentionTextarea
+          value={draft}
+          onChange={setDraft}
+          members={members}
+          selfId={selfId}
+          catalog={catalog}
+          onSubmit={onSave}
+          onEscape={onCancel}
+          autoFocus
+        />
+      </div>
+      <button
+        onClick={onSave}
+        className="p-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-300"
+        title="Save (Enter)"
+      >
+        <Check size={12} />
+      </button>
+      <button
+        onClick={onCancel}
+        className="p-1 rounded text-slate-500 hover:text-slate-300"
+        title="Cancel (Esc)"
+      >
+        <X size={12} />
+      </button>
+    </div>
+  );
+}
+
+function MessageBody({
+  body,
+  members,
+  whisper,
+  selfId,
+}: {
+  body: string;
+  members: Record<string, ChatMember>;
+  whisper: boolean;
+  selfId: string;
+}) {
+  const segs = useMemo(() => parseSegments(body), [body]);
+  const navigate = useNavigate();
+  const setActiveNote = useNotes((s) => s.setActiveNote);
+  const setActiveNpc = useNpcStore((s) => s.setActive);
+
+  const onOpenRef = (refKind: CatalogKind, identifier: string) => {
+    switch (refKind) {
+      case 'note':
+        setActiveNote(identifier);
+        navigate('/notes');
+        break;
+      case 'npc':
+        setActiveNpc(identifier);
+        navigate('/npcs');
+        break;
+      case 'item':
+      case 'srd-item':
+        navigate('/items');
+        break;
+      case 'spell':
+      case 'srd-spell':
+        navigate('/spells');
+        break;
+    }
+  };
+
+  return (
+    <div
+      className={whisper ? 'italic text-slate-400' : 'text-slate-200'}
+      style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}
+    >
+      {segs.map((s, i) => {
+        if (s.kind === 'text') return <span key={i}>{s.text}</span>;
+        if (s.kind === 'mention') {
+          const m = members[s.userId];
+          const color = m?.color ?? '#94a3b8';
+          const name = m?.displayName ?? s.name;
+          const isSelf = s.userId === selfId;
+          return (
+            <ChipContextMenu key={i} id={s.userId}>
+              <span
+                className="inline-block rounded px-1 py-px text-[12px] font-medium align-baseline"
+                style={{
+                  color,
+                  backgroundColor: `color-mix(in srgb, ${color} ${isSelf ? '28%' : '18%'}, transparent)`,
+                }}
+              >
+                @{name}
+              </span>
+            </ChipContextMenu>
+          );
+        }
+        // catalog reference chip
+        const tokenId = `${s.refKind}:${s.identifier}`;
+        return (
+          <ChipContextMenu key={i} id={tokenId} onClick={() => onOpenRef(s.refKind, s.identifier)}>
+            <span
+              className="inline-flex items-center gap-1 rounded px-1 py-px text-[12px] font-medium align-baseline hover:brightness-125"
+              style={{
+                color: KIND_FG[s.refKind],
+                backgroundColor: KIND_PILL_BG[s.refKind],
+              }}
+            >
+              <span className="text-[10px]">{KIND_ICON_CHAR[s.refKind]}</span>
+              {s.name}
+            </span>
+          </ChipContextMenu>
+        );
+      })}
+    </div>
+  );
+}
+
+function Composer({
+  campaignId,
+  onSend,
+  members,
+  selfId,
+  catalog,
+}: {
+  campaignId: string;
+  onSend: (body: string, opts?: { whisperTo?: string[] }) => void | Promise<void>;
+  members: ChatMember[];
+  selfId: string;
+  catalog: import('./catalog').CatalogEntry[];
+}) {
+  const [value, setValue] = useState('');
+  const [whisperTo, setWhisperTo] = useState<ChatMember | null>(null);
+  const [highlight, setHighlight] = useState(0);
+  const [lastWhisperId, setLastWhisperId] = useState<string | null>(null);
+
+  // Hydrate last-whisper memory when switching campaigns.
+  useEffect(() => {
+    setLastWhisperId(readLastWhisper(campaignId));
+  }, [campaignId]);
+
+  // Only detect the slash command before a recipient is locked in. Once we
+  // have a recipient, the `/w` prefix would just be ordinary message text.
+  const whisperCmd = whisperTo ? null : detectWhisperCommand(value);
+  const pickerActive = whisperCmd != null;
+
+  const candidates = useMemo(() => {
+    if (!whisperCmd) return [];
+    const available = members.filter((m) => m.userId !== selfId);
+    const matched = filterMembers(available, whisperCmd.query);
+    // When the query is empty and we have a remembered recipient who's still
+    // a member, hoist them to the top so Enter re-whispers (like MC's `/r`).
+    if (!whisperCmd.query && lastWhisperId) {
+      const last = matched.find((m) => m.userId === lastWhisperId);
+      if (last) {
+        const rest = matched.filter((m) => m.userId !== lastWhisperId);
+        return [last, ...rest].slice(0, 8);
+      }
+    }
+    return matched.slice(0, 8);
+  }, [members, selfId, whisperCmd, lastWhisperId]);
+
+  useEffect(() => {
+    setHighlight(0);
+  }, [candidates.length, whisperCmd?.query]);
+
+  const pickWhisper = (m: ChatMember) => {
+    setWhisperTo(m);
+    setLastWhisperId(m.userId);
+    writeLastWhisper(campaignId, m.userId);
+    setValue('');
+  };
+  const cancelWhisperCommand = () => {
+    setValue('');
+  };
+
+  useWhisperKeyboard({
+    active: pickerActive,
+    candidates,
+    highlight,
+    setHighlight,
+    pick: pickWhisper,
+    cancel: cancelWhisperCommand,
+  });
+
+  // Esc clears an active whisper recipient (when the picker isn't open).
+  useEffect(() => {
+    if (!whisperTo || pickerActive) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && !value) {
+        e.preventDefault();
+        setWhisperTo(null);
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [whisperTo, pickerActive, value]);
+
+  const submit = async () => {
+    if (pickerActive) return; // Enter is consumed by the picker
+    const v = value.trim();
+    if (!v) return;
+    const target = whisperTo;
+    setValue('');
+    await onSend(v, target ? { whisperTo: [target.userId] } : undefined);
+  };
+
+  const placeholder = whisperTo
+    ? `Whispering to ${whisperTo.displayName}…  (Esc to cancel)`
+    : 'Send a message…  (@ players · # content · /w to whisper)';
+
+  return (
+    <div className="border-t border-slate-800 bg-slate-900">
+      {whisperTo && (
+        <WhisperBar member={whisperTo} onCancel={() => setWhisperTo(null)} />
+      )}
+      <div className="relative px-2 py-2 flex items-end gap-2">
+        {pickerActive && (
+          <WhisperPicker
+            candidates={candidates}
+            active={highlight}
+            lastRecipientId={lastWhisperId}
+            onPick={pickWhisper}
+            onHover={setHighlight}
+          />
+        )}
+        <div className="flex-1">
+          <MentionTextarea
+            value={value}
+            onChange={setValue}
+            members={members}
+            selfId={selfId}
+            catalog={catalog}
+            onSubmit={submit}
+            placeholder={placeholder}
+          />
+        </div>
+        <button
+          onClick={submit}
+          disabled={!value.trim() || pickerActive}
+          className="p-1.5 rounded bg-slate-800 hover:bg-slate-700 disabled:opacity-40 disabled:cursor-not-allowed text-slate-200"
+          title="Send (Enter)"
+        >
+          <Send size={14} />
+        </button>
+      </div>
+    </div>
+  );
+}
+
+const COLOR_PRESETS = [
+  '#94a3b8', '#f87171', '#fb923c', '#fbbf24', '#4ade80',
+  '#22d3ee', '#60a5fa', '#a78bfa', '#f472b6', '#e879f9',
+];
+
+/**
+ * Player-color swatch in the chat header. Click to open a small popover with
+ * presets and a native hex picker. Stays inside the chat panel so it never
+ * gets clipped by sidebar overflow. Will move to a Profile page in a future
+ * pass; this is the v1.1 home.
+ */
+function MyColorSwatch() {
+  const myColor = useSession((s) => s.myColor);
+  const updateMyColor = useSession((s) => s.updateMyColor);
+  const [open, setOpen] = useState(false);
+  const wrapRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onClickAway = (e: MouseEvent) => {
+      if (!wrapRef.current?.contains(e.target as Node)) setOpen(false);
+    };
+    const onEsc = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setOpen(false);
+    };
+    window.addEventListener('mousedown', onClickAway);
+    window.addEventListener('keydown', onEsc);
+    return () => {
+      window.removeEventListener('mousedown', onClickAway);
+      window.removeEventListener('keydown', onEsc);
+    };
+  }, [open]);
+
+  if (!myColor) return null;
+
+  const pick = (c: string) => {
+    void updateMyColor(c);
+    setOpen(false);
+  };
+
+  return (
+    <div ref={wrapRef} className="relative">
+      <button
+        onClick={() => setOpen((v) => !v)}
+        title="Your chat color"
+        className="p-1 rounded hover:bg-slate-800 text-slate-400 hover:text-slate-200 flex items-center gap-1"
+      >
+        <Palette size={13} />
+        <span
+          className="h-3 w-3 rounded-full border border-slate-700 shrink-0"
+          style={{ backgroundColor: myColor }}
+        />
+      </button>
+      {open && (
+        <div className="absolute right-0 top-8 z-30 bg-slate-900 border border-slate-700 rounded-md shadow-xl p-2 w-48">
+          <div className="text-[10px] uppercase tracking-wider text-slate-500 mb-1.5">Your chat color</div>
+          <div className="grid grid-cols-5 gap-1.5 mb-2">
+            {COLOR_PRESETS.map((c) => (
+              <button
+                key={c}
+                onClick={() => pick(c)}
+                className="h-6 w-6 rounded-full border border-slate-700 hover:scale-110 transition-transform"
+                style={{
+                  backgroundColor: c,
+                  boxShadow: c === myColor ? '0 0 0 2px var(--ac-400)' : undefined,
+                }}
+                title={c}
+              />
+            ))}
+          </div>
+          <label className="flex items-center gap-2 text-[11px] text-slate-400">
+            <input
+              type="color"
+              value={myColor}
+              onChange={(e) => updateMyColor(e.target.value)}
+              className="h-5 w-8 bg-transparent border border-slate-700 rounded cursor-pointer"
+            />
+            Custom hex
+          </label>
+        </div>
+      )}
+    </div>
+  );
+}

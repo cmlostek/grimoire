@@ -25,6 +25,17 @@
   /* Elevated surface (used in color-mix calls so accent-tinted cards blend
      toward the right base color per mode). Dark = slate-900, light = white. */
   --surface-elev: #0f172a;
+
+  /* Chat composer + mention suggestions. Hardcoded inline in MentionTextarea
+     wouldn't flip with the theme, so we plumb through CSS vars instead. */
+  --chat-input-bg:           #020617; /* slate-950 */
+  --chat-input-fg:           #f1f5f9; /* slate-100 */
+  --chat-input-border:       #334155; /* slate-700 */
+  --chat-input-placeholder:  #475569; /* slate-600 */
+  --chat-suggest-bg:         #0f172a; /* slate-900 */
+  --chat-suggest-border:     #334155; /* slate-700 */
+  --chat-suggest-fg:         #e2e8f0; /* slate-200 */
+  --chat-suggest-hover-bg:   #1e293b; /* slate-800 */
 }
 
 /* ─── Light mode ──────────────────────────────────────────────────────────
@@ -45,6 +56,16 @@ html.light {
 
   /* Flip the elevated-surface base so accent-tinted cards stay readable. */
   --surface-elev: #ffffff;
+
+  /* Chat composer + suggestions in light mode. */
+  --chat-input-bg:           #ffffff;
+  --chat-input-fg:           #0f172a;
+  --chat-input-border:       #cbd5e1; /* slate-300 */
+  --chat-input-placeholder:  #94a3b8; /* slate-400 */
+  --chat-suggest-bg:         #ffffff;
+  --chat-suggest-border:     #cbd5e1;
+  --chat-suggest-fg:         #1e293b;
+  --chat-suggest-hover-bg:   #e2e8f0; /* slate-200 */
 }
 html.light body { background-color: #f1f5f9; color: #0f172a; }
 html.light .bg-slate-950 { background-color: #f1f5f9 !important; }
@@ -417,4 +438,63 @@ input[type="number"] { -moz-appearance: textfield; appearance: textfield; }
 }
 .map-ping-ring {
   animation: map-ping-ring 2s ease-out forwards;
+}
+/* ── Chat composer (react-mentions) ──────────────────────────────────── */
+/* Almost all visual styling is set inline via the `style` prop on
+ * <MentionsInput> in MentionTextarea.tsx — the library sets a few critical
+ * properties (color, padding) inline, which beats any CSS class. The rules
+ * below only cover what `style` can't reach: pseudo-classes (focus,
+ * placeholder) and the mention-pill spans rendered inside the highlighter. */
+.mentions__input:focus {
+  border-color: #0369a1 !important;  /* sky-700 */
+}
+.mentions__input::placeholder {
+  color: var(--chat-input-placeholder);
+  -webkit-text-fill-color: var(--chat-input-placeholder);  /* required because input itself is transparent */
+}
+.mentions__mention {
+  border-radius: 4px;
+  padding: 0 2px;
+  color: var(--ac-200);
+  font-weight: 500;
+}
+.mentions__mention--ref {
+  color: #c4b5fd;  /* violet-300 fallback for hash refs */
+}
+
+.mention-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.mention-row__dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  border: 1px solid #334155;
+  flex-shrink: 0;
+}
+.mention-row__kind {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 4px;
+  font-size: 11px;
+  flex-shrink: 0;
+}
+.mention-row__name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.mention-row__hint {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #64748b; /* slate-500 */
+  flex-shrink: 0;
 }

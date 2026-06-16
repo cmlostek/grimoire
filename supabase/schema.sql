@@ -29,9 +29,13 @@ create table if not exists campaign_members (
   user_id       uuid not null default auth.uid(),
   display_name  text not null,
   role          text not null check (role in ('gm','player')),
+  color         text not null default '#94a3b8',
   joined_at     timestamptz not null default now(),
   unique (campaign_id, user_id)
 );
+-- Older installs predating chat: add the color column if missing.
+alter table campaign_members
+  add column if not exists color text not null default '#94a3b8';
 create index if not exists campaign_members_by_campaign on campaign_members(campaign_id);
 
 create table if not exists notes (
@@ -535,3 +539,50 @@ alter publication supabase_realtime add table note_permissions;
 -- start from a consistent CRDT baseline (no duplicate-content on cold join).
 
 alter table notes add column if not exists ydoc_state text;
+
+
+-- =============================================
+-- SECTION 10 — Chat messages (party chat, whispers, mentions, edit/delete)
+-- =============================================
+
+create table if not exists chat_messages (
+  id           uuid primary key default gen_random_uuid(),
+  campaign_id  uuid not null references campaigns(id) on delete cascade,
+  sender_id    uuid not null default auth.uid(),
+  body         text not null,
+  mentions     uuid[] not null default '{}',
+  whisper_to   uuid[],
+  edited_at    timestamptz,
+  deleted_at   timestamptz,
+  created_at   timestamptz not null default now()
+);
+
+create index if not exists chat_messages_campaign_created_idx
+  on chat_messages (campaign_id, created_at desc);
+
+create index if not exists chat_messages_whisper_to_idx
+  on chat_messages using gin (whisper_to);
+
+alter table chat_messages enable row level security;
+
+drop policy if exists chat_messages_select on chat_messages;
+create policy chat_messages_select on chat_messages for select to authenticated
+  using (
+    is_member(campaign_id)
+    and (
+      whisper_to is null
+      or sender_id = auth.uid()
+      or auth.uid() = any(whisper_to)
+    )
+  );
+
+drop policy if exists chat_messages_insert on chat_messages;
+create policy chat_messages_insert on chat_messages for insert to authenticated
+  with check (is_member(campaign_id) and sender_id = auth.uid());
+
+drop policy if exists chat_messages_update on chat_messages;
+create policy chat_messages_update on chat_messages for update to authenticated
+  using (sender_id = auth.uid() or is_gm(campaign_id))
+  with check (sender_id = auth.uid() or is_gm(campaign_id));
+
+alter publication supabase_realtime add table chat_messages;
