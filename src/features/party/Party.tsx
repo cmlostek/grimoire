@@ -150,7 +150,7 @@ export default function Party() {
   );
 }
 
-function CharCard({
+export function CharCard({
   m,
   userId,
   isGM,

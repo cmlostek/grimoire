@@ -22,10 +22,14 @@ import { useNotes } from '../notes/notesStore';
 import { useNpcStore } from '../npcs/npcStore';
 
 /**
- * Floating chat. When closed, renders a small bottom-right button. When open,
- * renders the panel itself (also bottom-right) and hides the button.
+ * Chat. Two render modes:
+ *  - `variant="floating"` (default): bottom-right floating button → panel.
+ *    Used on every page that doesn't have its own chat surface.
+ *  - `variant="embedded"`: fills its parent, no close X, ignores open/close
+ *    state. Used by the player dashboard.
  */
-export default function ChatPanel() {
+export default function ChatPanel({ variant = 'floating' }: { variant?: 'floating' | 'embedded' } = {}) {
+  const embedded = variant === 'embedded';
   const open = useChatPanel((s) => s.open);
   const openPanel = useChatPanel((s) => s.openPanel);
   const close = useChatPanel((s) => s.close);
@@ -55,27 +59,30 @@ export default function ChatPanel() {
     };
   }, [campaignId, loadForCampaign, subscribe, clear]);
 
-  // Auto-scroll to bottom when new messages arrive or the panel opens.
+  // Embedded mode is always "open" — only the floating variant has a panel state.
+  const isOpen = embedded || open;
+
+  // Auto-scroll to bottom when new messages arrive or the panel becomes visible.
   useEffect(() => {
-    if (!open) return;
+    if (!isOpen) return;
     const el = scrollerRef.current;
     if (!el) return;
     el.scrollTop = el.scrollHeight;
-  }, [open, messages.length]);
+  }, [isOpen, messages.length]);
 
-  // Esc closes the panel.
+  // Esc closes the floating panel (no-op when embedded).
   useEffect(() => {
-    if (!open) return;
+    if (!open || embedded) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') close();
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [open, close]);
+  }, [open, embedded, close]);
 
   if (!campaignId || !userId) return null;
 
-  if (!open) {
+  if (!embedded && !open) {
     return (
       <button
         onClick={openPanel}
@@ -88,10 +95,12 @@ export default function ChatPanel() {
     );
   }
 
+  const containerClass = embedded
+    ? 'h-full w-full bg-slate-950 border border-slate-800 rounded-lg overflow-hidden flex flex-col'
+    : 'fixed bottom-4 right-4 z-40 w-96 h-[32rem] bg-slate-950 border border-slate-700 rounded-lg shadow-2xl overflow-hidden flex flex-col';
+
   return (
-    <div
-      className="fixed bottom-4 right-4 z-40 w-96 h-[32rem] bg-slate-950 border border-slate-700 rounded-lg shadow-2xl overflow-hidden flex flex-col"
-    >
+    <div className={containerClass}>
       <div className="flex items-center justify-between px-3 py-2 border-b border-slate-800 bg-slate-900">
         <div className="flex items-center gap-2 text-sm text-slate-200">
           <MessageCircle size={14} style={{ color: 'var(--ac-400)' }} />
@@ -99,14 +108,16 @@ export default function ChatPanel() {
         </div>
         <div className="flex items-center gap-1">
           <SyntaxHelp />
-          <MyColorSwatch />
-          <button
-            onClick={close}
-            className="p-1 rounded hover:bg-slate-800 text-slate-400 hover:text-slate-200"
-            title="Close (Esc)"
-          >
-            <X size={14} />
-          </button>
+          {!embedded && <MyColorSwatch />}
+          {!embedded && (
+            <button
+              onClick={close}
+              className="p-1 rounded hover:bg-slate-800 text-slate-400 hover:text-slate-200"
+              title="Close (Esc)"
+            >
+              <X size={14} />
+            </button>
+          )}
         </div>
       </div>
 

@@ -23,6 +23,7 @@ type SessionState = {
   role: Role | null;
   displayName: string | null;
   myColor: string | null;
+  myBio: string | null;
   loading: boolean;
   error: string | null;
   myCampaigns: CampaignSummary[];
@@ -37,6 +38,8 @@ type SessionState = {
   switchToCampaign: (campaignId: string) => Promise<void>;
   leaveCurrent: () => void;
   updateMyColor: (color: string) => Promise<void>;
+  updateMyBio: (bio: string) => Promise<void>;
+  updateMyDisplayName: (name: string) => Promise<void>;
 };
 
 const ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
@@ -57,6 +60,7 @@ export const useSession = create<SessionState>((set, get) => ({
   role: null,
   displayName: null,
   myColor: null,
+  myBio: null,
   loading: true,
   error: null,
   myCampaigns: [],
@@ -79,7 +83,7 @@ export const useSession = create<SessionState>((set, get) => ({
       }
       const { data: mem, error } = await supabase
         .from('campaign_members')
-        .select('role, display_name, color, campaigns!inner(id, name, join_code)')
+        .select('role, display_name, color, bio, campaigns!inner(id, name, join_code)')
         .eq('campaign_id', stored)
         .eq('user_id', uid)
         .maybeSingle();
@@ -100,6 +104,7 @@ export const useSession = create<SessionState>((set, get) => ({
         role: mem.role as Role,
         displayName: mem.display_name,
         myColor: (mem.color as string | null) ?? '#94a3b8',
+        myBio: (mem.bio as string | null) ?? '',
         loading: false,
       });
       get().refreshMyCampaigns();
@@ -148,6 +153,7 @@ export const useSession = create<SessionState>((set, get) => ({
       role: null,
       displayName: null,
       myColor: null,
+      myBio: null,
       error: null,
       myCampaigns: [],
     });
@@ -187,7 +193,7 @@ export const useSession = create<SessionState>((set, get) => ({
     if (!uid) return;
     const { data: mem, error } = await supabase
       .from('campaign_members')
-      .select('role, display_name, color, campaigns!inner(id, name, join_code)')
+      .select('role, display_name, color, bio, campaigns!inner(id, name, join_code)')
       .eq('campaign_id', campaignId)
       .eq('user_id', uid)
       .maybeSingle();
@@ -241,6 +247,7 @@ export const useSession = create<SessionState>((set, get) => ({
         role: 'gm',
         displayName,
         myColor: '#94a3b8',
+        myBio: '',
         loading: false,
       });
       get().refreshMyCampaigns();
@@ -265,15 +272,17 @@ export const useSession = create<SessionState>((set, get) => ({
       if (!campaign) throw new Error(`No campaign with code "${upper}"`);
       const { data: existing } = await supabase
         .from('campaign_members')
-        .select('role, color')
+        .select('role, color, bio')
         .eq('campaign_id', campaign.id)
         .eq('user_id', uid)
         .maybeSingle();
       let role: Role = 'player';
       let color = '#94a3b8';
+      let bio = '';
       if (existing) {
         role = existing.role as Role;
         color = (existing.color as string | null) ?? '#94a3b8';
+        bio = (existing.bio as string | null) ?? '';
       } else {
         const { error: mErr } = await supabase.from('campaign_members').insert({
           campaign_id: campaign.id,
@@ -292,6 +301,7 @@ export const useSession = create<SessionState>((set, get) => ({
         role,
         displayName,
         myColor: color,
+        myBio: bio,
         loading: false,
       });
       get().refreshMyCampaigns();
@@ -310,6 +320,7 @@ export const useSession = create<SessionState>((set, get) => ({
       role: null,
       displayName: null,
       myColor: null,
+      myBio: null,
       error: null,
     });
   },
@@ -328,6 +339,43 @@ export const useSession = create<SessionState>((set, get) => ({
     if (error) {
       set({ myColor: prev });
       console.error('[session] updateMyColor failed', error);
+    }
+  },
+
+  updateMyBio: async (bio) => {
+    const uid = get().userId;
+    const cid = get().campaignId;
+    if (!uid || !cid) return;
+    const prev = get().myBio;
+    set({ myBio: bio });
+    const { error } = await supabase
+      .from('campaign_members')
+      .update({ bio })
+      .eq('campaign_id', cid)
+      .eq('user_id', uid);
+    if (error) {
+      set({ myBio: prev });
+      console.error('[session] updateMyBio failed', error);
+    }
+  },
+
+  updateMyDisplayName: async (name) => {
+    const uid = get().userId;
+    const cid = get().campaignId;
+    if (!uid || !cid) return;
+    const trimmed = name.trim();
+    if (!trimmed) return;
+    const prev = get().displayName;
+    set({ displayName: trimmed });
+    localStorage.setItem(NAME_KEY, trimmed);
+    const { error } = await supabase
+      .from('campaign_members')
+      .update({ display_name: trimmed })
+      .eq('campaign_id', cid)
+      .eq('user_id', uid);
+    if (error) {
+      set({ displayName: prev });
+      console.error('[session] updateMyDisplayName failed', error);
     }
   },
 }));

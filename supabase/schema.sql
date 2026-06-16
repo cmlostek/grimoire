@@ -30,12 +30,16 @@ create table if not exists campaign_members (
   display_name  text not null,
   role          text not null check (role in ('gm','player')),
   color         text not null default '#94a3b8',
+  bio           text not null default '',
   joined_at     timestamptz not null default now(),
   unique (campaign_id, user_id)
 );
 -- Older installs predating chat: add the color column if missing.
 alter table campaign_members
   add column if not exists color text not null default '#94a3b8';
+-- Older installs predating the player dashboard: add bio if missing.
+alter table campaign_members
+  add column if not exists bio text not null default '';
 create index if not exists campaign_members_by_campaign on campaign_members(campaign_id);
 
 create table if not exists notes (

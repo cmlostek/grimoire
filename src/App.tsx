@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { NavLink, Route, Routes, Navigate, useLocation } from 'react-router-dom';
-import { Dice6, Swords, NotebookPen, Map as MapIcon, BookOpen, Sparkles, Coins, Package, ScrollText, Users, FlaskConical, Dices, LogOut, ArrowLeftRight, Copy, Mic, Eye, EyeOff, Settings, BookMarked, Sun, Moon, PanelLeftClose, PanelLeftOpen, Radio } from 'lucide-react';
+import { Dice6, Swords, NotebookPen, Map as MapIcon, BookOpen, Sparkles, Coins, Package, ScrollText, Users, FlaskConical, Dices, LogOut, ArrowLeftRight, Copy, Mic, Eye, EyeOff, Settings, BookMarked, Sun, Moon, PanelLeftClose, PanelLeftOpen, Radio, LayoutDashboard } from 'lucide-react';
 import DiceRoller from './features/dice/DiceRoller';
 import { QuickDice } from './features/dice/QuickDice';
 import { useQuickDice } from './features/dice/quickDiceStore';
@@ -17,6 +17,7 @@ import Party from './features/party/Party';
 import Homebrew from './features/homebrew/Homebrew';
 import Transcription from './features/transcription/Transcription';
 import NPCs from './features/npcs/NPCs';
+import Dashboard from './features/dashboard/Dashboard';
 import CampaignPicker from './features/session/CampaignPicker';
 import { useSession } from './features/session/sessionStore';
 import { useCampaignSettings } from './features/notes/campaignSettingsStore';
@@ -31,6 +32,7 @@ type NavItem = {
 };
 
 const nav: NavItem[] = [
+  { to: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
   { to: '/dice', label: 'Dice', icon: Dice6 },
   { to: '/initiative', label: 'Initiative', icon: Swords },
   { to: '/party', label: 'Party', icon: Users },
@@ -386,7 +388,8 @@ function AppShell() {
       </aside>
       <main className="flex-1 min-w-0 overflow-hidden">
         <Routes>
-          <Route path="/" element={<Navigate to="/dice" replace />} />
+          <Route path="/" element={<Navigate to="/dashboard" replace />} />
+          <Route path="/dashboard" element={<Dashboard />} />
           <Route path="/dice" element={<DiceRoller />} />
           <Route path="/initiative" element={<Initiative />} />
           <Route path="/notes" element={<Notes />} />
@@ -400,11 +403,12 @@ function AppShell() {
           {role === 'gm' && <Route path="/homebrew" element={<Homebrew />} />}
           {role === 'gm' && <Route path="/record" element={<Transcription />} />}
           <Route path="/rules" element={<Rules />} />
-          <Route path="*" element={<Navigate to="/dice" replace />} />
+          <Route path="*" element={<Navigate to="/dashboard" replace />} />
         </Routes>
       </main>
       <QuickDice />
-      <ChatPanel />
+      {/* Dashboard embeds its own chat surface, so hide the floating one there. */}
+      {location.pathname !== '/dashboard' && <ChatPanel />}
     </div>
   );
 }
