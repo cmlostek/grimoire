@@ -20,6 +20,7 @@ import {
 } from './WhisperUI';
 import { useNotes } from '../notes/notesStore';
 import { useNpcStore } from '../npcs/npcStore';
+import { useProfiles, avatarPublicUrl } from '../profiles/profilesStore';
 
 /**
  * Chat. Two render modes:
@@ -47,6 +48,14 @@ export default function ChatPanel({ variant = 'floating' }: { variant?: 'floatin
   const scrollerRef = useRef<HTMLDivElement>(null);
   const catalog = useCatalog();
   useChatCatalog(campaignId);
+
+  // Pull avatars for every member so message rows can render their picture.
+  const profiles = useProfiles((s) => s.profiles);
+  const loadProfiles = useProfiles((s) => s.loadFor);
+  useEffect(() => {
+    const ids = Object.keys(members);
+    if (ids.length > 0) void loadProfiles(ids);
+  }, [members, loadProfiles]);
 
   // Load + subscribe once per campaign; clear on unmount.
   useEffect(() => {
@@ -138,6 +147,7 @@ export default function ChatPanel({ variant = 'floating' }: { variant?: 'floatin
             mentionsMe={m.mentions.includes(userId)}
             senderName={members[m.senderId]?.displayName ?? 'Unknown'}
             senderColor={members[m.senderId]?.color ?? '#94a3b8'}
+            senderAvatarUrl={avatarPublicUrl(profiles[m.senderId]?.avatarPath ?? null)}
             members={members}
             selfId={userId}
           />
@@ -166,6 +176,7 @@ function MessageRow({
   mentionsMe,
   senderName,
   senderColor,
+  senderAvatarUrl,
   members,
   selfId,
 }: {
@@ -174,6 +185,7 @@ function MessageRow({
   mentionsMe: boolean;
   senderName: string;
   senderColor: string;
+  senderAvatarUrl: string | null;
   members: Record<string, ChatMember>;
   selfId: string;
 }) {
@@ -210,7 +222,7 @@ function MessageRow({
 
   if (isDeleted) {
     return (
-      <div className="text-[11px] italic text-slate-600 px-1">
+      <div className="text-[11px] italic text-slate-600 pl-10">
         <span style={{ color: senderColor }}>{senderName}</span> deleted a message
       </div>
     );
@@ -218,11 +230,13 @@ function MessageRow({
 
   return (
     <div
-      className={`group text-sm leading-snug ${
+      className={`group text-sm leading-snug flex gap-2 ${
         mentionsMe ? 'border-l-2 pl-2 -ml-2' : ''
       }`}
       style={mentionsMe ? { borderColor: 'var(--ac-400)', background: 'color-mix(in srgb, var(--ac-900) 12%, transparent)' } : undefined}
     >
+      <ChatAvatar url={senderAvatarUrl} color={senderColor} name={senderName} />
+      <div className="flex-1 min-w-0">
       <div className="flex items-baseline gap-2 mb-0.5">
         <span className="font-medium text-[12px]" style={{ color: senderColor }}>
           {senderName}
@@ -280,6 +294,33 @@ function MessageRow({
       ) : (
         <MessageBody body={msg.body} members={members} whisper={isWhisper} selfId={selfId} />
       )}
+      </div>
+    </div>
+  );
+}
+
+/** Small (28px) avatar shown next to each message — image or colored initial. */
+function ChatAvatar({
+  url,
+  color,
+  name,
+}: {
+  url: string | null;
+  color: string;
+  name: string;
+}) {
+  const initial = (name || '?').slice(0, 1).toUpperCase();
+  return (
+    <div
+      className="h-7 w-7 rounded-full border overflow-hidden flex items-center justify-center text-[11px] font-serif shrink-0 mt-0.5"
+      style={{
+        borderColor: color,
+        backgroundColor: url ? '#020617' : `color-mix(in srgb, ${color} 22%, transparent)`,
+        color,
+      }}
+      title={name}
+    >
+      {url ? <img src={url} alt="" className="h-full w-full object-cover" /> : initial}
     </div>
   );
 }
