@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Pencil, Check, X, UserPlus, MessageCircle, Camera, Trash2, User as UserIcon, Dice6, Shield, UserMinus } from 'lucide-react';
+import { Pencil, Check, X, UserPlus, MessageCircle, Camera, Trash2, User as UserIcon, Dice6, Shield, UserMinus, LogOut } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { useSession } from '../session/sessionStore';
 import { useParty } from '../party/partyStore';
@@ -126,6 +126,11 @@ export default function Dashboard() {
               <Section title="Campaign members">
                 <CampaignMembersPanel selfId={userId} />
               </Section>
+
+              <div className="pt-6 border-t border-slate-800">
+                <div className="text-[10px] uppercase tracking-wider text-rose-400 mb-2">Danger zone</div>
+                <LeaveCampaignRow />
+              </div>
             </div>
           )}
 
@@ -305,23 +310,41 @@ function CampaignManagementPanel({
           );
         })}
       </div>
-      <div className="mt-6 pt-6 border-t border-slate-800">
+      <div className="mt-6 pt-6 border-t border-slate-800 space-y-2">
         <div className="text-[10px] uppercase tracking-wider text-rose-400 mb-2">Danger zone</div>
         <ClearChatRow campaignId={campaignId} />
+        <DeleteCampaignRow />
       </div>
     </Section>
   );
 }
 
-function ClearChatRow({ campaignId }: { campaignId: string }) {
-  const clearAll = useChat((s) => s.clearAll);
+/**
+ * Shared shell for a Danger-zone row — title, blurb, two-step confirm
+ * pattern. Keeps Clear chat / Leave / Delete visually identical.
+ */
+function DangerRow({
+  title,
+  blurb,
+  ctaLabel,
+  ctaIcon,
+  confirmLabel,
+  onConfirm,
+}: {
+  title: string;
+  blurb: string;
+  ctaLabel: string;
+  ctaIcon: React.ReactNode;
+  confirmLabel: string;
+  onConfirm: () => Promise<{ ok: true } | { ok: false; error: string }>;
+}) {
   const [confirming, setConfirming] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const fire = async () => {
     setBusy(true);
     setError(null);
-    const res = await clearAll(campaignId);
+    const res = await onConfirm();
     setBusy(false);
     setConfirming(false);
     if (!res.ok) setError(res.error);
@@ -330,10 +353,8 @@ function ClearChatRow({ campaignId }: { campaignId: string }) {
     <div className="bg-rose-950/20 border border-rose-900/50 rounded p-3">
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
-          <div className="text-sm text-slate-200">Clear chat history</div>
-          <div className="text-[11px] text-slate-500">
-            Permanently deletes every chat message in this campaign for every player. This cannot be undone.
-          </div>
+          <div className="text-sm text-slate-200">{title}</div>
+          <div className="text-[11px] text-slate-500">{blurb}</div>
         </div>
         {confirming ? (
           <div className="flex items-center gap-1 shrink-0">
@@ -342,7 +363,7 @@ function ClearChatRow({ campaignId }: { campaignId: string }) {
               disabled={busy}
               className="px-2 py-1 text-[11px] bg-rose-700 hover:bg-rose-600 disabled:opacity-50 text-white rounded"
             >
-              {busy ? 'Clearing…' : 'Confirm clear'}
+              {busy ? 'Working…' : confirmLabel}
             </button>
             <button
               onClick={() => setConfirming(false)}
@@ -356,12 +377,56 @@ function ClearChatRow({ campaignId }: { campaignId: string }) {
             onClick={() => setConfirming(true)}
             className="px-2 py-1 text-[11px] text-rose-300 hover:bg-rose-950/40 border border-rose-900/50 rounded flex items-center gap-1 shrink-0"
           >
-            <Trash2 size={11} /> Clear chat
+            {ctaIcon} {ctaLabel}
           </button>
         )}
       </div>
       {error && <div className="text-[11px] text-rose-300 mt-2">{error}</div>}
     </div>
+  );
+}
+
+function ClearChatRow({ campaignId }: { campaignId: string }) {
+  const clearAll = useChat((s) => s.clearAll);
+  return (
+    <DangerRow
+      title="Clear chat history"
+      blurb="Permanently deletes every chat message in this campaign for every player. This cannot be undone."
+      ctaLabel="Clear chat"
+      ctaIcon={<Trash2 size={11} />}
+      confirmLabel="Confirm clear"
+      onConfirm={() => clearAll(campaignId)}
+    />
+  );
+}
+
+function LeaveCampaignRow() {
+  const leaveCampaign = useSession((s) => s.leaveCampaign);
+  const campaignName = useSession((s) => s.campaignName);
+  return (
+    <DangerRow
+      title="Leave campaign"
+      blurb={`You'll lose access to ${campaignName ?? 'this campaign'} until a GM invites you back with the join code. Any characters you owned become unclaimed.`}
+      ctaLabel="Leave"
+      ctaIcon={<LogOut size={11} />}
+      confirmLabel="Confirm leave"
+      onConfirm={leaveCampaign}
+    />
+  );
+}
+
+function DeleteCampaignRow() {
+  const deleteCampaign = useSession((s) => s.deleteCampaign);
+  const campaignName = useSession((s) => s.campaignName);
+  return (
+    <DangerRow
+      title="Delete campaign"
+      blurb={`Permanently deletes ${campaignName ?? 'this campaign'} and everything inside it — notes, NPCs, party, map, chat, all of it. Every player loses access immediately. This cannot be undone.`}
+      ctaLabel="Delete"
+      ctaIcon={<Trash2 size={11} />}
+      confirmLabel="Confirm delete"
+      onConfirm={deleteCampaign}
+    />
   );
 }
 

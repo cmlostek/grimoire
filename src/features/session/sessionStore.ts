@@ -45,6 +45,10 @@ type SessionState = {
   loadMyProfile: () => Promise<void>;
   uploadMyAvatar: (file: File) => Promise<{ ok: true } | { ok: false; error: string }>;
   removeMyAvatar: () => Promise<void>;
+  /** Drops the user's membership row from the active campaign (real leave). */
+  leaveCampaign: () => Promise<{ ok: true } | { ok: false; error: string }>;
+  /** GM-only: deletes the active campaign and cascades everything. */
+  deleteCampaign: () => Promise<{ ok: true } | { ok: false; error: string }>;
 };
 
 const ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
@@ -418,6 +422,59 @@ export const useSession = create<SessionState>((set, get) => ({
       void supabase.storage.from('avatars').remove([prevPath]);
     }
 
+    return { ok: true };
+  },
+
+  leaveCampaign: async () => {
+    const uid = get().userId;
+    const cid = get().campaignId;
+    if (!uid || !cid) return { ok: false, error: 'No active campaign.' };
+    const { error } = await supabase
+      .from('campaign_members')
+      .delete()
+      .eq('campaign_id', cid)
+      .eq('user_id', uid);
+    if (error) {
+      console.error('[session] leaveCampaign failed', error);
+      return { ok: false, error: error.message };
+    }
+    // Clear local campaign state; App.tsx will show the CampaignPicker.
+    localStorage.removeItem(STORAGE_KEY);
+    set({
+      campaignId: null,
+      campaignName: null,
+      joinCode: null,
+      role: null,
+      displayName: null,
+      myColor: null,
+      myBio: null,
+      error: null,
+    });
+    void get().refreshMyCampaigns();
+    return { ok: true };
+  },
+
+  deleteCampaign: async () => {
+    const cid = get().campaignId;
+    if (!cid) return { ok: false, error: 'No active campaign.' };
+    const { error } = await supabase.from('campaigns').delete().eq('id', cid);
+    if (error) {
+      console.error('[session] deleteCampaign failed', error);
+      return { ok: false, error: error.message };
+    }
+    // ON DELETE CASCADE on every dependent table wipes the rest.
+    localStorage.removeItem(STORAGE_KEY);
+    set({
+      campaignId: null,
+      campaignName: null,
+      joinCode: null,
+      role: null,
+      displayName: null,
+      myColor: null,
+      myBio: null,
+      error: null,
+    });
+    void get().refreshMyCampaigns();
     return { ok: true };
   },
 
