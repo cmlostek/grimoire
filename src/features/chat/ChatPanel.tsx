@@ -22,6 +22,37 @@ import { useNotes } from '../notes/notesStore';
 import { useNpcStore } from '../npcs/npcStore';
 import { useProfiles, avatarPublicUrl } from '../profiles/profilesStore';
 
+/** Floating-chat resize bounds + persistence. */
+const MIN_POPOUT_W = 280;
+const MIN_POPOUT_H = 240;
+const DEFAULT_POPOUT_W = 384;  // matches the old `w-96`
+const DEFAULT_POPOUT_H = 512;  // matches the old `h-[32rem]`
+const POPOUT_SIZE_KEY = 'grimoire:chat:popout-size';
+
+const clamp = (n: number, lo: number, hi: number) => Math.min(Math.max(n, lo), hi);
+
+function readPopoutSize(): { w: number; h: number } {
+  try {
+    const raw = localStorage.getItem(POPOUT_SIZE_KEY);
+    if (!raw) return { w: DEFAULT_POPOUT_W, h: DEFAULT_POPOUT_H };
+    const parsed = JSON.parse(raw) as { w?: number; h?: number };
+    return {
+      w: clamp(parsed.w ?? DEFAULT_POPOUT_W, MIN_POPOUT_W, 1600),
+      h: clamp(parsed.h ?? DEFAULT_POPOUT_H, MIN_POPOUT_H, 1200),
+    };
+  } catch {
+    return { w: DEFAULT_POPOUT_W, h: DEFAULT_POPOUT_H };
+  }
+}
+
+function writePopoutSize(size: { w: number; h: number }) {
+  try {
+    localStorage.setItem(POPOUT_SIZE_KEY, JSON.stringify(size));
+  } catch {
+    /* ignore quota / private-mode errors */
+  }
+}
+
 /**
  * Chat. Two render modes:
  *  - `variant="floating"` (default): bottom-right floating button → panel.
@@ -89,6 +120,38 @@ export default function ChatPanel({ variant = 'floating' }: { variant?: 'floatin
     return () => window.removeEventListener('keydown', onKey);
   }, [open, embedded, close]);
 
+  // Floating panel: hydrate user-resized dimensions from localStorage so the
+  // size sticks across reloads. Embedded mode fills its container and ignores
+  // these values.
+  const [size, setSize] = useState<{ w: number; h: number }>(() => readPopoutSize());
+  const sizeRef = useRef(size);
+  sizeRef.current = size;
+
+  const beginResize = (e: React.MouseEvent) => {
+    e.preventDefault();
+    const startW = size.w;
+    const startH = size.h;
+    const startX = e.clientX;
+    const startY = e.clientY;
+    const onMove = (ev: MouseEvent) => {
+      // Anchor is bottom-right; dragging up-left grows the panel.
+      const dw = startX - ev.clientX;
+      const dh = startY - ev.clientY;
+      const next = {
+        w: clamp(startW + dw, MIN_POPOUT_W, window.innerWidth - 32),
+        h: clamp(startH + dh, MIN_POPOUT_H, window.innerHeight - 32),
+      };
+      setSize(next);
+    };
+    const onUp = () => {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+      writePopoutSize(sizeRef.current);
+    };
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+  };
+
   if (!campaignId || !userId) return null;
 
   if (!embedded && !open) {
@@ -106,10 +169,25 @@ export default function ChatPanel({ variant = 'floating' }: { variant?: 'floatin
 
   const containerClass = embedded
     ? 'h-full w-full bg-slate-950 border border-slate-800 rounded-lg overflow-hidden flex flex-col'
-    : 'fixed bottom-4 right-4 z-40 w-96 h-[32rem] bg-slate-950 border border-slate-700 rounded-lg shadow-2xl overflow-hidden flex flex-col';
+    : 'fixed bottom-4 right-4 z-40 bg-slate-950 border border-slate-700 rounded-lg shadow-2xl overflow-hidden flex flex-col';
+
+  const containerStyle = embedded ? undefined : { width: size.w, height: size.h };
 
   return (
-    <div className={containerClass}>
+    <div className={containerClass} style={containerStyle}>
+      {!embedded && (
+        <button
+          onMouseDown={beginResize}
+          title="Drag to resize"
+          aria-label="Resize chat panel"
+          className="absolute top-1 left-1 z-10 w-4 h-4 text-slate-600 hover:text-slate-300 flex items-center justify-center"
+          style={{ cursor: 'nwse-resize' }}
+        >
+          <svg viewBox="0 0 10 10" className="w-3 h-3" fill="none" stroke="currentColor" strokeWidth="1.5">
+            <path d="M0.5 4.5 L4.5 0.5 M0.5 8.5 L8.5 0.5" />
+          </svg>
+        </button>
+      )}
       <div className="flex items-center justify-between px-3 py-2 border-b border-slate-800 bg-slate-900">
         <div className="flex items-center gap-2 text-sm text-slate-200">
           <MessageCircle size={14} style={{ color: 'var(--ac-400)' }} />
