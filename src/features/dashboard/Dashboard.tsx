@@ -305,7 +305,63 @@ function CampaignManagementPanel({
           );
         })}
       </div>
+      <div className="mt-6 pt-6 border-t border-slate-800">
+        <div className="text-[10px] uppercase tracking-wider text-rose-400 mb-2">Danger zone</div>
+        <ClearChatRow campaignId={campaignId} />
+      </div>
     </Section>
+  );
+}
+
+function ClearChatRow({ campaignId }: { campaignId: string }) {
+  const clearAll = useChat((s) => s.clearAll);
+  const [confirming, setConfirming] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const fire = async () => {
+    setBusy(true);
+    setError(null);
+    const res = await clearAll(campaignId);
+    setBusy(false);
+    setConfirming(false);
+    if (!res.ok) setError(res.error);
+  };
+  return (
+    <div className="bg-rose-950/20 border border-rose-900/50 rounded p-3">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="text-sm text-slate-200">Clear chat history</div>
+          <div className="text-[11px] text-slate-500">
+            Permanently deletes every chat message in this campaign for every player. This cannot be undone.
+          </div>
+        </div>
+        {confirming ? (
+          <div className="flex items-center gap-1 shrink-0">
+            <button
+              onClick={fire}
+              disabled={busy}
+              className="px-2 py-1 text-[11px] bg-rose-700 hover:bg-rose-600 disabled:opacity-50 text-white rounded"
+            >
+              {busy ? 'Clearing…' : 'Confirm clear'}
+            </button>
+            <button
+              onClick={() => setConfirming(false)}
+              className="px-2 py-1 text-[11px] bg-slate-700 hover:bg-slate-600 text-slate-200 rounded"
+            >
+              Cancel
+            </button>
+          </div>
+        ) : (
+          <button
+            onClick={() => setConfirming(true)}
+            className="px-2 py-1 text-[11px] text-rose-300 hover:bg-rose-950/40 border border-rose-900/50 rounded flex items-center gap-1 shrink-0"
+          >
+            <Trash2 size={11} /> Clear chat
+          </button>
+        )}
+      </div>
+      {error && <div className="text-[11px] text-rose-300 mt-2">{error}</div>}
+    </div>
   );
 }
 

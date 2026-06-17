@@ -643,4 +643,8 @@ create policy chat_messages_update on chat_messages for update to authenticated
   using (sender_id = auth.uid() or is_gm(campaign_id))
   with check (sender_id = auth.uid() or is_gm(campaign_id));
 
+drop policy if exists chat_messages_delete on chat_messages;
+create policy chat_messages_delete on chat_messages for delete to authenticated
+  using (is_gm(campaign_id));
+
 alter publication supabase_realtime add table chat_messages;

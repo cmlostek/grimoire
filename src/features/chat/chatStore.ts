@@ -61,6 +61,7 @@ interface ChatState {
   send(campaignId: string, body: string, opts?: { whisperTo?: string[]; mentions?: string[] }): Promise<void>;
   edit(id: string, body: string): Promise<void>;
   remove(id: string): Promise<void>;
+  clearAll(campaignId: string): Promise<{ ok: true } | { ok: false; error: string }>;
 }
 
 export const useChat = create<ChatState>((set, get) => ({
@@ -220,5 +221,20 @@ export const useChat = create<ChatState>((set, get) => ({
       .update({ deleted_at: new Date().toISOString() })
       .eq('id', id);
     if (error) console.error('[chat] delete failed', error);
+  },
+
+  clearAll: async (campaignId) => {
+    const prev = get().messages;
+    set({ messages: [] });
+    const { error } = await supabase
+      .from('chat_messages')
+      .delete()
+      .eq('campaign_id', campaignId);
+    if (error) {
+      set({ messages: prev });
+      console.error('[chat] clearAll failed', error);
+      return { ok: false, error: error.message };
+    }
+    return { ok: true };
   },
 }));
