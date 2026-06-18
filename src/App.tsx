@@ -1,9 +1,9 @@
 import { useEffect, useState } from 'react';
 import { NavLink, Route, Routes, Navigate, useLocation } from 'react-router-dom';
-import { Dice6, Swords, NotebookPen, Map as MapIcon, BookOpen, Sparkles, Coins, Package, ScrollText, Users, FlaskConical, Dices, LogOut, ArrowLeftRight, Copy, Mic, Eye, EyeOff, Settings, BookMarked, Sun, Moon, PanelLeftClose, PanelLeftOpen, Radio } from 'lucide-react';
-import DiceRoller from './features/dice/DiceRoller';
+import { Swords, NotebookPen, Map as MapIcon, BookOpen, Sparkles, Coins, Package, ScrollText, Users, FlaskConical, Dices, LogOut, ArrowLeftRight, Copy, Mic, Eye, EyeOff, Settings, BookMarked, Sun, Moon, PanelLeftClose, PanelLeftOpen, Radio, LayoutDashboard } from 'lucide-react';
 import { QuickDice } from './features/dice/QuickDice';
 import { useQuickDice } from './features/dice/quickDiceStore';
+import ChatPanel from './features/chat/ChatPanel';
 import Initiative from './features/initiative/Initiative';
 import Notes from './features/notes/Notes';
 import MapBoard from './features/map/MapBoard';
@@ -16,6 +16,7 @@ import Party from './features/party/Party';
 import Homebrew from './features/homebrew/Homebrew';
 import Transcription from './features/transcription/Transcription';
 import NPCs from './features/npcs/NPCs';
+import Dashboard from './features/dashboard/Dashboard';
 import CampaignPicker from './features/session/CampaignPicker';
 import { useSession } from './features/session/sessionStore';
 import { useCampaignSettings } from './features/notes/campaignSettingsStore';
@@ -25,12 +26,12 @@ import { useRecording } from './features/transcription/recordingStore';
 type NavItem = {
   to: string;
   label: string;
-  icon: typeof Dice6;
+  icon: typeof Swords;
   gmOnly?: boolean;
 };
 
 const nav: NavItem[] = [
-  { to: '/dice', label: 'Dice', icon: Dice6 },
+  { to: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
   { to: '/initiative', label: 'Initiative', icon: Swords },
   { to: '/party', label: 'Party', icon: Users },
   { to: '/notes', label: 'Notes', icon: NotebookPen },
@@ -385,8 +386,10 @@ function AppShell() {
       </aside>
       <main className="flex-1 min-w-0 overflow-hidden">
         <Routes>
-          <Route path="/" element={<Navigate to="/dice" replace />} />
-          <Route path="/dice" element={<DiceRoller />} />
+          <Route path="/" element={<Navigate to="/dashboard" replace />} />
+          <Route path="/dashboard" element={<Dashboard />} />
+          {/* /dice is now a tab inside /dashboard — keep the URL working as a redirect. */}
+          <Route path="/dice" element={<Navigate to="/dashboard" replace />} />
           <Route path="/initiative" element={<Initiative />} />
           <Route path="/notes" element={<Notes />} />
           <Route path="/npcs" element={<NPCs />} />
@@ -399,10 +402,12 @@ function AppShell() {
           {role === 'gm' && <Route path="/homebrew" element={<Homebrew />} />}
           {role === 'gm' && <Route path="/record" element={<Transcription />} />}
           <Route path="/rules" element={<Rules />} />
-          <Route path="*" element={<Navigate to="/dice" replace />} />
+          <Route path="*" element={<Navigate to="/dashboard" replace />} />
         </Routes>
       </main>
       <QuickDice />
+      {/* Dashboard embeds its own chat surface, so hide the floating one there. */}
+      {location.pathname !== '/dashboard' && <ChatPanel />}
     </div>
   );
 }

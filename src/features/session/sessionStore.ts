@@ -22,6 +22,8 @@ type SessionState = {
   joinCode: string | null;
   role: Role | null;
   displayName: string | null;
+  myColor: string | null;
+  myBio: string | null;
   loading: boolean;
   error: string | null;
   myCampaigns: CampaignSummary[];
@@ -35,6 +37,18 @@ type SessionState = {
   joinCampaign: (code: string, displayName: string) => Promise<void>;
   switchToCampaign: (campaignId: string) => Promise<void>;
   leaveCurrent: () => void;
+  updateMyColor: (color: string) => Promise<void>;
+  updateMyBio: (bio: string) => Promise<void>;
+  updateMyDisplayName: (name: string) => Promise<void>;
+  /** Global avatar storage path (in the `avatars` bucket). */
+  myAvatarPath: string | null;
+  loadMyProfile: () => Promise<void>;
+  uploadMyAvatar: (file: File) => Promise<{ ok: true } | { ok: false; error: string }>;
+  removeMyAvatar: () => Promise<void>;
+  /** Drops the user's membership row from the active campaign (real leave). */
+  leaveCampaign: () => Promise<{ ok: true } | { ok: false; error: string }>;
+  /** GM-only: deletes the active campaign and cascades everything. */
+  deleteCampaign: () => Promise<{ ok: true } | { ok: false; error: string }>;
 };
 
 const ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
@@ -54,6 +68,9 @@ export const useSession = create<SessionState>((set, get) => ({
   joinCode: null,
   role: null,
   displayName: null,
+  myColor: null,
+  myBio: null,
+  myAvatarPath: null,
   loading: true,
   error: null,
   myCampaigns: [],
@@ -76,7 +93,7 @@ export const useSession = create<SessionState>((set, get) => ({
       }
       const { data: mem, error } = await supabase
         .from('campaign_members')
-        .select('role, display_name, campaigns!inner(id, name, join_code)')
+        .select('role, display_name, color, bio, campaigns!inner(id, name, join_code)')
         .eq('campaign_id', stored)
         .eq('user_id', uid)
         .maybeSingle();
@@ -96,6 +113,8 @@ export const useSession = create<SessionState>((set, get) => ({
         joinCode: campaign.join_code,
         role: mem.role as Role,
         displayName: mem.display_name,
+        myColor: (mem.color as string | null) ?? '#94a3b8',
+        myBio: (mem.bio as string | null) ?? '',
         loading: false,
       });
       get().refreshMyCampaigns();
@@ -143,6 +162,8 @@ export const useSession = create<SessionState>((set, get) => ({
       joinCode: null,
       role: null,
       displayName: null,
+      myColor: null,
+      myBio: null,
       error: null,
       myCampaigns: [],
     });
@@ -182,7 +203,7 @@ export const useSession = create<SessionState>((set, get) => ({
     if (!uid) return;
     const { data: mem, error } = await supabase
       .from('campaign_members')
-      .select('role, display_name, campaigns!inner(id, name, join_code)')
+      .select('role, display_name, color, bio, campaigns!inner(id, name, join_code)')
       .eq('campaign_id', campaignId)
       .eq('user_id', uid)
       .maybeSingle();
@@ -203,6 +224,7 @@ export const useSession = create<SessionState>((set, get) => ({
       joinCode: campaign.join_code,
       role: mem.role as Role,
       displayName: mem.display_name as string,
+      myColor: (mem.color as string | null) ?? '#94a3b8',
       error: null,
     });
   },
@@ -234,6 +256,8 @@ export const useSession = create<SessionState>((set, get) => ({
         joinCode: campaign.join_code,
         role: 'gm',
         displayName,
+        myColor: '#94a3b8',
+        myBio: '',
         loading: false,
       });
       get().refreshMyCampaigns();
@@ -258,13 +282,17 @@ export const useSession = create<SessionState>((set, get) => ({
       if (!campaign) throw new Error(`No campaign with code "${upper}"`);
       const { data: existing } = await supabase
         .from('campaign_members')
-        .select('role')
+        .select('role, color, bio')
         .eq('campaign_id', campaign.id)
         .eq('user_id', uid)
         .maybeSingle();
       let role: Role = 'player';
+      let color = '#94a3b8';
+      let bio = '';
       if (existing) {
         role = existing.role as Role;
+        color = (existing.color as string | null) ?? '#94a3b8';
+        bio = (existing.bio as string | null) ?? '';
       } else {
         const { error: mErr } = await supabase.from('campaign_members').insert({
           campaign_id: campaign.id,
@@ -282,6 +310,8 @@ export const useSession = create<SessionState>((set, get) => ({
         joinCode: campaign.join_code,
         role,
         displayName,
+        myColor: color,
+        myBio: bio,
         loading: false,
       });
       get().refreshMyCampaigns();
@@ -299,8 +329,190 @@ export const useSession = create<SessionState>((set, get) => ({
       joinCode: null,
       role: null,
       displayName: null,
+      myColor: null,
+      myBio: null,
       error: null,
     });
+  },
+
+  updateMyColor: async (color) => {
+    const uid = get().userId;
+    const cid = get().campaignId;
+    if (!uid || !cid) return;
+    const prev = get().myColor;
+    set({ myColor: color });
+    const { error } = await supabase
+      .from('campaign_members')
+      .update({ color })
+      .eq('campaign_id', cid)
+      .eq('user_id', uid);
+    if (error) {
+      set({ myColor: prev });
+      console.error('[session] updateMyColor failed', error);
+    }
+  },
+
+  updateMyBio: async (bio) => {
+    const uid = get().userId;
+    const cid = get().campaignId;
+    if (!uid || !cid) return;
+    const prev = get().myBio;
+    set({ myBio: bio });
+    const { error } = await supabase
+      .from('campaign_members')
+      .update({ bio })
+      .eq('campaign_id', cid)
+      .eq('user_id', uid);
+    if (error) {
+      set({ myBio: prev });
+      console.error('[session] updateMyBio failed', error);
+    }
+  },
+
+  loadMyProfile: async () => {
+    const uid = get().userId;
+    if (!uid) return;
+    const { data, error } = await supabase
+      .from('user_profiles')
+      .select('avatar_path')
+      .eq('user_id', uid)
+      .maybeSingle();
+    if (error) {
+      console.error('[session] loadMyProfile failed', error);
+      return;
+    }
+    set({ myAvatarPath: (data?.avatar_path as string | null) ?? null });
+  },
+
+  uploadMyAvatar: async (file) => {
+    const uid = get().userId;
+    if (!uid) return { ok: false, error: 'Not signed in' };
+    if (!file.type.startsWith('image/')) return { ok: false, error: 'Pick an image file.' };
+    if (file.size > 2 * 1024 * 1024) return { ok: false, error: 'Image must be under 2 MB.' };
+
+    // Use a fresh path per upload so the public URL changes — sidesteps CDN
+    // caching of the old image.
+    const ext = (file.name.split('.').pop() ?? 'png').toLowerCase().replace(/[^a-z0-9]/g, '') || 'png';
+    const path = `${uid}/${crypto.randomUUID()}.${ext}`;
+
+    const prevPath = get().myAvatarPath;
+
+    const { error: upErr } = await supabase.storage
+      .from('avatars')
+      .upload(path, file, { contentType: file.type, upsert: false });
+    if (upErr) {
+      console.error('[session] avatar upload failed', upErr);
+      return { ok: false, error: upErr.message };
+    }
+
+    const { error: dbErr } = await supabase
+      .from('user_profiles')
+      .upsert({ user_id: uid, avatar_path: path, updated_at: new Date().toISOString() });
+    if (dbErr) {
+      console.error('[session] avatar row write failed', dbErr);
+      // Roll back the storage upload to avoid orphans.
+      await supabase.storage.from('avatars').remove([path]);
+      return { ok: false, error: dbErr.message };
+    }
+
+    set({ myAvatarPath: path });
+
+    // Best-effort cleanup of the previous file.
+    if (prevPath && prevPath !== path) {
+      void supabase.storage.from('avatars').remove([prevPath]);
+    }
+
+    return { ok: true };
+  },
+
+  leaveCampaign: async () => {
+    const uid = get().userId;
+    const cid = get().campaignId;
+    if (!uid || !cid) return { ok: false, error: 'No active campaign.' };
+    const { error } = await supabase
+      .from('campaign_members')
+      .delete()
+      .eq('campaign_id', cid)
+      .eq('user_id', uid);
+    if (error) {
+      console.error('[session] leaveCampaign failed', error);
+      return { ok: false, error: error.message };
+    }
+    // Clear local campaign state; App.tsx will show the CampaignPicker.
+    localStorage.removeItem(STORAGE_KEY);
+    set({
+      campaignId: null,
+      campaignName: null,
+      joinCode: null,
+      role: null,
+      displayName: null,
+      myColor: null,
+      myBio: null,
+      error: null,
+    });
+    void get().refreshMyCampaigns();
+    return { ok: true };
+  },
+
+  deleteCampaign: async () => {
+    const cid = get().campaignId;
+    if (!cid) return { ok: false, error: 'No active campaign.' };
+    const { error } = await supabase.from('campaigns').delete().eq('id', cid);
+    if (error) {
+      console.error('[session] deleteCampaign failed', error);
+      return { ok: false, error: error.message };
+    }
+    // ON DELETE CASCADE on every dependent table wipes the rest.
+    localStorage.removeItem(STORAGE_KEY);
+    set({
+      campaignId: null,
+      campaignName: null,
+      joinCode: null,
+      role: null,
+      displayName: null,
+      myColor: null,
+      myBio: null,
+      error: null,
+    });
+    void get().refreshMyCampaigns();
+    return { ok: true };
+  },
+
+  removeMyAvatar: async () => {
+    const uid = get().userId;
+    if (!uid) return;
+    const prev = get().myAvatarPath;
+    if (!prev) return;
+    set({ myAvatarPath: null });
+    const { error } = await supabase
+      .from('user_profiles')
+      .upsert({ user_id: uid, avatar_path: null, updated_at: new Date().toISOString() });
+    if (error) {
+      set({ myAvatarPath: prev });
+      console.error('[session] removeMyAvatar failed', error);
+      return;
+    }
+    void supabase.storage.from('avatars').remove([prev]);
+  },
+
+  updateMyDisplayName: async (name) => {
+    const uid = get().userId;
+    const cid = get().campaignId;
+    if (!uid || !cid) return;
+    const trimmed = name.trim();
+    if (!trimmed) return;
+    const prev = get().displayName;
+    set({ displayName: trimmed });
+    localStorage.setItem(NAME_KEY, trimmed);
+    const { error } = await supabase
+      .from('campaign_members')
+      .update({ display_name: trimmed })
+      .eq('campaign_id', cid)
+      .eq('user_id', uid);
+    if (error) {
+      set({ displayName: prev });
+      console.error('[session] updateMyDisplayName failed', error);
+    }
   },
 }));
 

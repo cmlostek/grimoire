@@ -29,9 +29,17 @@ create table if not exists campaign_members (
   user_id       uuid not null default auth.uid(),
   display_name  text not null,
   role          text not null check (role in ('gm','player')),
+  color         text not null default '#94a3b8',
+  bio           text not null default '',
   joined_at     timestamptz not null default now(),
   unique (campaign_id, user_id)
 );
+-- Older installs predating chat: add the color column if missing.
+alter table campaign_members
+  add column if not exists color text not null default '#94a3b8';
+-- Older installs predating the player dashboard: add bio if missing.
+alter table campaign_members
+  add column if not exists bio text not null default '';
 create index if not exists campaign_members_by_campaign on campaign_members(campaign_id);
 
 create table if not exists notes (
@@ -535,3 +543,108 @@ alter publication supabase_realtime add table note_permissions;
 -- start from a consistent CRDT baseline (no duplicate-content on cold join).
 
 alter table notes add column if not exists ydoc_state text;
+
+
+-- =============================================
+-- SECTION 9c — User profiles + avatars storage bucket (global per user)
+-- =============================================
+
+create table if not exists user_profiles (
+  user_id     uuid primary key,
+  avatar_path text,
+  updated_at  timestamptz not null default now()
+);
+
+alter table user_profiles enable row level security;
+
+drop policy if exists user_profiles_select on user_profiles;
+create policy user_profiles_select on user_profiles for select to authenticated using (true);
+
+drop policy if exists user_profiles_insert on user_profiles;
+create policy user_profiles_insert on user_profiles for insert to authenticated
+  with check (user_id = auth.uid());
+
+drop policy if exists user_profiles_update on user_profiles;
+create policy user_profiles_update on user_profiles for update to authenticated
+  using (user_id = auth.uid()) with check (user_id = auth.uid());
+
+drop policy if exists user_profiles_delete on user_profiles;
+create policy user_profiles_delete on user_profiles for delete to authenticated
+  using (user_id = auth.uid());
+
+alter publication supabase_realtime add table user_profiles;
+
+insert into storage.buckets (id, name, public)
+values ('avatars', 'avatars', true)
+on conflict (id) do nothing;
+
+drop policy if exists "avatars_public_read" on storage.objects;
+create policy "avatars_public_read"
+  on storage.objects for select to public
+  using (bucket_id = 'avatars');
+
+drop policy if exists "avatars_owner_write" on storage.objects;
+create policy "avatars_owner_write"
+  on storage.objects for insert to authenticated
+  with check (bucket_id = 'avatars' and (storage.foldername(name))[1] = auth.uid()::text);
+
+drop policy if exists "avatars_owner_update" on storage.objects;
+create policy "avatars_owner_update"
+  on storage.objects for update to authenticated
+  using (bucket_id = 'avatars' and (storage.foldername(name))[1] = auth.uid()::text);
+
+drop policy if exists "avatars_owner_delete" on storage.objects;
+create policy "avatars_owner_delete"
+  on storage.objects for delete to authenticated
+  using (bucket_id = 'avatars' and (storage.foldername(name))[1] = auth.uid()::text);
+
+
+-- =============================================
+-- SECTION 10 — Chat messages (party chat, whispers, mentions, edit/delete)
+-- =============================================
+
+create table if not exists chat_messages (
+  id           uuid primary key default gen_random_uuid(),
+  campaign_id  uuid not null references campaigns(id) on delete cascade,
+  sender_id    uuid not null default auth.uid(),
+  body         text not null,
+  mentions     uuid[] not null default '{}',
+  whisper_to   uuid[],
+  edited_at    timestamptz,
+  deleted_at   timestamptz,
+  created_at   timestamptz not null default now()
+);
+
+create index if not exists chat_messages_campaign_created_idx
+  on chat_messages (campaign_id, created_at desc);
+
+create index if not exists chat_messages_whisper_to_idx
+  on chat_messages using gin (whisper_to);
+
+alter table chat_messages enable row level security;
+
+drop policy if exists chat_messages_select on chat_messages;
+create policy chat_messages_select on chat_messages for select to authenticated
+  using (
+    is_member(campaign_id)
+    and (
+      whisper_to is null
+      or sender_id = auth.uid()
+      or auth.uid() = any(whisper_to)
+    )
+  );
+
+drop policy if exists chat_messages_insert on chat_messages;
+create policy chat_messages_insert on chat_messages for insert to authenticated
+  with check (is_member(campaign_id) and sender_id = auth.uid());
+
+drop policy if exists chat_messages_update on chat_messages;
+create policy chat_messages_update on chat_messages for update to authenticated
+  using (sender_id = auth.uid() or is_gm(campaign_id))
+  with check (sender_id = auth.uid() or is_gm(campaign_id));
+
+drop policy if exists chat_messages_delete on chat_messages;
+create policy chat_messages_delete on chat_messages for delete to authenticated
+  using (is_gm(campaign_id));
+
+alter publication supabase_realtime add table chat_messages;
