@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Pencil, Check, X, UserPlus, MessageCircle, Camera, Trash2, User as UserIcon, Dice6, Shield, UserMinus, LogOut } from 'lucide-react';
+import { Pencil, Check, X, UserPlus, MessageCircle, Camera, Trash2, User as UserIcon, Dice6, Shield, UserMinus, LogOut, ScrollText } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { useSession } from '../session/sessionStore';
 import { useParty } from '../party/partyStore';
@@ -10,8 +10,9 @@ import { useChatPanel } from '../chat/chatPanelStore';
 import { useProfiles, avatarPublicUrl } from '../profiles/profilesStore';
 import { supabase } from '../../lib/supabase';
 import DiceRoller from '../dice/DiceRoller';
+import CharacterSheet from './CharacterSheet';
 
-type DashboardTab = 'profile' | 'dice' | 'manage';
+type DashboardTab = 'profile' | 'player' | 'dice' | 'manage';
 
 /**
  * Player dashboard — landing page after entering a campaign. Phase 1: display
@@ -134,6 +135,21 @@ export default function Dashboard() {
             </div>
           )}
 
+          {tab === 'player' && (
+            !partyLoaded ? (
+              <div className="px-6 py-6 text-sm text-slate-500">Loading…</div>
+            ) : myCharacter ? (
+              <CharacterSheet
+                m={myCharacter}
+                onUpdate={(patch) => updateMember(myCharacter.id, patch)}
+              />
+            ) : (
+              <div className="px-6 py-6">
+                <NoCharacterCTA party={party} role={role} onClaim={claimMember} />
+              </div>
+            )
+          )}
+
           {tab === 'dice' && (
             // DiceRoller already renders its own PageHeader, padding, etc.
             <DiceRoller />
@@ -166,6 +182,7 @@ function TabBar({
 }) {
   const tabs: { id: DashboardTab; label: string; icon: typeof UserIcon; gmOnly?: boolean }[] = [
     { id: 'profile', label: 'Profile', icon: UserIcon },
+    { id: 'player', label: 'Player', icon: ScrollText },
     { id: 'dice', label: 'Dice', icon: Dice6 },
     { id: 'manage', label: 'Campaign Management', icon: Shield, gmOnly: true },
   ];

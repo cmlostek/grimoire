@@ -498,3 +498,46 @@ input[type="number"] { -moz-appearance: textfield; appearance: textfield; }
   color: #64748b; /* slate-500 */
   flex-shrink: 0;
 }
+
+/* ── Character sheet print ────────────────────────────────────────────
+   When the user opens the browser print dialog (Save as PDF), hide
+   every chrome element and show only the .print-character-sheet block.
+   `visibility: hidden` is used instead of `display: none` so layout
+   measurements inside the sheet stay stable while printing. */
+@media print {
+  body * {
+    visibility: hidden;
+  }
+  .print-character-sheet,
+  .print-character-sheet * {
+    visibility: visible !important;
+  }
+  .print-character-sheet {
+    position: absolute !important;
+    inset: 0 !important;
+    width: 100% !important;
+    padding: 16px !important;
+    background: #ffffff !important;
+    color: #0f172a !important;
+  }
+  /* Re-color borders/backgrounds for paper readability. */
+  .print-character-sheet section,
+  .print-character-sheet input,
+  .print-character-sheet textarea {
+    background: #ffffff !important;
+    color: #0f172a !important;
+    border-color: #cbd5e1 !important;
+  }
+  .print-character-sheet .text-slate-100,
+  .print-character-sheet .text-slate-200,
+  .print-character-sheet .text-slate-300,
+  .print-character-sheet .text-slate-400,
+  .print-character-sheet .text-slate-500,
+  .print-character-sheet .text-sky-200 {
+    color: #0f172a !important;
+  }
+  /* Hide elements explicitly marked print:hidden (lucide buttons etc). */
+  .print-character-sheet .print\:hidden {
+    display: none !important;
+  }
+}

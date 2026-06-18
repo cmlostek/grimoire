@@ -1,6 +1,9 @@
 import { create } from 'zustand';
 import { supabase } from '../../lib/supabase';
 
+export type Gold = { pp: number; gp: number; ep: number; sp: number; cp: number };
+export type DeathSaves = { successes: number; failures: number };
+
 export type PartyMember = {
   id: string;
   owner_user_id: string | null;
@@ -30,7 +33,14 @@ export type PartyMember = {
   ddbUrl?: string;
   notes?: string;
   source: 'manual' | 'ddb-json' | 'json';
+  // Phase A character-sheet fields (all optional — older rows default sensibly).
+  xp?: number;
+  gold?: Gold;
+  deathSaves?: DeathSaves;
 };
+
+export const DEFAULT_GOLD: Gold = { pp: 0, gp: 0, ep: 0, sp: 0, cp: 0 };
+export const DEFAULT_DEATH_SAVES: DeathSaves = { successes: 0, failures: 0 };
 
 type Row = {
   id: string;
@@ -80,6 +90,9 @@ function rowToMember(r: Row): PartyMember {
     ddbUrl: d.ddbUrl,
     notes: r.notes ?? d.notes ?? undefined,
     source: d.source ?? 'manual',
+    xp: d.xp ?? 0,
+    gold: d.gold ?? { ...DEFAULT_GOLD },
+    deathSaves: d.deathSaves ?? { ...DEFAULT_DEATH_SAVES },
   };
 }
 
@@ -121,6 +134,7 @@ function patchToUpdate(
     'str', 'dex', 'con', 'int', 'wis', 'cha',
     'saves', 'skills', 'languages', 'player', 'ddbUrl', 'source',
     'race', 'classSummary',
+    'xp', 'gold', 'deathSaves',
   ];
   const needsDataUpdate = dataKeys.some((k) => k in patch);
   if (needsDataUpdate) {
