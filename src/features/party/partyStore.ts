@@ -4,6 +4,21 @@ import { supabase } from '../../lib/supabase';
 export type Gold = { pp: number; gp: number; ep: number; sp: number; cp: number };
 export type DeathSaves = { successes: number; failures: number };
 
+/** A line item in a character's inventory. Links back to a SRD or homebrew
+ *  catalog entry by id, but stores the display `name` inline so the row
+ *  still renders if the source is later removed. */
+export type InventoryItem = {
+  /** Local-only uuid for React keys. */
+  id: string;
+  /** Catalog source kind. `custom` means a freeform user-typed entry. */
+  sourceKind: 'srd-item' | 'srd-spell' | 'item' | 'spell' | 'custom';
+  /** Catalog id — SRD index slug for SRD entries, uuid for homebrew. */
+  sourceId?: string;
+  name: string;
+  qty: number;
+  equipped: boolean;
+};
+
 export type PartyMember = {
   id: string;
   owner_user_id: string | null;
@@ -41,6 +56,8 @@ export type PartyMember = {
   skillProfs?: string[];
   /** Ability keys ('str' | 'dex' | ...) the character is save-proficient in. */
   saveProfs?: string[];
+  /** Carried items, weapons, magic items, and known spells. */
+  inventory?: InventoryItem[];
 };
 
 export const DEFAULT_GOLD: Gold = { pp: 0, gp: 0, ep: 0, sp: 0, cp: 0 };
@@ -99,6 +116,7 @@ function rowToMember(r: Row): PartyMember {
     deathSaves: d.deathSaves ?? { ...DEFAULT_DEATH_SAVES },
     skillProfs: d.skillProfs ?? [],
     saveProfs: d.saveProfs ?? [],
+    inventory: d.inventory ?? [],
   };
 }
 
@@ -140,7 +158,7 @@ function patchToUpdate(
     'str', 'dex', 'con', 'int', 'wis', 'cha',
     'saves', 'skills', 'languages', 'player', 'ddbUrl', 'source',
     'race', 'classSummary',
-    'xp', 'gold', 'deathSaves', 'skillProfs', 'saveProfs',
+    'xp', 'gold', 'deathSaves', 'skillProfs', 'saveProfs', 'inventory',
   ];
   const needsDataUpdate = dataKeys.some((k) => k in patch);
   if (needsDataUpdate) {

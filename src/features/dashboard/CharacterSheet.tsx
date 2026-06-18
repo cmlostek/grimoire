@@ -1,11 +1,15 @@
-import { useEffect, useRef, useState } from 'react';
-import { Save, Printer, BedDouble, Coffee, Heart, Dices, HeartPulse, Skull, Eye, Search, Brain } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { Save, Printer, BedDouble, Coffee, Heart, Dices, HeartPulse, Skull, Eye, Search, Brain, Plus, X as XIcon, Swords, Shield as ShieldIcon, Sparkles, Backpack } from 'lucide-react';
 import {
   DEFAULT_DEATH_SAVES,
   DEFAULT_GOLD,
+  type InventoryItem,
   type PartyMember,
 } from '../party/partyStore';
 import { useQuickDice } from '../dice/quickDiceStore';
+import { useCatalog, searchCatalog, type CatalogEntry } from '../chat/catalog';
+import { EQUIPMENT, MAGIC_ITEMS, SPELLS } from '../../data/srd';
+import type { EquipmentItem, Spell } from '../../data/types';
 
 // ── Skill / save definitions ──────────────────────────────────────────────
 
@@ -133,6 +137,14 @@ export default function CharacterSheet({
 
         <Card title="Coin purse">
           <GoldBlock draft={draft} onApply={apply} />
+        </Card>
+
+        <Card
+          title="Inventory"
+          subtitle="Click + to add from the catalog · weapons show attack/damage from your stats"
+          className="lg:col-span-2"
+        >
+          <InventoryBlock draft={draft} onApply={apply} />
         </Card>
 
         <Card title="Skills" subtitle="Click pip to toggle proficiency · click modifier to roll" className="lg:col-span-2">
@@ -834,4 +846,329 @@ function NumInput({
       className={`bg-slate-950 border border-slate-700 rounded px-2 py-1 text-sm text-slate-100 focus:outline-none focus:border-sky-700 ${className}`}
     />
   );
+}
+
+// ── Inventory ──────────────────────────────────────────────────────────────
+
+/** Lookup tables keyed by SRD index so weapon stats can be computed on render
+ *  without scanning the SRD arrays each row. */
+const EQUIPMENT_BY_INDEX: Record<string, EquipmentItem> = Object.fromEntries(
+  EQUIPMENT.map((e) => [e.index, e])
+);
+const SPELLS_BY_INDEX: Record<string, Spell> = Object.fromEntries(
+  SPELLS.map((s) => [s.index, s])
+);
+
+/** Try to resolve an inventory item's underlying SRD record so we can derive
+ *  attack/damage info. Returns null for non-SRD (homebrew) entries. */
+function srdItemFor(item: InventoryItem): EquipmentItem | null {
+  if (item.sourceKind === 'srd-item' && item.sourceId) {
+    return EQUIPMENT_BY_INDEX[item.sourceId] ?? null;
+  }
+  return null;
+}
+function srdSpellFor(item: InventoryItem): Spell | null {
+  if (item.sourceKind === 'srd-spell' && item.sourceId) {
+    return SPELLS_BY_INDEX[item.sourceId] ?? null;
+  }
+  return null;
+}
+
+/** Weapon attack/damage computation, using the character's ability mods + PB.
+ *  Assumes the character is proficient with the weapon — a Phase B
+ *  per-weapon proficiency toggle could refine this. */
+function weaponStats(member: PartyMember, weapon: EquipmentItem) {
+  const props = (weapon.properties ?? []).map((p) => p.name.toLowerCase());
+  const isFinesse = props.includes('finesse');
+  const isRanged = weapon.weapon_range === 'Ranged';
+  const strMod = abilityMod(member.str);
+  const dexMod = abilityMod(member.dex);
+  // Ranged → DEX; Finesse → better of STR/DEX; otherwise STR.
+  const ability: 'str' | 'dex' = isRanged
+    ? 'dex'
+    : isFinesse
+    ? (dexMod > strMod ? 'dex' : 'str')
+    : 'str';
+  const mod = ability === 'dex' ? dexMod : strMod;
+  const pb = profBonus(member.level);
+  return {
+    ability,
+    attackBonus: mod + pb,
+    abilityMod: mod,
+    damageDice: weapon.damage?.damage_dice ?? '',
+    damageType: weapon.damage?.damage_type?.name ?? '',
+    versatileDice: weapon.two_handed_damage?.damage_dice ?? '',
+  };
+}
+
+function InventoryBlock({
+  draft,
+  onApply,
+}: {
+  draft: PartyMember;
+  onApply: (p: Partial<PartyMember>) => void;
+}) {
+  const inventory = draft.inventory ?? [];
+  const rollFormula = useQuickDice((s) => s.rollFormula);
+
+  const add = (entry: { sourceKind: InventoryItem['sourceKind']; sourceId?: string; name: string }) => {
+    const next: InventoryItem = {
+      id: crypto.randomUUID(),
+      sourceKind: entry.sourceKind,
+      sourceId: entry.sourceId,
+      name: entry.name,
+      qty: 1,
+      equipped: false,
+    };
+    onApply({ inventory: [...inventory, next] });
+  };
+
+  const update = (id: string, patch: Partial<InventoryItem>) => {
+    onApply({
+      inventory: inventory.map((it) => (it.id === id ? { ...it, ...patch } : it)),
+    });
+  };
+
+  const remove = (id: string) => {
+    onApply({ inventory: inventory.filter((it) => it.id !== id) });
+  };
+
+  return (
+    <div className="space-y-2">
+      <InventoryPicker onAdd={add} />
+
+      {inventory.length === 0 ? (
+        <div className="text-sm text-slate-500 italic py-2">
+          No items yet. Use the search above to add weapons, gear, magic items, or known spells.
+        </div>
+      ) : (
+        <div className="space-y-1.5">
+          {inventory.map((item) => (
+            <InventoryRow
+              key={item.id}
+              item={item}
+              member={draft}
+              onChange={(patch) => update(item.id, patch)}
+              onRemove={() => remove(item.id)}
+              onRollAttack={(label, bonus) => rollFormula(`1d20 ${fmt(bonus)}`, label)}
+              onRollDamage={(label, formula) => rollFormula(formula, label)}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function InventoryRow({
+  item,
+  member,
+  onChange,
+  onRemove,
+  onRollAttack,
+  onRollDamage,
+}: {
+  item: InventoryItem;
+  member: PartyMember;
+  onChange: (patch: Partial<InventoryItem>) => void;
+  onRemove: () => void;
+  onRollAttack: (label: string, bonus: number) => void;
+  onRollDamage: (label: string, formula: string) => void;
+}) {
+  const srdItem = srdItemFor(item);
+  const isWeapon = !!srdItem?.damage;
+  const isArmor = srdItem?.armor_class != null;
+  const srdSpell = srdSpellFor(item);
+  const isSpell = !!srdSpell || item.sourceKind === 'spell' || item.sourceKind === 'srd-spell';
+
+  let KindIcon = Backpack;
+  let kindColor = '#94a3b8';
+  if (isWeapon) { KindIcon = Swords; kindColor = '#f87171'; }
+  else if (isArmor) { KindIcon = ShieldIcon; kindColor = '#60a5fa'; }
+  else if (isSpell) { KindIcon = Sparkles; kindColor = '#c4b5fd'; }
+
+  const stats = isWeapon && srdItem ? weaponStats(member, srdItem) : null;
+  const damageFormula = stats?.damageDice
+    ? `${stats.damageDice}${stats.abilityMod !== 0 ? ` ${fmt(stats.abilityMod)}` : ''}`
+    : '';
+
+  return (
+    <div className="flex items-center gap-2 bg-slate-950 border border-slate-800 rounded px-2 py-1.5">
+      <KindIcon size={14} style={{ color: kindColor }} className="shrink-0" />
+
+      <div className="min-w-0 flex-1">
+        <input
+          value={item.name}
+          onChange={(e) => onChange({ name: e.target.value })}
+          className="w-full bg-transparent text-sm text-slate-100 outline-none truncate"
+        />
+        {stats && (
+          <div className="text-[11px] text-slate-500 flex flex-wrap items-center gap-x-3">
+            <button
+              onClick={() => onRollAttack(`${item.name} attack`, stats.attackBonus)}
+              className="hover:text-slate-200 flex items-center gap-1 print:hover:text-slate-500"
+              title={`Roll d20 ${fmt(stats.attackBonus)}`}
+            >
+              <span className="text-slate-600">ATK</span>
+              <span className="font-mono text-slate-300">{fmt(stats.attackBonus)}</span>
+              <Dices size={10} className="text-slate-600 print:hidden" />
+            </button>
+            <button
+              onClick={() => onRollDamage(`${item.name} damage`, damageFormula)}
+              className="hover:text-slate-200 flex items-center gap-1 print:hover:text-slate-500"
+              title={`Roll ${damageFormula}`}
+            >
+              <span className="text-slate-600">DMG</span>
+              <span className="font-mono text-slate-300">{damageFormula}</span>
+              <Dices size={10} className="text-slate-600 print:hidden" />
+            </button>
+            {stats.damageType && (
+              <span className="text-slate-600">{stats.damageType.toLowerCase()}</span>
+            )}
+            {stats.versatileDice && (
+              <span className="text-slate-600">(2h {stats.versatileDice})</span>
+            )}
+            <span className="text-slate-700">·</span>
+            <span className="text-slate-600 uppercase tracking-wider">{stats.ability}</span>
+          </div>
+        )}
+        {!stats && srdSpell && (
+          <div className="text-[11px] text-slate-500">
+            {srdSpell.level === 0 ? 'Cantrip' : `Lv ${srdSpell.level}`} · {srdSpell.school.name}
+          </div>
+        )}
+      </div>
+
+      <div className="flex items-center gap-1 shrink-0">
+        <input
+          type="number"
+          value={item.qty}
+          onChange={(e) => onChange({ qty: Math.max(0, parseInt(e.target.value || '0', 10)) })}
+          className="w-12 bg-slate-900 border border-slate-700 rounded px-1.5 py-0.5 text-xs text-center text-slate-100 focus:outline-none focus:border-sky-700"
+          title="Quantity"
+        />
+        {(isWeapon || isArmor) && (
+          <label className="flex items-center gap-1 text-[10px] text-slate-500 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={item.equipped}
+              onChange={(e) => onChange({ equipped: e.target.checked })}
+              className="accent-sky-500"
+            />
+            equip
+          </label>
+        )}
+        <button
+          onClick={onRemove}
+          title="Remove"
+          className="p-1 text-slate-600 hover:text-rose-300 print:hidden"
+        >
+          <XIcon size={12} />
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function InventoryPicker({
+  onAdd,
+}: {
+  onAdd: (entry: { sourceKind: InventoryItem['sourceKind']; sourceId?: string; name: string }) => void;
+}) {
+  const catalog = useCatalog();
+  const [query, setQuery] = useState('');
+  const [open, setOpen] = useState(false);
+  const wrapRef = useRef<HTMLDivElement>(null);
+
+  // Filter to only equippable / castable kinds — drop notes / npcs from the
+  // inventory picker since you don't carry them in a backpack.
+  const itemsOnly = useMemo(
+    () => catalog.filter((e) => e.kind === 'item' || e.kind === 'spell' || e.kind === 'srd-item' || e.kind === 'srd-spell'),
+    [catalog]
+  );
+  const results = useMemo(() => searchCatalog(itemsOnly, query, 10), [itemsOnly, query]);
+
+  useEffect(() => {
+    if (!open) return;
+    const onClickAway = (e: MouseEvent) => {
+      if (!wrapRef.current?.contains(e.target as Node)) setOpen(false);
+    };
+    window.addEventListener('mousedown', onClickAway);
+    return () => window.removeEventListener('mousedown', onClickAway);
+  }, [open]);
+
+  const pick = (e: CatalogEntry) => {
+    // CatalogEntry.id is `<kind>:<identifier>` — split it back out.
+    const colon = e.id.indexOf(':');
+    const identifier = colon >= 0 ? e.id.slice(colon + 1) : e.id;
+    onAdd({
+      sourceKind: e.kind as InventoryItem['sourceKind'],
+      sourceId: identifier,
+      name: e.name,
+    });
+    setQuery('');
+    setOpen(false);
+  };
+
+  const addCustom = () => {
+    const name = query.trim();
+    if (!name) return;
+    onAdd({ sourceKind: 'custom', name });
+    setQuery('');
+    setOpen(false);
+  };
+
+  return (
+    <div ref={wrapRef} className="relative print:hidden">
+      <div className="flex items-center gap-2">
+        <div className="relative flex-1">
+          <Search size={13} className="absolute left-2 top-1/2 -translate-y-1/2 text-slate-600" />
+          <input
+            value={query}
+            onChange={(e) => {
+              setQuery(e.target.value);
+              setOpen(true);
+            }}
+            onFocus={() => setOpen(true)}
+            placeholder="Search items, magic items, spells…"
+            className="w-full bg-slate-950 border border-slate-700 rounded pl-7 pr-2 py-1.5 text-sm text-slate-100 placeholder:text-slate-600 focus:outline-none focus:border-sky-700"
+          />
+        </div>
+        <button
+          onClick={addCustom}
+          disabled={!query.trim()}
+          title="Add as custom item"
+          className="px-2 py-1.5 text-xs rounded bg-slate-800 hover:bg-slate-700 disabled:opacity-40 disabled:cursor-not-allowed text-slate-200 flex items-center gap-1"
+        >
+          <Plus size={12} /> Custom
+        </button>
+      </div>
+      {open && (query.trim() || results.length > 0) && (
+        <div className="absolute z-30 left-0 right-0 mt-1 bg-slate-900 border border-slate-700 rounded shadow-xl max-h-72 overflow-y-auto">
+          {results.length === 0 ? (
+            <div className="px-3 py-2 text-xs text-slate-500">
+              No catalog match. Click "Custom" to add "{query.trim()}".
+            </div>
+          ) : (
+            results.map((r) => (
+              <button
+                key={r.id}
+                onClick={() => pick(r)}
+                className="w-full text-left px-3 py-1.5 text-sm text-slate-200 hover:bg-slate-800 flex items-center gap-2"
+              >
+                <KindIconFor kind={r.kind} />
+                <span className="flex-1 truncate">{r.name}</span>
+                {r.hint && <span className="text-[10px] text-slate-500 shrink-0">{r.hint}</span>}
+              </button>
+            ))
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function KindIconFor({ kind }: { kind: CatalogEntry['kind'] }) {
+  if (kind === 'spell' || kind === 'srd-spell') return <Sparkles size={12} className="text-violet-300" />;
+  return <Backpack size={12} className="text-slate-500" />;
 }
