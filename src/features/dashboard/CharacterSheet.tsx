@@ -1,10 +1,46 @@
-import { useEffect, useState } from 'react';
-import { Save, Printer, BedDouble, Coffee, Heart } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
+import { Save, Printer, BedDouble, Coffee, Heart, Dices } from 'lucide-react';
 import {
   DEFAULT_DEATH_SAVES,
   DEFAULT_GOLD,
   type PartyMember,
 } from '../party/partyStore';
+import { useQuickDice } from '../dice/quickDiceStore';
+
+// ── Skill / save definitions ──────────────────────────────────────────────
+
+type Ability = 'str' | 'dex' | 'con' | 'int' | 'wis' | 'cha';
+
+const SKILLS: { key: string; label: string; ability: Ability }[] = [
+  { key: 'acrobatics',       label: 'Acrobatics',       ability: 'dex' },
+  { key: 'animal-handling',  label: 'Animal Handling',  ability: 'wis' },
+  { key: 'arcana',           label: 'Arcana',           ability: 'int' },
+  { key: 'athletics',        label: 'Athletics',        ability: 'str' },
+  { key: 'deception',        label: 'Deception',        ability: 'cha' },
+  { key: 'history',          label: 'History',          ability: 'int' },
+  { key: 'insight',          label: 'Insight',          ability: 'wis' },
+  { key: 'intimidation',     label: 'Intimidation',     ability: 'cha' },
+  { key: 'investigation',    label: 'Investigation',    ability: 'int' },
+  { key: 'medicine',         label: 'Medicine',         ability: 'wis' },
+  { key: 'nature',           label: 'Nature',           ability: 'int' },
+  { key: 'perception',       label: 'Perception',       ability: 'wis' },
+  { key: 'performance',      label: 'Performance',      ability: 'cha' },
+  { key: 'persuasion',       label: 'Persuasion',       ability: 'cha' },
+  { key: 'religion',         label: 'Religion',         ability: 'int' },
+  { key: 'sleight-of-hand',  label: 'Sleight of Hand',  ability: 'dex' },
+  { key: 'stealth',          label: 'Stealth',          ability: 'dex' },
+  { key: 'survival',         label: 'Survival',         ability: 'wis' },
+];
+
+const ABILITY_LABEL: Record<Ability, string> = {
+  str: 'Strength', dex: 'Dexterity', con: 'Constitution',
+  int: 'Intelligence', wis: 'Wisdom', cha: 'Charisma',
+};
+
+const abilityMod = (score: number) => Math.floor((score - 10) / 2);
+const profBonus = (level: number) =>
+  2 + Math.floor((Math.max(1, Math.min(20, level)) - 1) / 4);
+const fmt = (n: number) => (n >= 0 ? `+${n}` : `${n}`);
 
 /**
  * Full editable character sheet for the player's claimed party_members row.
@@ -52,11 +88,9 @@ export default function CharacterSheet({
     });
   };
 
-  const shortRest = () => {
-    // Phase A: clear death saves (you're conscious again) but leave HP alone —
-    // 5e short rests grant hit-die healing, which we'll wire properly in Phase B.
-    apply({ deathSaves: { ...DEFAULT_DEATH_SAVES } });
-  };
+  // Short rest is handled inline via a popover (see ShortRestButton). The
+  // popover spends a hit die: rolls 1d<size>+CON, heals up to maxHp, clears
+  // death saves. Phase B will track actual hit-dice pools.
 
   const printSheet = () => {
     // Browser print dialog → user chooses "Save as PDF" or a printer.
@@ -78,7 +112,7 @@ export default function CharacterSheet({
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mt-4">
         <Card title="Vitals">
-          <VitalsBlock draft={draft} onApply={apply} onShortRest={shortRest} onLongRest={longRest} />
+          <VitalsBlock draft={draft} onApply={apply} onLongRest={longRest} />
         </Card>
 
         <Card title="Death saves" subtitle="Used when HP hits 0">
@@ -93,12 +127,20 @@ export default function CharacterSheet({
           <PassivesBlock draft={draft} onApply={apply} />
         </Card>
 
-        <Card title="Saves, skills & languages">
-          <TextFieldsBlock draft={draft} onApply={apply} />
+        <Card title="Saving throws" subtitle={`PB ${fmt(profBonus(draft.level))}`}>
+          <SavesBlock draft={draft} onApply={apply} />
         </Card>
 
         <Card title="Coin purse">
           <GoldBlock draft={draft} onApply={apply} />
+        </Card>
+
+        <Card title="Skills" subtitle="Click pip to toggle proficiency · click modifier to roll" className="lg:col-span-2">
+          <SkillsBlock draft={draft} onApply={apply} />
+        </Card>
+
+        <Card title="Languages & notes" subtitle="Free-text" className="lg:col-span-2">
+          <TextFieldsBlock draft={draft} onApply={apply} />
         </Card>
 
         <Card title="Notes" className="lg:col-span-2">
@@ -199,12 +241,10 @@ function SheetHeader({
 function VitalsBlock({
   draft,
   onApply,
-  onShortRest,
   onLongRest,
 }: {
   draft: PartyMember;
   onApply: (p: Partial<PartyMember>) => void;
-  onShortRest: () => void;
   onLongRest: () => void;
 }) {
   const hpPct = draft.maxHp > 0 ? (draft.hp / draft.maxHp) * 100 : 0;
@@ -245,13 +285,7 @@ function VitalsBlock({
         </div>
       </div>
       <div className="flex gap-2 print:hidden">
-        <button
-          onClick={onShortRest}
-          className="flex-1 flex items-center justify-center gap-1.5 px-3 py-1.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs"
-          title="Short rest (clears death saves)"
-        >
-          <Coffee size={13} /> Short rest
-        </button>
+        <ShortRestButton draft={draft} onApply={onApply} />
         <button
           onClick={onLongRest}
           className="flex-1 flex items-center justify-center gap-1.5 px-3 py-1.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs"
@@ -404,22 +438,6 @@ function TextFieldsBlock({
 }) {
   return (
     <div className="space-y-2">
-      <Field label="Save proficiencies">
-        <input
-          value={draft.saves}
-          onChange={(e) => onApply({ saves: e.target.value })}
-          className="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1 text-sm text-slate-100 focus:outline-none focus:border-sky-700"
-          placeholder="e.g. STR +5, CON +4"
-        />
-      </Field>
-      <Field label="Skill proficiencies">
-        <input
-          value={draft.skills}
-          onChange={(e) => onApply({ skills: e.target.value })}
-          className="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1 text-sm text-slate-100 focus:outline-none focus:border-sky-700"
-          placeholder="e.g. Athletics +5, Perception +3"
-        />
-      </Field>
       <Field label="Languages">
         <input
           value={draft.languages}
@@ -428,6 +446,224 @@ function TextFieldsBlock({
           placeholder="e.g. Common, Elvish, Thieves' Cant"
         />
       </Field>
+      <Field label="Saves (free-text)">
+        <input
+          value={draft.saves}
+          onChange={(e) => onApply({ saves: e.target.value })}
+          className="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1 text-sm text-slate-100 focus:outline-none focus:border-sky-700"
+          placeholder="Anything extra not covered above"
+        />
+      </Field>
+      <Field label="Skills (free-text)">
+        <input
+          value={draft.skills}
+          onChange={(e) => onApply({ skills: e.target.value })}
+          className="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1 text-sm text-slate-100 focus:outline-none focus:border-sky-700"
+          placeholder="Expertise, tool proficiencies, situational bonuses…"
+        />
+      </Field>
+    </div>
+  );
+}
+
+// ── Skills & Saves (structured + dice integration) ────────────────────────
+
+/** A single row in the Skills or Saves panel: pip + label + ability tag + clickable mod. */
+function ProfRow({
+  label,
+  abilityTag,
+  mod,
+  profOn,
+  onTogglePip,
+  onRoll,
+}: {
+  label: string;
+  abilityTag: string;
+  mod: number;
+  profOn: boolean;
+  onTogglePip: () => void;
+  onRoll: () => void;
+}) {
+  return (
+    <div className="flex items-center gap-2 py-0.5">
+      <button
+        onClick={onTogglePip}
+        title={profOn ? 'Proficient — click to remove' : 'Not proficient — click to add'}
+        className={`h-3 w-3 rounded-full border-2 shrink-0 transition-colors ${
+          profOn ? 'border-transparent' : 'border-slate-600 hover:border-slate-400'
+        }`}
+        style={profOn ? { background: 'var(--ac-400)' } : undefined}
+      />
+      <span className="text-sm text-slate-200 flex-1 truncate">
+        {label}
+        <span className="text-[10px] uppercase tracking-wider text-slate-500 ml-1.5">
+          {abilityTag}
+        </span>
+      </span>
+      <button
+        onClick={onRoll}
+        title={`Roll 1d20 ${fmt(mod)}`}
+        className="text-sm font-mono font-medium px-2 py-0.5 rounded hover:bg-slate-800 text-slate-100 flex items-center gap-1 print:hover:bg-transparent"
+      >
+        <Dices size={11} className="text-slate-500 print:hidden" />
+        {fmt(mod)}
+      </button>
+    </div>
+  );
+}
+
+function SkillsBlock({
+  draft,
+  onApply,
+}: {
+  draft: PartyMember;
+  onApply: (p: Partial<PartyMember>) => void;
+}) {
+  const profs = draft.skillProfs ?? [];
+  const pb = profBonus(draft.level);
+  const rollFormula = useQuickDice((s) => s.rollFormula);
+
+  const toggle = (key: string) => {
+    const set = new Set(profs);
+    if (set.has(key)) set.delete(key);
+    else set.add(key);
+    onApply({ skillProfs: [...set] });
+  };
+
+  return (
+    <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6">
+      {SKILLS.map(({ key, label, ability }) => {
+        const prof = profs.includes(key);
+        const mod = abilityMod(draft[ability]) + (prof ? pb : 0);
+        return (
+          <ProfRow
+            key={key}
+            label={label}
+            abilityTag={ability}
+            mod={mod}
+            profOn={prof}
+            onTogglePip={() => toggle(key)}
+            onRoll={() => rollFormula(`1d20 ${fmt(mod)}`, label)}
+          />
+        );
+      })}
+    </div>
+  );
+}
+
+function SavesBlock({
+  draft,
+  onApply,
+}: {
+  draft: PartyMember;
+  onApply: (p: Partial<PartyMember>) => void;
+}) {
+  const profs = draft.saveProfs ?? [];
+  const pb = profBonus(draft.level);
+  const rollFormula = useQuickDice((s) => s.rollFormula);
+
+  const toggle = (a: Ability) => {
+    const set = new Set(profs);
+    if (set.has(a)) set.delete(a);
+    else set.add(a);
+    onApply({ saveProfs: [...set] });
+  };
+
+  return (
+    <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6">
+      {(['str', 'dex', 'con', 'int', 'wis', 'cha'] as Ability[]).map((a) => {
+        const prof = profs.includes(a);
+        const mod = abilityMod(draft[a]) + (prof ? pb : 0);
+        return (
+          <ProfRow
+            key={a}
+            label={ABILITY_LABEL[a]}
+            abilityTag={a}
+            mod={mod}
+            profOn={prof}
+            onTogglePip={() => toggle(a)}
+            onRoll={() => rollFormula(`1d20 ${fmt(mod)}`, `${ABILITY_LABEL[a]} save`)}
+          />
+        );
+      })}
+    </div>
+  );
+}
+
+// ── Short rest popover (spends a hit die) ─────────────────────────────────
+
+function ShortRestButton({
+  draft,
+  onApply,
+}: {
+  draft: PartyMember;
+  onApply: (p: Partial<PartyMember>) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [lastHeal, setLastHeal] = useState<{ amount: number; die: number } | null>(null);
+  const wrapRef = useRef<HTMLDivElement>(null);
+  const rollFormula = useQuickDice((s) => s.rollFormula);
+
+  useEffect(() => {
+    if (!open) return;
+    const onClickAway = (e: MouseEvent) => {
+      if (!wrapRef.current?.contains(e.target as Node)) setOpen(false);
+    };
+    window.addEventListener('mousedown', onClickAway);
+    return () => window.removeEventListener('mousedown', onClickAway);
+  }, [open]);
+
+  const spend = (sides: number) => {
+    const rolled = Math.floor(Math.random() * sides) + 1;
+    const conMod = abilityMod(draft.con);
+    // Min 1 HP — a Con modifier of -1 with a roll of 1 still heals 1.
+    const heal = Math.max(1, rolled + conMod);
+    const newHp = Math.min(draft.maxHp, draft.hp + heal);
+    onApply({
+      hp: newHp,
+      deathSaves: { ...DEFAULT_DEATH_SAVES },
+    });
+    setLastHeal({ amount: newHp - draft.hp, die: sides });
+    setOpen(false);
+    // Mirror the roll into QuickDice for a visible record.
+    rollFormula(`1d${sides} ${fmt(conMod)}`, `Short rest (d${sides})`);
+  };
+
+  return (
+    <div ref={wrapRef} className="relative flex-1">
+      <button
+        onClick={() => setOpen((v) => !v)}
+        title="Short rest — spend a hit die"
+        className="w-full flex items-center justify-center gap-1.5 px-3 py-1.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs"
+      >
+        <Coffee size={13} /> Short rest
+      </button>
+      {lastHeal && !open && (
+        <div className="absolute -top-5 left-1/2 -translate-x-1/2 text-[10px] text-emerald-300 whitespace-nowrap pointer-events-none">
+          +{lastHeal.amount} HP (d{lastHeal.die})
+        </div>
+      )}
+      {open && (
+        <div className="absolute bottom-full mb-2 left-0 right-0 z-30 bg-slate-900 border border-slate-700 rounded-md shadow-xl p-2">
+          <div className="text-[10px] uppercase tracking-wider text-slate-500 mb-1.5 text-center">
+            Spend a hit die
+          </div>
+          <div className="grid grid-cols-5 gap-1">
+            {[6, 8, 10, 12, 4].map((s) => (
+              <button
+                key={s}
+                onClick={() => spend(s)}
+                className="px-2 py-1 text-[11px] bg-slate-800 hover:bg-slate-700 rounded text-slate-200"
+              >
+                d{s}
+              </button>
+            ))}
+          </div>
+          <div className="text-[10px] text-slate-500 mt-1.5 text-center">
+            + CON mod ({fmt(abilityMod(draft.con))})
+          </div>
+        </div>
+      )}
     </div>
   );
 }

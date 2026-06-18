@@ -37,6 +37,10 @@ export type PartyMember = {
   xp?: number;
   gold?: Gold;
   deathSaves?: DeathSaves;
+  /** Skill keys (see SKILLS in CharacterSheet) the character is proficient in. */
+  skillProfs?: string[];
+  /** Ability keys ('str' | 'dex' | ...) the character is save-proficient in. */
+  saveProfs?: string[];
 };
 
 export const DEFAULT_GOLD: Gold = { pp: 0, gp: 0, ep: 0, sp: 0, cp: 0 };
@@ -93,6 +97,8 @@ function rowToMember(r: Row): PartyMember {
     xp: d.xp ?? 0,
     gold: d.gold ?? { ...DEFAULT_GOLD },
     deathSaves: d.deathSaves ?? { ...DEFAULT_DEATH_SAVES },
+    skillProfs: d.skillProfs ?? [],
+    saveProfs: d.saveProfs ?? [],
   };
 }
 
@@ -134,7 +140,7 @@ function patchToUpdate(
     'str', 'dex', 'con', 'int', 'wis', 'cha',
     'saves', 'skills', 'languages', 'player', 'ddbUrl', 'source',
     'race', 'classSummary',
-    'xp', 'gold', 'deathSaves',
+    'xp', 'gold', 'deathSaves', 'skillProfs', 'saveProfs',
   ];
   const needsDataUpdate = dataKeys.some((k) => k in patch);
   if (needsDataUpdate) {
