@@ -358,7 +358,7 @@ function DeathSavesBlock({
         filled={ds.failures}
         onClickPip={(i) => togglePip('failures', i)}
       />
-      <div className="flex-1 flex flex-col items-center justify-center gap-2 mt-2 py-2 rounded" style={{ background: t.bg }}>
+          <div className="flex-4 flex flex-col items-center justify-center gap-2 mt-2 py-2 rounded" style={{ background: t.bg }}>
         <status.Icon
           size={56}
           strokeWidth={1.5}
