@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Save, Printer, BedDouble, Coffee, Heart, Dices } from 'lucide-react';
+import { Save, Printer, BedDouble, Coffee, Heart, Dices, HeartPulse, Skull, Eye, Search, Brain } from 'lucide-react';
 import {
   DEFAULT_DEATH_SAVES,
   DEFAULT_GOLD,
@@ -314,8 +314,26 @@ function DeathSavesBlock({
     const next = current === i ? i - 1 : i;
     onApply({ deathSaves: { ...ds, [kind]: Math.max(0, Math.min(3, next)) } });
   };
+
+  // Status reacts to the pip state: dead (3 fails) → stabilized (3 hits) →
+  // dying (any rolls) → conscious (clean slate).
+  const status = (() => {
+    if (ds.failures >= 3)  return { label: 'Unconscious — dead', tone: 'danger',  Icon: Skull };
+    if (ds.successes >= 3) return { label: 'Stabilized',          tone: 'success', Icon: HeartPulse };
+    if (ds.failures > 0 || ds.successes > 0) return { label: 'Dying', tone: 'warning', Icon: HeartPulse };
+    return { label: 'Conscious', tone: 'neutral', Icon: HeartPulse };
+  })();
+
+  const tones: Record<typeof status.tone, { color: string; bg: string; pulse?: string }> = {
+    neutral: { color: '#64748b', bg: 'color-mix(in srgb, #64748b 12%, transparent)' },
+    warning: { color: '#fb923c', bg: 'color-mix(in srgb, #fb923c 14%, transparent)', pulse: 'animate-pulse' },
+    success: { color: '#34d399', bg: 'color-mix(in srgb, #34d399 14%, transparent)' },
+    danger:  { color: '#f43f5e', bg: 'color-mix(in srgb, #f43f5e 16%, transparent)' },
+  };
+  const t = tones[status.tone];
+
   return (
-    <div className="space-y-3">
+    <div className="flex flex-col gap-4 h-full">
       <PipRow
         label="Successes"
         color="bg-emerald-500"
@@ -328,6 +346,17 @@ function DeathSavesBlock({
         filled={ds.failures}
         onClickPip={(i) => togglePip('failures', i)}
       />
+      <div className="flex-1 flex flex-col items-center justify-center gap-2 mt-2 py-3 rounded" style={{ background: t.bg }}>
+        <status.Icon
+          size={56}
+          strokeWidth={1.5}
+          className={status.tone === 'warning' ? 'animate-pulse' : undefined}
+          style={{ color: t.color }}
+        />
+        <div className="text-xs uppercase tracking-wider font-semibold" style={{ color: t.color }}>
+          {status.label}
+        </div>
+      </div>
     </div>
   );
 }
@@ -403,26 +432,53 @@ function PassivesBlock({
   draft: PartyMember;
   onApply: (p: Partial<PartyMember>) => void;
 }) {
+  const senses = [
+    { label: 'Perception',    value: draft.passivePerception,    apply: (v: number) => onApply({ passivePerception: v }),    Icon: Eye,    color: '#7dd3fc' },
+    { label: 'Investigation', value: draft.passiveInvestigation, apply: (v: number) => onApply({ passiveInvestigation: v }), Icon: Search, color: '#c4b5fd' },
+    { label: 'Insight',       value: draft.passiveInsight,       apply: (v: number) => onApply({ passiveInsight: v }),       Icon: Brain,  color: '#fbbf24' },
+  ];
   return (
     <div className="grid grid-cols-3 gap-2">
-      <LabeledNumber
-        label="Perception"
-        value={draft.passivePerception}
-        onChange={(v) => onApply({ passivePerception: v })}
-        width="w-full"
+      {senses.map(({ label, value, apply, Icon, color }) => (
+        <SenseCell key={label} label={label} value={value} onChange={apply} Icon={Icon} color={color} />
+      ))}
+    </div>
+  );
+}
+
+function SenseCell({
+  label,
+  value,
+  onChange,
+  Icon,
+  color,
+}: {
+  label: string;
+  value: number;
+  onChange: (v: number) => void;
+  Icon: typeof Eye;
+  color: string;
+}) {
+  // Visual sense-strength bar: 0–25 mapped to 0–100% width. Most 5e
+  // passives sit 8–22, so this gives a meaningful visual range.
+  const pct = Math.max(0, Math.min(100, (value / 25) * 100));
+  const descriptor = value >= 18 ? 'Keen' : value >= 14 ? 'Sharp' : value >= 10 ? 'Average' : 'Dull';
+  return (
+    <div className="flex flex-col items-center bg-slate-950 border border-slate-800 rounded p-2 gap-1.5">
+      <Icon size={20} strokeWidth={1.5} style={{ color }} />
+      <div className="text-[10px] uppercase tracking-wider text-slate-500">{label}</div>
+      <NumInput
+        value={value}
+        onChange={onChange}
+        className="w-full text-center text-lg font-semibold !border-transparent !bg-transparent !p-0"
       />
-      <LabeledNumber
-        label="Investigation"
-        value={draft.passiveInvestigation}
-        onChange={(v) => onApply({ passiveInvestigation: v })}
-        width="w-full"
-      />
-      <LabeledNumber
-        label="Insight"
-        value={draft.passiveInsight}
-        onChange={(v) => onApply({ passiveInsight: v })}
-        width="w-full"
-      />
+      <div className="h-1 w-full bg-slate-800 rounded-full overflow-hidden">
+        <div
+          className="h-full transition-[width]"
+          style={{ width: `${pct}%`, background: color }}
+        />
+      </div>
+      <div className="text-[10px] text-slate-500">{descriptor}</div>
     </div>
   );
 }
