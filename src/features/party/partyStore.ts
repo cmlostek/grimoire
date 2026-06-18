@@ -4,6 +4,22 @@ import { supabase } from '../../lib/supabase';
 export type Gold = { pp: number; gp: number; ep: number; sp: number; cp: number };
 export type DeathSaves = { successes: number; failures: number };
 
+/** Spell slots are tracked per level (1..9). Index 0 is unused so the array
+ *  index matches the spell level naturally. Each slot has a max and current
+ *  remaining count. */
+export type SpellSlots = { max: number; current: number }[];
+export const DEFAULT_SPELL_SLOTS: SpellSlots = Array.from({ length: 10 }, () => ({ max: 0, current: 0 }));
+
+/** A known/prepared spell entry. SRD-backed lookup via sourceId (spell
+ *  index slug); homebrew spells reference the homebrew row uuid. */
+export type KnownSpell = {
+  id: string;          // local uuid
+  sourceKind: 'srd-spell' | 'spell' | 'custom';
+  sourceId?: string;
+  name: string;
+  prepared: boolean;
+};
+
 /** A line item in a character's inventory. Links back to a SRD or homebrew
  *  catalog entry by id, but stores the display `name` inline so the row
  *  still renders if the source is later removed. */
@@ -58,6 +74,12 @@ export type PartyMember = {
   saveProfs?: string[];
   /** Carried items, weapons, magic items, and known spells. */
   inventory?: InventoryItem[];
+  /** Ability used for spell attacks + save DC. Null = not a caster. */
+  spellAbility?: 'int' | 'wis' | 'cha' | null;
+  /** Spell slot pools per level (length 10; index 0 unused). */
+  spellSlots?: SpellSlots;
+  /** Known / prepared spells separate from physical inventory. */
+  spells?: KnownSpell[];
 };
 
 export const DEFAULT_GOLD: Gold = { pp: 0, gp: 0, ep: 0, sp: 0, cp: 0 };
@@ -117,6 +139,9 @@ function rowToMember(r: Row): PartyMember {
     skillProfs: d.skillProfs ?? [],
     saveProfs: d.saveProfs ?? [],
     inventory: d.inventory ?? [],
+    spellAbility: d.spellAbility ?? null,
+    spellSlots: d.spellSlots ?? DEFAULT_SPELL_SLOTS.map((s) => ({ ...s })),
+    spells: d.spells ?? [],
   };
 }
 
@@ -159,6 +184,7 @@ function patchToUpdate(
     'saves', 'skills', 'languages', 'player', 'ddbUrl', 'source',
     'race', 'classSummary',
     'xp', 'gold', 'deathSaves', 'skillProfs', 'saveProfs', 'inventory',
+    'spellAbility', 'spellSlots', 'spells',
   ];
   const needsDataUpdate = dataKeys.some((k) => k in patch);
   if (needsDataUpdate) {

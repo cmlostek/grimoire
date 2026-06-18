@@ -3,8 +3,11 @@ import { Save, Printer, BedDouble, Coffee, Heart, Dices, HeartPulse, Skull, Eye,
 import {
   DEFAULT_DEATH_SAVES,
   DEFAULT_GOLD,
+  DEFAULT_SPELL_SLOTS,
   type InventoryItem,
+  type KnownSpell,
   type PartyMember,
+  type SpellSlots,
 } from '../party/partyStore';
 import { useQuickDice } from '../dice/quickDiceStore';
 import { useCatalog, searchCatalog, type CatalogEntry } from '../chat/catalog';
@@ -84,11 +87,13 @@ export default function CharacterSheet({
   };
 
   const longRest = () => {
-    // Restore HP to max, clear temp HP, clear death saves.
+    // Restore HP to max, clear temp HP, reset death saves, refill spell slots.
+    const slots = (draft.spellSlots ?? []).map((s) => ({ ...s, current: s.max }));
     apply({
       hp: draft.maxHp,
       tempHp: 0,
       deathSaves: { ...DEFAULT_DEATH_SAVES },
+      spellSlots: slots.length > 0 ? slots : undefined,
     });
   };
 
@@ -180,6 +185,14 @@ export default function CharacterSheet({
           className="lg:col-span-2"
         >
           <InventoryBlock draft={draft} onApply={apply} />
+        </Card>
+
+        <Card
+          title="Spellbook"
+          subtitle="Set casting ability to compute attack and save DC · click slot pips to spend"
+          className="lg:col-span-2"
+        >
+          <SpellbookBlock draft={draft} onApply={apply} />
         </Card>
 
         <Card title="Skills" subtitle="Click pip to toggle proficiency · click modifier to roll" className="lg:col-span-2">
@@ -1175,8 +1188,9 @@ function InventoryPicker({
 
   // Filter to only equippable / castable kinds — drop notes / npcs from the
   // inventory picker since you don't carry them in a backpack.
+  // Spells now live in the Spellbook card, not the inventory list.
   const itemsOnly = useMemo(
-    () => catalog.filter((e) => e.kind === 'item' || e.kind === 'spell' || e.kind === 'srd-item' || e.kind === 'srd-spell'),
+    () => catalog.filter((e) => e.kind === 'item' || e.kind === 'srd-item'),
     [catalog]
   );
   const results = useMemo(() => searchCatalog(itemsOnly, query, 10), [itemsOnly, query]);
@@ -1264,4 +1278,313 @@ function InventoryPicker({
 function KindIconFor({ kind }: { kind: CatalogEntry['kind'] }) {
   if (kind === 'spell' || kind === 'srd-spell') return <Sparkles size={12} className="text-violet-300" />;
   return <Backpack size={12} className="text-slate-500" />;
+}
+
+// ── Spellbook ─────────────────────────────────────────────────────────────
+
+const SPELL_ABILITIES: { key: 'int' | 'wis' | 'cha'; label: string }[] = [
+  { key: 'int', label: 'INT' },
+  { key: 'wis', label: 'WIS' },
+  { key: 'cha', label: 'CHA' },
+];
+
+function SpellbookBlock({
+  draft,
+  onApply,
+}: {
+  draft: PartyMember;
+  onApply: (p: Partial<PartyMember>) => void;
+}) {
+  const ability = draft.spellAbility ?? null;
+  const pb = profBonus(draft.level);
+  const abilMod = ability ? abilityMod(draft[ability]) : 0;
+  const spellAttack = abilMod + pb;
+  const spellDc = 8 + abilMod + pb;
+
+  const slots: SpellSlots = draft.spellSlots ?? DEFAULT_SPELL_SLOTS.map((s) => ({ ...s }));
+  const spells = draft.spells ?? [];
+
+  const setAbility = (a: 'int' | 'wis' | 'cha' | null) => onApply({ spellAbility: a });
+  const setSlotMax = (level: number, max: number) => {
+    const next = slots.map((s) => ({ ...s }));
+    next[level] = { max: Math.max(0, max), current: Math.min(next[level].current, Math.max(0, max)) };
+    onApply({ spellSlots: next });
+  };
+  const toggleSlotPip = (level: number, idx: number) => {
+    const next = slots.map((s) => ({ ...s }));
+    const slot = next[level];
+    // Pips fill left → right when full; clicking the rightmost-filled pip
+    // expends it. Clicking past current fills back up (e.g., to undo).
+    const isFilled = idx < slot.current;
+    if (isFilled) slot.current = idx;       // expend down to (idx) remaining
+    else slot.current = Math.min(slot.max, idx + 1); // fill up to idx+1
+    next[level] = { ...slot };
+    onApply({ spellSlots: next });
+  };
+
+  return (
+    <div className="space-y-4">
+      {/* Casting ability + computed mods */}
+      <div className="flex flex-wrap items-center gap-3">
+        <div className="text-[10px] uppercase tracking-wider text-slate-500">Casting ability</div>
+        <div className="flex gap-1">
+          {SPELL_ABILITIES.map(({ key, label }) => (
+            <button
+              key={key}
+              onClick={() => setAbility(ability === key ? null : key)}
+              className={`px-2 py-1 text-[11px] uppercase tracking-wider rounded border ${
+                ability === key
+                  ? 'border-transparent text-slate-950'
+                  : 'border-slate-700 text-slate-400 hover:text-slate-200 hover:border-slate-500'
+              }`}
+              style={ability === key ? { background: 'var(--ac-400)' } : undefined}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+        <div className="ml-auto flex items-center gap-3 text-xs">
+          <span className="text-slate-500">
+            Spell atk <span className="text-slate-200 font-mono">{ability ? fmt(spellAttack) : '—'}</span>
+          </span>
+          <span className="text-slate-500">
+            Save DC <span className="text-slate-200 font-mono">{ability ? spellDc : '—'}</span>
+          </span>
+        </div>
+      </div>
+
+      {/* Slot pips per level */}
+      <div>
+        <div className="text-[10px] uppercase tracking-wider text-slate-500 mb-2">Spell slots</div>
+        <div className="space-y-1.5">
+          {Array.from({ length: 9 }, (_, i) => i + 1).map((level) => {
+            const slot = slots[level];
+            return (
+              <SlotRow
+                key={level}
+                level={level}
+                slot={slot}
+                onTogglePip={(idx) => toggleSlotPip(level, idx)}
+                onSetMax={(m) => setSlotMax(level, m)}
+              />
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Known spells list */}
+      <div>
+        <div className="text-[10px] uppercase tracking-wider text-slate-500 mb-2">Known &amp; prepared</div>
+        <SpellPicker
+          onAdd={(entry) => {
+            const next: KnownSpell = {
+              id: crypto.randomUUID(),
+              sourceKind: entry.sourceKind,
+              sourceId: entry.sourceId,
+              name: entry.name,
+              prepared: false,
+            };
+            onApply({ spells: [...spells, next] });
+          }}
+        />
+        {spells.length === 0 ? (
+          <div className="text-sm text-slate-500 italic py-2">No spells known yet.</div>
+        ) : (
+          <div className="space-y-1 mt-2">
+            {spells.map((sp) => (
+              <SpellRow
+                key={sp.id}
+                spell={sp}
+                onChange={(patch) => onApply({ spells: spells.map((s) => (s.id === sp.id ? { ...s, ...patch } : s)) })}
+                onRemove={() => onApply({ spells: spells.filter((s) => s.id !== sp.id) })}
+              />
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function SlotRow({
+  level,
+  slot,
+  onTogglePip,
+  onSetMax,
+}: {
+  level: number;
+  slot: { max: number; current: number };
+  onTogglePip: (idx: number) => void;
+  onSetMax: (m: number) => void;
+}) {
+  // Cap visible pips at 8 to keep the row readable; the SRD never exceeds 4
+  // per level for a single class but multi-class can push higher.
+  const PIP_CAP = 8;
+  const pips = Math.min(Math.max(slot.max, 0), PIP_CAP);
+  return (
+    <div className="flex items-center gap-3">
+      <div className="text-[11px] uppercase tracking-wider text-slate-500 w-10 shrink-0 font-mono">
+        Lv {level}
+      </div>
+      <div className="flex gap-1 flex-1 min-w-0">
+        {pips === 0 ? (
+          <span className="text-[11px] text-slate-700 italic">—</span>
+        ) : (
+          Array.from({ length: pips }, (_, i) => (
+            <button
+              key={i}
+              onClick={() => onTogglePip(i)}
+              title={i < slot.current ? 'Expend slot' : 'Restore slot'}
+              className={`h-3.5 w-3.5 rounded-full border-2 ${
+                i < slot.current ? 'border-transparent' : 'border-slate-600 hover:border-slate-400'
+              }`}
+              style={i < slot.current ? { background: 'var(--ac-400)' } : undefined}
+            />
+          ))
+        )}
+      </div>
+      <label className="flex items-center gap-1 text-[10px] text-slate-500">
+        max
+        <input
+          type="number"
+          value={slot.max}
+          onChange={(e) => onSetMax(parseInt(e.target.value || '0', 10))}
+          className="w-12 bg-slate-950 border border-slate-700 rounded px-1.5 py-0.5 text-xs text-center text-slate-100 focus:outline-none focus:border-sky-700"
+        />
+      </label>
+    </div>
+  );
+}
+
+function SpellRow({
+  spell,
+  onChange,
+  onRemove,
+}: {
+  spell: KnownSpell;
+  onChange: (patch: Partial<KnownSpell>) => void;
+  onRemove: () => void;
+}) {
+  const srd = spell.sourceKind === 'srd-spell' && spell.sourceId
+    ? SPELLS_BY_INDEX[spell.sourceId]
+    : null;
+  const levelLabel = srd ? (srd.level === 0 ? 'Cantrip' : `Lv ${srd.level}`) : null;
+  return (
+    <div className="flex items-center gap-2 bg-slate-950 border border-slate-800 rounded px-2 py-1.5">
+      <Sparkles size={13} className="text-violet-300 shrink-0" />
+      <input
+        value={spell.name}
+        onChange={(e) => onChange({ name: e.target.value })}
+        className="flex-1 min-w-0 bg-transparent text-sm text-slate-100 outline-none truncate"
+      />
+      {srd && (
+        <span className="text-[10px] uppercase tracking-wider text-slate-500 shrink-0">
+          {levelLabel} · {srd.school.name}
+        </span>
+      )}
+      <label className="flex items-center gap-1 text-[10px] text-slate-500 cursor-pointer">
+        <input
+          type="checkbox"
+          checked={spell.prepared}
+          onChange={(e) => onChange({ prepared: e.target.checked })}
+          className="accent-sky-500"
+        />
+        prep
+      </label>
+      <button
+        onClick={onRemove}
+        title="Remove"
+        className="p-1 text-slate-600 hover:text-rose-300 print:hidden"
+      >
+        <XIcon size={12} />
+      </button>
+    </div>
+  );
+}
+
+function SpellPicker({
+  onAdd,
+}: {
+  onAdd: (entry: { sourceKind: KnownSpell['sourceKind']; sourceId?: string; name: string }) => void;
+}) {
+  const catalog = useCatalog();
+  const [query, setQuery] = useState('');
+  const [open, setOpen] = useState(false);
+  const wrapRef = useRef<HTMLDivElement>(null);
+
+  const spellsOnly = useMemo(
+    () => catalog.filter((e) => e.kind === 'spell' || e.kind === 'srd-spell'),
+    [catalog]
+  );
+  const results = useMemo(() => searchCatalog(spellsOnly, query, 10), [spellsOnly, query]);
+
+  useEffect(() => {
+    if (!open) return;
+    const onClickAway = (e: MouseEvent) => {
+      if (!wrapRef.current?.contains(e.target as Node)) setOpen(false);
+    };
+    window.addEventListener('mousedown', onClickAway);
+    return () => window.removeEventListener('mousedown', onClickAway);
+  }, [open]);
+
+  const pick = (e: CatalogEntry) => {
+    const colon = e.id.indexOf(':');
+    const identifier = colon >= 0 ? e.id.slice(colon + 1) : e.id;
+    onAdd({ sourceKind: e.kind as KnownSpell['sourceKind'], sourceId: identifier, name: e.name });
+    setQuery('');
+    setOpen(false);
+  };
+
+  const addCustom = () => {
+    const name = query.trim();
+    if (!name) return;
+    onAdd({ sourceKind: 'custom', name });
+    setQuery('');
+    setOpen(false);
+  };
+
+  return (
+    <div ref={wrapRef} className="relative print:hidden">
+      <div className="flex items-center gap-2">
+        <div className="relative flex-1">
+          <Search size={13} className="absolute left-2 top-1/2 -translate-y-1/2 text-slate-600" />
+          <input
+            value={query}
+            onChange={(e) => { setQuery(e.target.value); setOpen(true); }}
+            onFocus={() => setOpen(true)}
+            placeholder="Search spells…"
+            className="w-full bg-slate-950 border border-slate-700 rounded pl-7 pr-2 py-1.5 text-sm text-slate-100 placeholder:text-slate-600 focus:outline-none focus:border-sky-700"
+          />
+        </div>
+        <button
+          onClick={addCustom}
+          disabled={!query.trim()}
+          className="px-2 py-1.5 text-xs rounded bg-slate-800 hover:bg-slate-700 disabled:opacity-40 disabled:cursor-not-allowed text-slate-200 flex items-center gap-1"
+        >
+          <Plus size={12} /> Custom
+        </button>
+      </div>
+      {open && (query.trim() || results.length > 0) && (
+        <div className="absolute z-30 left-0 right-0 mt-1 bg-slate-900 border border-slate-700 rounded shadow-xl max-h-72 overflow-y-auto">
+          {results.length === 0 ? (
+            <div className="px-3 py-2 text-xs text-slate-500">
+              No spell match. Click "Custom" to add "{query.trim()}".
+            </div>
+          ) : (
+            results.map((r) => (
+              <button
+                key={r.id}
+                onClick={() => pick(r)}
+                className="w-full text-left px-3 py-1.5 text-sm text-slate-200 hover:bg-slate-800 flex items-center gap-2"
+              >
+                <Sparkles size={12} className="text-violet-300" />
+                <span className="flex-1 truncate">{r.name}</span>
+                {r.hint && <span className="text-[10px] text-slate-500 shrink-0">{r.hint}</span>}
+              </button>
+            ))
+          )}
+        </div>
+      )}
+    </div>
+  );
 }
