@@ -135,7 +135,7 @@ export default function Dashboard() {
             </div>
           )}
 
-          {tab === 'player' && (
+          {tab === 'character' && (
             !partyLoaded ? (
               <div className="px-6 py-6 text-sm text-slate-500">Loading…</div>
             ) : myCharacter ? (
