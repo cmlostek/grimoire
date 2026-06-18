@@ -5,9 +5,11 @@ import type { CatalogKind } from './catalog';
 export const USER_MENTION_RE = /@\[([^\]]+)\]\(([0-9a-fA-F-]{36})\)/g;
 /** Catalog reference: `#[Display Name](kind:identifier)`. */
 export const HASH_TOKEN_RE = /#\[([^\]]+)\]\((note|npc|item|spell|srd-item|srd-spell):([^)]+)\)/g;
-/** Combined matcher used by parseSegments. Order matters: try # first because
- *  the user token cannot contain `(kind:` so they're disjoint. */
-const ANY_TOKEN_RE = /@\[([^\]]+)\]\(([0-9a-fA-F-]{36})\)|#\[([^\]]+)\]\((note|npc|item|spell|srd-item|srd-spell):([^)]+)\)/g;
+/** Rule reference: `![Display Name](rule:identifier)`. */
+export const RULE_TOKEN_RE = /!\[([^\]]+)\]\(rule:([^)]+)\)/g;
+/** Combined matcher used by parseSegments. */
+const ANY_TOKEN_RE =
+  /@\[([^\]]+)\]\(([0-9a-fA-F-]{36})\)|#\[([^\]]+)\]\((note|npc|item|spell|srd-item|srd-spell):([^)]+)\)|!\[([^\]]+)\]\(rule:([^)]+)\)/g;
 
 export type Segment =
   | { kind: 'text'; text: string }
@@ -23,11 +25,14 @@ export function parseSegments(body: string): Segment[] {
     const start = m.index ?? 0;
     if (start > last) out.push({ kind: 'text', text: body.slice(last, start) });
     if (m[2]) {
-      // @ token
+      // @ token — user mention
       out.push({ kind: 'mention', name: m[1], userId: m[2] });
-    } else {
-      // # token
+    } else if (m[3]) {
+      // # token — catalog reference (note/npc/item/spell)
       out.push({ kind: 'ref', refKind: m[4] as CatalogKind, identifier: m[5], name: m[3] });
+    } else {
+      // ! token — rule reference
+      out.push({ kind: 'ref', refKind: 'rule', identifier: m[7], name: m[6] });
     }
     last = start + m[0].length;
   }

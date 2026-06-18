@@ -8,6 +8,7 @@ export const KIND_ICON_CHAR: Record<CatalogKind, string> = {
   spell: '✨',
   'srd-item': '🎒',
   'srd-spell': '✨',
+  rule: '📖',
 };
 
 /** Background tint used behind the kind icon in the picker and as chip fill. */
@@ -18,6 +19,7 @@ export const KIND_PILL_BG: Record<CatalogKind, string> = {
   spell:       'color-mix(in srgb, #a78bfa 18%, transparent)',
   'srd-item':  'color-mix(in srgb, #4ade80 14%, transparent)',
   'srd-spell': 'color-mix(in srgb, #a78bfa 14%, transparent)',
+  rule:        'color-mix(in srgb, #f472b6 14%, transparent)',
 };
 
 /** Text/accent color for each kind. */
@@ -28,4 +30,5 @@ export const KIND_FG: Record<CatalogKind, string> = {
   spell:       '#c4b5fd',
   'srd-item':  '#86efac',
   'srd-spell': '#c4b5fd',
+  rule:        '#f9a8d4',
 };
