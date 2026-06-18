@@ -21,6 +21,7 @@ import {
 import { useNotes } from '../notes/notesStore';
 import { useNpcStore } from '../npcs/npcStore';
 import { useProfiles, avatarPublicUrl } from '../profiles/profilesStore';
+import { playPingSound } from './notificationSound';
 
 /** Floating-chat resize bounds + persistence. */
 const MIN_POPOUT_W = 280;
@@ -88,13 +89,15 @@ export default function ChatPanel({ variant = 'floating' }: { variant?: 'floatin
     if (ids.length > 0) void loadProfiles(ids);
   }, [members, loadProfiles]);
 
-  // Unread + mention counts derived from messages with created_at > lastSeenAt.
+  // Unread + "ping" counts derived from messages with created_at > lastSeenAt.
+  // A "ping" is a message directed at you — either an @-mention OR a whisper
+  // where you're in `whisper_to`. Both get the red badge + chime.
   const lastSeenAt = useChat((s) => s.lastSeenAt);
   const markSeen = useChat((s) => s.markSeen);
-  const { hasNew, mentionCount } = useMemo(() => {
-    if (!userId) return { hasNew: false, mentionCount: 0 };
+  const { hasNew, pingCount } = useMemo(() => {
+    if (!userId) return { hasNew: false, pingCount: 0 };
     let any = false;
-    let mentions = 0;
+    let pings = 0;
     for (const m of messages) {
       if (m.senderId === userId) continue;
       const ts = new Date(m.createdAt).getTime();
@@ -102,10 +105,23 @@ export default function ChatPanel({ variant = 'floating' }: { variant?: 'floatin
       // Soft-deleted rows shouldn't notify — they're effectively gone.
       if (m.deletedAt) continue;
       any = true;
-      if (m.mentions.includes(userId)) mentions++;
+      const mentioned = m.mentions.includes(userId);
+      const whisperedTo = m.whisperTo?.includes(userId) ?? false;
+      if (mentioned || whisperedTo) pings++;
     }
-    return { hasNew: any, mentionCount: mentions };
+    return { hasNew: any, pingCount: pings };
   }, [messages, lastSeenAt, userId]);
+
+  // Play a short chime whenever the ping count goes up — i.e. a new
+  // mention or whisper arrived. Skips the very first effect run so we
+  // don't beep just because pre-existing unread messages were loaded.
+  const prevPingCountRef = useRef<number | null>(null);
+  useEffect(() => {
+    if (prevPingCountRef.current !== null && pingCount > prevPingCountRef.current) {
+      playPingSound();
+    }
+    prevPingCountRef.current = pingCount;
+  }, [pingCount]);
 
   // Mark messages as read whenever chat is visible (embedded view, or
   // floating panel open). Re-fires on new message arrivals so the count
@@ -187,8 +203,8 @@ export default function ChatPanel({ variant = 'floating' }: { variant?: 'floatin
       <button
         onClick={openPanel}
         title={
-          mentionCount > 0
-            ? `Party chat — ${mentionCount} mention${mentionCount === 1 ? '' : 's'}`
+          pingCount > 0
+            ? `Party chat — ${pingCount} for you`
             : hasNew
             ? 'Party chat — new messages'
             : 'Party chat'
@@ -197,12 +213,12 @@ export default function ChatPanel({ variant = 'floating' }: { variant?: 'floatin
         style={{ color: 'var(--ac-200)' }}
       >
         <MessageCircle size={20} />
-        {mentionCount > 0 ? (
+        {pingCount > 0 ? (
           <span
             className="absolute -top-1 -right-1 min-w-[18px] h-[18px] px-1 rounded-full bg-rose-500 text-white text-[10px] font-semibold flex items-center justify-center border-2 border-slate-950"
-            aria-label={`${mentionCount} unread mention${mentionCount === 1 ? '' : 's'}`}
+            aria-label={`${pingCount} unread mention${pingCount === 1 ? '' : 's'} or whisper${pingCount === 1 ? '' : 's'}`}
           >
-            {mentionCount > 9 ? '9+' : mentionCount}
+            {pingCount > 9 ? '9+' : pingCount}
           </span>
         ) : hasNew ? (
           <span
