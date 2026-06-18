@@ -12,7 +12,7 @@ import { supabase } from '../../lib/supabase';
 import DiceRoller from '../dice/DiceRoller';
 import CharacterSheet from './CharacterSheet';
 
-type DashboardTab = 'profile' | 'player' | 'dice' | 'manage';
+type DashboardTab = 'profile' | 'character' | 'dice' | 'manage';
 
 /**
  * Player dashboard — landing page after entering a campaign. Phase 1: display
@@ -182,7 +182,7 @@ function TabBar({
 }) {
   const tabs: { id: DashboardTab; label: string; icon: typeof UserIcon; gmOnly?: boolean }[] = [
     { id: 'profile', label: 'Profile', icon: UserIcon },
-    { id: 'player', label: 'Player', icon: ScrollText },
+    { id: 'character', label: 'Character', icon: ScrollText },
     { id: 'dice', label: 'Dice', icon: Dice6 },
     { id: 'manage', label: 'Campaign Management', icon: Shield, gmOnly: true },
   ];
