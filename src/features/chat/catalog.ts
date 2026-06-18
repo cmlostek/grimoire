@@ -2,9 +2,9 @@ import { useMemo } from 'react';
 import { useNotes } from '../notes/notesStore';
 import { useNpcStore } from '../npcs/npcStore';
 import { useSharedHomebrew } from '../homebrew/sharedHomebrewStore';
-import { SPELLS, EQUIPMENT, MAGIC_ITEMS } from '../../data/srd';
+import { SPELLS, EQUIPMENT, MAGIC_ITEMS, RULE_SECTIONS } from '../../data/srd';
 
-export type CatalogKind = 'note' | 'npc' | 'item' | 'spell' | 'srd-item' | 'srd-spell';
+export type CatalogKind = 'note' | 'npc' | 'item' | 'spell' | 'srd-item' | 'srd-spell' | 'rule';
 
 export type CatalogEntry = {
   /** Globally-unique within chat tokens. Shape: `<kind>:<identifier>`. */
@@ -23,6 +23,7 @@ const KIND_LABEL: Record<CatalogKind, string> = {
   spell: 'Spell',
   'srd-item': 'Item',
   'srd-spell': 'Spell',
+  rule: 'Rule',
 };
 export const kindLabel = (k: CatalogKind) => KIND_LABEL[k];
 
@@ -43,6 +44,7 @@ export function useCatalog(): CatalogEntry[] {
     for (const s of SPELLS) out.push({ id: `srd-spell:${s.index}`, kind: 'srd-spell', name: s.name, hint: `Lv ${s.level} ${s.school.name}` });
     for (const e of EQUIPMENT) out.push({ id: `srd-item:${e.index}`, kind: 'srd-item', name: e.name, hint: e.equipment_category.name });
     for (const m of MAGIC_ITEMS) out.push({ id: `srd-item:${m.index}`, kind: 'srd-item', name: m.name, hint: m.rarity?.name ?? 'magic item' });
+    for (const r of RULE_SECTIONS) out.push({ id: `rule:${r.index}`, kind: 'rule', name: r.name, hint: 'rule' });
     return out;
   }, [notes, npcs, homebrewItems, homebrewSpells]);
 }
@@ -64,7 +66,7 @@ export function searchCatalog(entries: CatalogEntry[], query: string, limit = 8)
 
 /** Parse a catalog id into { kind, identifier }. */
 export function splitCatalogId(id: string): { kind: CatalogKind; identifier: string } | null {
-  const m = id.match(/^(note|npc|item|spell|srd-item|srd-spell):(.+)$/);
+  const m = id.match(/^(note|npc|item|spell|srd-item|srd-spell|rule):(.+)$/);
   if (!m) return null;
   return { kind: m[1] as CatalogKind, identifier: m[2] };
 }

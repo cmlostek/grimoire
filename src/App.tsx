@@ -96,7 +96,14 @@ function AppShell() {
   const [showPagePicker, setShowPagePicker] = useState(false);
   const { mode, toggle: toggleMode } = useTheme();
   const [collapsed, setCollapsed] = useSidebarCollapsed();
-  const isGM = role === 'gm';
+  const viewAsPlayer = useSession((s) => s.viewAsPlayer);
+  const setViewAsPlayer = useSession((s) => s.setViewAsPlayer);
+  const trueIsGM = role === 'gm';
+  // Effective GM for UI gating. View-as-player downgrades the GM's UI to a
+  // player's view; server-side RLS is unaffected, so they can still
+  // technically edit anything they could before — this is purely so they can
+  // preview what the players see.
+  const isGM = trueIsGM && !viewAsPlayer;
 
   // ── Page title ────────────────────────────────────────────────────────────
   const location = useLocation();
@@ -140,7 +147,23 @@ function AppShell() {
   };
 
   return (
-    <div className="h-full flex text-slate-100 bg-slate-950">
+    <div className="h-full flex flex-col text-slate-100 bg-slate-950">
+      {trueIsGM && viewAsPlayer && (
+        <button
+          onClick={() => setViewAsPlayer(false)}
+          className="shrink-0 w-full px-4 py-1.5 text-xs flex items-center justify-center gap-2 border-b print:hidden"
+          style={{
+            backgroundColor: 'color-mix(in srgb, #fbbf24 18%, transparent)',
+            borderColor: 'color-mix(in srgb, #fbbf24 40%, transparent)',
+            color: '#fcd34d',
+          }}
+        >
+          <Eye size={12} />
+          <span className="font-medium">Viewing as player</span>
+          <span className="opacity-70">— click to return to GM view</span>
+        </button>
+      )}
+      <div className="flex-1 flex min-h-0">
       <aside
         className={`${collapsed ? 'w-14' : 'w-56'} shrink-0 border-r border-slate-800 flex flex-col transition-[width] duration-150`}
       >
@@ -187,8 +210,8 @@ function AppShell() {
                 {campaignName ?? 'Grimoire'}
               </div>
               <div className="text-[11px] text-slate-500 flex items-center gap-1 truncate">
-                <span className={role === 'gm' ? 'text-emerald-400' : 'text-sky-400'}>
-                  {role === 'gm' ? 'GM' : 'Player'}
+                <span className={isGM ? 'text-emerald-400' : 'text-sky-400'}>
+                  {isGM ? 'GM' : 'Player'}
                 </span>
                 <span className="opacity-50">·</span>
                 <span className="truncate">{displayName}</span>
@@ -234,7 +257,7 @@ function AppShell() {
         )}
 
         {/* ── Join code (GM only, hidden when collapsed) ───────────────────── */}
-        {!collapsed && role === 'gm' && joinCode && (
+        {!collapsed && isGM && joinCode && (
           <button
             onClick={copyJoinCode}
             title="Copy join code"
@@ -363,6 +386,14 @@ function AppShell() {
               onClick={() => setShowPagePicker((v) => !v)}
             />
           )}
+          {trueIsGM && (
+            <FooterButton
+              icon={<Eye size={12} />}
+              label={viewAsPlayer ? 'Exit player view' : 'View as player'}
+              collapsed={collapsed}
+              onClick={() => setViewAsPlayer(!viewAsPlayer)}
+            />
+          )}
           <FooterButton
             icon={mode === 'dark' ? <Sun size={12} /> : <Moon size={12} />}
             label={mode === 'dark' ? 'Light mode' : 'Dark mode'}
@@ -398,13 +429,14 @@ function AppShell() {
           <Route path="/spells" element={<Spells />} />
           <Route path="/items" element={<Items />} />
           <Route path="/shop" element={<Shop />} />
-          {role === 'gm' && <Route path="/statblocks" element={<StatBlocks />} />}
-          {role === 'gm' && <Route path="/homebrew" element={<Homebrew />} />}
-          {role === 'gm' && <Route path="/record" element={<Transcription />} />}
+          {isGM && <Route path="/statblocks" element={<StatBlocks />} />}
+          {isGM && <Route path="/homebrew" element={<Homebrew />} />}
+          {isGM && <Route path="/record" element={<Transcription />} />}
           <Route path="/rules" element={<Rules />} />
           <Route path="*" element={<Navigate to="/dashboard" replace />} />
         </Routes>
       </main>
+      </div>
       <QuickDice />
       {/* Dashboard embeds its own chat surface, so hide the floating one there. */}
       {location.pathname !== '/dashboard' && <ChatPanel />}

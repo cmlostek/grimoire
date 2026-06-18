@@ -177,7 +177,10 @@ export default function MentionTextarea({
         appendSpaceOnAdd
         displayTransform={(_id, display) => `#${display}`}
         data={(query, callback) => {
-          const results = searchCatalog(catalog, query, 8).map<CatalogItem>((e) => ({
+          // `#` covers notes / NPCs / items / spells. Rules are handled by
+          // the separate `!` trigger below.
+          const pool = catalog.filter((e) => e.kind !== 'rule');
+          const results = searchCatalog(pool, query, 8).map<CatalogItem>((e) => ({
             id: e.id,
             display: e.name,
             kind: e.kind,
@@ -202,6 +205,39 @@ export default function MentionTextarea({
         }}
         className="mentions__mention mentions__mention--ref"
         style={{ backgroundColor: 'color-mix(in srgb, #a78bfa 22%, transparent)' }}
+      />
+      <Mention
+        trigger="!"
+        markup="![__display__](__id__)"
+        appendSpaceOnAdd
+        displayTransform={(_id, display) => `!${display}`}
+        data={(query, callback) => {
+          const pool = catalog.filter((e) => e.kind === 'rule');
+          const results = searchCatalog(pool, query, 8).map<CatalogItem>((e) => ({
+            id: e.id,
+            display: e.name,
+            kind: e.kind,
+            hint: e.hint,
+          }));
+          callback(results);
+        }}
+        renderSuggestion={(s, _q, _hd, _i, focused) => {
+          const c = s as CatalogItem;
+          return (
+            <div className={`mention-row ${focused ? 'is-focused' : ''}`}>
+              <span
+                className="mention-row__kind"
+                style={{ background: KIND_PILL_BG.rule, color: 'var(--ac-200)' }}
+              >
+                {KIND_ICON_CHAR.rule}
+              </span>
+              <span className="mention-row__name">{c.display}</span>
+              <span className="mention-row__hint">rule</span>
+            </div>
+          );
+        }}
+        className="mentions__mention mentions__mention--rule"
+        style={{ backgroundColor: 'color-mix(in srgb, #f472b6 22%, transparent)' }}
       />
     </MentionsInput>
   );

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Pencil, Check, X, UserPlus, MessageCircle, Camera, Trash2, User as UserIcon, Dice6, Shield, UserMinus, LogOut, ScrollText } from 'lucide-react';
+import { Pencil, Check, X, UserPlus, MessageCircle, Camera, Trash2, User as UserIcon, Dice6, Shield, UserMinus, LogOut, ScrollText, Users as UsersIcon, ChevronLeft } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { useSession } from '../session/sessionStore';
 import { useParty } from '../party/partyStore';
@@ -138,6 +138,14 @@ export default function Dashboard() {
           {tab === 'character' && (
             !partyLoaded ? (
               <div className="px-6 py-6 text-sm text-slate-500">Loading…</div>
+            ) : isGM ? (
+              // GMs see every character in the campaign with a click-to-edit
+              // affordance. Players see their own claimed row.
+              <GmCharactersView
+                party={party}
+                selfId={userId}
+                onUpdate={updateMember}
+              />
             ) : myCharacter ? (
               <CharacterSheet
                 m={myCharacter}
@@ -655,6 +663,119 @@ const COLOR_PRESETS = [
   '#94a3b8', '#f87171', '#fb923c', '#fbbf24', '#4ade80',
   '#22d3ee', '#60a5fa', '#a78bfa', '#f472b6', '#e879f9',
 ];
+
+/**
+ * GM-only view inside the Character tab. Two states:
+ *   1. List — every party_members row with claimer info, click to drill in.
+ *   2. Detail — full CharacterSheet for the selected character.
+ */
+function GmCharactersView({
+  party,
+  selfId,
+  onUpdate,
+}: {
+  party: import('../party/partyStore').PartyMember[];
+  selfId: string | null;
+  onUpdate: (id: string, patch: Partial<import('../party/partyStore').PartyMember>) => Promise<void>;
+}) {
+  const membersMap = useChat((s) => s.members);
+  const profiles = useProfiles((s) => s.profiles);
+  const loadProfiles = useProfiles((s) => s.loadFor);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+
+  // Make sure avatar paths for every potential owner are loaded.
+  useEffect(() => {
+    const ownerIds = party
+      .map((p) => p.owner_user_id)
+      .filter((u): u is string => !!u);
+    if (ownerIds.length > 0) void loadProfiles(ownerIds);
+  }, [party, loadProfiles]);
+
+  const selected = selectedId ? party.find((p) => p.id === selectedId) ?? null : null;
+
+  if (selected) {
+    const ownerMember = selected.owner_user_id ? membersMap[selected.owner_user_id] : null;
+    return (
+      <div>
+        <div className="px-6 pt-6 pb-2 flex items-center gap-2 text-xs text-slate-400 print:hidden">
+          <button
+            onClick={() => setSelectedId(null)}
+            className="flex items-center gap-1 px-2 py-1 rounded hover:bg-slate-800"
+          >
+            <ChevronLeft size={13} /> All characters
+          </button>
+          {ownerMember && (
+            <span className="ml-2">
+              Owner: <span style={{ color: ownerMember.color }}>{ownerMember.displayName}</span>
+            </span>
+          )}
+          {!selected.owner_user_id && (
+            <span className="ml-2 text-slate-500 italic">unclaimed</span>
+          )}
+        </div>
+        <CharacterSheet
+          m={selected}
+          onUpdate={(patch) => onUpdate(selected.id, patch)}
+        />
+      </div>
+    );
+  }
+
+  if (party.length === 0) {
+    return (
+      <div className="px-6 py-6">
+        <div className="bg-slate-900 border border-slate-800 rounded p-4 text-sm text-slate-400">
+          No characters in this campaign yet. Add one from the{' '}
+          <Link to="/party" className="text-sky-300 hover:text-sky-200">Party page</Link>.
+        </div>
+      </div>
+    );
+  }
+
+  // Sort: claimed before unclaimed, alphabetical within.
+  const sorted = [...party].sort((a, b) => {
+    const aClaimed = a.owner_user_id != null;
+    const bClaimed = b.owner_user_id != null;
+    if (aClaimed !== bClaimed) return aClaimed ? -1 : 1;
+    return a.name.localeCompare(b.name);
+  });
+
+  return (
+    <div className="px-6 py-6 space-y-3">
+      <div className="text-[11px] text-slate-500">
+        Click any character to view and edit their full sheet — GMs see everything.
+      </div>
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+        {sorted.map((p) => {
+          const owner = p.owner_user_id ? membersMap[p.owner_user_id] : null;
+          const url = owner ? avatarPublicUrl(profiles[owner.userId]?.avatarPath ?? null) : null;
+          const color = owner?.color ?? '#475569';
+          const isSelf = p.owner_user_id === selfId;
+          return (
+            <button
+              key={p.id}
+              onClick={() => setSelectedId(p.id)}
+              className="flex items-center gap-3 px-3 py-2 rounded bg-slate-900 hover:bg-slate-800 border border-slate-800 hover:border-slate-700 text-left"
+            >
+              <MemberAvatar color={color} name={owner?.displayName ?? p.name} url={url} />
+              <div className="min-w-0 flex-1">
+                <div className="text-sm font-medium text-slate-100 truncate">{p.name}</div>
+                <div className="text-[11px] text-slate-500 truncate">
+                  {p.classSummary || '—'}
+                  {p.race && ` · ${p.race}`}
+                  {' · LVL '}{p.level}
+                </div>
+              </div>
+              <div className="text-[10px] uppercase tracking-wider text-slate-500 shrink-0">
+                {owner ? (isSelf ? 'you' : owner.displayName) : 'unclaimed'}
+              </div>
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
 
 /**
  * Lists every other campaign member with their color, role, and an at-a-glance

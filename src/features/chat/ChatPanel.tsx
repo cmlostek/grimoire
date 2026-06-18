@@ -548,6 +548,9 @@ function MessageBody({
       case 'srd-spell':
         navigate('/spells');
         break;
+      case 'rule':
+        navigate('/rules');
+        break;
     }
   };
 
@@ -866,6 +869,10 @@ function SyntaxHelp() {
             <li>
               <span className="font-mono text-slate-100">#</span>
               <span className="text-slate-500"> — link a note, NPC, item, spell</span>
+            </li>
+            <li>
+              <span className="font-mono text-slate-100">!</span>
+              <span className="text-slate-500"> — link a 5e rule (Conditions, etc.)</span>
             </li>
             <li>
               <span className="font-mono text-slate-100">/w</span>
