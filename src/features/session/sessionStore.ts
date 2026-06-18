@@ -49,7 +49,17 @@ type SessionState = {
   leaveCampaign: () => Promise<{ ok: true } | { ok: false; error: string }>;
   /** GM-only: deletes the active campaign and cascades everything. */
   deleteCampaign: () => Promise<{ ok: true } | { ok: false; error: string }>;
+  /**
+   * UI-only "view as player" toggle. When on, an isGM-derived helper
+   * downgrades the GM's effective role for UI gating so they can preview
+   * what players see. Server-side RLS is unchanged — this never affects
+   * what the GM can read or write, only what the UI shows.
+   */
+  viewAsPlayer: boolean;
+  setViewAsPlayer: (v: boolean) => void;
 };
+
+const VIEW_AS_PLAYER_KEY = 'grimoire:viewAsPlayer';
 
 const ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
 function randomJoinCode(n = 6) {
@@ -71,6 +81,10 @@ export const useSession = create<SessionState>((set, get) => ({
   myColor: null,
   myBio: null,
   myAvatarPath: null,
+  viewAsPlayer: (() => {
+    try { return localStorage.getItem(VIEW_AS_PLAYER_KEY) === '1'; }
+    catch { return false; }
+  })(),
   loading: true,
   error: null,
   myCampaigns: [],
@@ -476,6 +490,16 @@ export const useSession = create<SessionState>((set, get) => ({
     });
     void get().refreshMyCampaigns();
     return { ok: true };
+  },
+
+  setViewAsPlayer: (v) => {
+    set({ viewAsPlayer: v });
+    try {
+      if (v) localStorage.setItem(VIEW_AS_PLAYER_KEY, '1');
+      else localStorage.removeItem(VIEW_AS_PLAYER_KEY);
+    } catch {
+      /* ignore */
+    }
   },
 
   removeMyAvatar: async () => {
