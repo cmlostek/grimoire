@@ -92,9 +92,37 @@ export default function CharacterSheet({
     });
   };
 
-  // Short rest is handled inline via a popover (see ShortRestButton). The
-  // popover spends a hit die: rolls 1d<size>+CON, heals up to maxHp, clears
-  // death saves. Phase B will track actual hit-dice pools.
+  // ── Equipped-derived stats ─────────────────────────────────────────────
+  // Equipped armor contributes its base AC + (capped) DEX mod to the
+  // effective AC shown in Vitals. Manual AC still wins if no armor is
+  // equipped — players who don't want to bother with armor rows just type
+  // their AC directly.
+  const equippedItems = (draft.inventory ?? []).filter((i) => i.equipped);
+  const equippedWeapons = equippedItems
+    .map((i) => ({ item: i, srd: srdItemFor(i) }))
+    .filter((x) => x.srd?.damage);
+  const equippedArmor = equippedItems
+    .map((i) => srdItemFor(i))
+    .filter((s): s is EquipmentItem => !!s?.armor_class);
+
+  const computedAc = (() => {
+    if (equippedArmor.length === 0) return null;
+    // Use the highest-base armor if multiple equipped (e.g., shield + chest).
+    const main = equippedArmor.reduce((best, cur) =>
+      (cur.armor_class!.base > (best?.armor_class!.base ?? 0) ? cur : best),
+    equippedArmor[0]);
+    let ac = main.armor_class!.base;
+    if (main.armor_class!.dex_bonus) {
+      const dex = abilityMod(draft.dex);
+      const max = main.armor_class!.max_bonus;
+      ac += max != null ? Math.min(dex, max) : dex;
+    }
+    // Shield bonus is +2 per equipped shield (SRD shields use armor_category 'Shield').
+    const shieldCount = equippedArmor.filter((a) => a.armor_category === 'Shield').length;
+    ac += shieldCount * 2;
+    return ac;
+  })();
+  const effectiveAc = computedAc ?? draft.ac;
 
   const printSheet = () => {
     // Browser print dialog → user chooses "Save as PDF" or a printer.
@@ -116,7 +144,14 @@ export default function CharacterSheet({
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mt-4">
         <Card title="Vitals">
-          <VitalsBlock draft={draft} onApply={apply} onLongRest={longRest} />
+          <VitalsBlock
+            draft={draft}
+            onApply={apply}
+            onLongRest={longRest}
+            effectiveAc={effectiveAc}
+            armorEquipped={equippedArmor.length > 0}
+            equippedWeapons={equippedWeapons}
+          />
         </Card>
 
         <Card title="Death saves" subtitle="Used when HP hits 0">
@@ -254,11 +289,18 @@ function VitalsBlock({
   draft,
   onApply,
   onLongRest,
+  effectiveAc,
+  armorEquipped,
+  equippedWeapons,
 }: {
   draft: PartyMember;
   onApply: (p: Partial<PartyMember>) => void;
   onLongRest: () => void;
+  effectiveAc: number;
+  armorEquipped: boolean;
+  equippedWeapons: { item: InventoryItem; srd: EquipmentItem | null }[];
 }) {
+  const rollFormula = useQuickDice((s) => s.rollFormula);
   const hpPct = draft.maxHp > 0 ? (draft.hp / draft.maxHp) * 100 : 0;
   return (
     <div className="space-y-3">
@@ -279,7 +321,22 @@ function VitalsBlock({
         />
       </div>
       <div className="grid grid-cols-3 gap-2">
-        <LabeledNumber label="AC" value={draft.ac} onChange={(v) => onApply({ ac: v })} width="w-full" />
+        {armorEquipped ? (
+          <div className="text-center">
+            <div className="text-[10px] uppercase tracking-wider text-slate-500 mb-1" title="From equipped armor">
+              AC <span style={{ color: 'var(--ac-400)' }}>·</span> armored
+            </div>
+            <div
+              className="bg-slate-950 border rounded px-2 py-1 w-full text-sm font-semibold text-center"
+              style={{ borderColor: 'var(--ac-700)', color: 'var(--ac-200)' }}
+              title="Computed from equipped armor + DEX mod"
+            >
+              {effectiveAc}
+            </div>
+          </div>
+        ) : (
+          <LabeledNumber label="AC" value={draft.ac} onChange={(v) => onApply({ ac: v })} width="w-full" />
+        )}
         <LabeledNumber
           label="INIT"
           value={draft.initiativeBonus}
@@ -296,6 +353,39 @@ function VitalsBlock({
           />
         </div>
       </div>
+
+      {equippedWeapons.length > 0 && (
+        <div className="border-t border-slate-800 pt-2">
+          <div className="text-[10px] uppercase tracking-wider text-slate-500 mb-1.5">In hand</div>
+          <div className="space-y-1">
+            {equippedWeapons.map(({ item, srd }) => {
+              if (!srd?.damage) return null;
+              const stats = weaponStats(draft, srd);
+              const damageFormula = `${stats.damageDice}${stats.abilityMod !== 0 ? ` ${fmt(stats.abilityMod)}` : ''}`;
+              return (
+                <div key={item.id} className="flex items-center gap-2 text-xs bg-slate-950 border border-slate-800 rounded px-2 py-1">
+                  <Swords size={11} className="text-rose-400 shrink-0" />
+                  <span className="text-slate-200 flex-1 truncate">{item.name}</span>
+                  <button
+                    onClick={() => rollFormula(`1d20 ${fmt(stats.attackBonus)}`, `${item.name} attack`)}
+                    className="px-1.5 py-0.5 rounded hover:bg-slate-800 text-slate-300 font-mono"
+                    title={`Roll d20 ${fmt(stats.attackBonus)}`}
+                  >
+                    {fmt(stats.attackBonus)}
+                  </button>
+                  <button
+                    onClick={() => rollFormula(damageFormula, `${item.name} damage`)}
+                    className="px-1.5 py-0.5 rounded hover:bg-slate-800 text-slate-300 font-mono"
+                    title={`Roll ${damageFormula}`}
+                  >
+                    {damageFormula}
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
       <div className="flex gap-2 print:hidden">
         <ShortRestButton draft={draft} onApply={onApply} />
         <button
@@ -944,15 +1034,18 @@ function InventoryBlock({
       ) : (
         <div className="space-y-1.5">
           {inventory.map((item) => (
-            <InventoryRow
-              key={item.id}
-              item={item}
-              member={draft}
-              onChange={(patch) => update(item.id, patch)}
-              onRemove={() => remove(item.id)}
-              onRollAttack={(label, bonus) => rollFormula(`1d20 ${fmt(bonus)}`, label)}
-              onRollDamage={(label, formula) => rollFormula(formula, label)}
-            />
+            // Non-equipped rows are dropped from the printed sheet — keeps the
+            // PDF tight by only showing what's currently in hand/worn.
+            <div key={item.id} className={item.equipped ? '' : 'print:hidden'}>
+              <InventoryRow
+                item={item}
+                member={draft}
+                onChange={(patch) => update(item.id, patch)}
+                onRemove={() => remove(item.id)}
+                onRollAttack={(label, bonus) => rollFormula(`1d20 ${fmt(bonus)}`, label)}
+                onRollDamage={(label, formula) => rollFormula(formula, label)}
+              />
+            </div>
           ))}
         </div>
       )}
