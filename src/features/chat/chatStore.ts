@@ -45,6 +45,9 @@ function rowToMember(r: Row): ChatMember {
   };
 }
 
+/** Per-campaign localStorage key for the "last time I looked at chat" timestamp. */
+const LAST_SEEN_KEY = (campaignId: string) => `grimoire:chat:lastSeen:${campaignId}`;
+
 interface ChatState {
   /** Sorted oldest → newest. */
   messages: ChatMessage[];
@@ -53,6 +56,13 @@ interface ChatState {
   loaded: boolean;
   /** Ids of optimistic messages we inserted locally before realtime echo. */
   pendingIds: Set<string>;
+  /**
+   * Epoch-ms timestamp of the user's last chat visibility moment. Messages
+   * with `created_at > lastSeenAt` (and not authored by me) are "unread".
+   * Hydrated from localStorage on load; defaults to now-on-first-visit so
+   * we don't surface a year of old messages as fresh notifications.
+   */
+  lastSeenAt: number;
 
   loadForCampaign(id: string): Promise<void>;
   subscribe(id: string): () => void;
@@ -62,6 +72,8 @@ interface ChatState {
   edit(id: string, body: string): Promise<void>;
   remove(id: string): Promise<void>;
   clearAll(campaignId: string): Promise<{ ok: true } | { ok: false; error: string }>;
+  /** Mark all currently-loaded messages as read. Call when chat becomes visible. */
+  markSeen(campaignId: string): void;
 }
 
 export const useChat = create<ChatState>((set, get) => ({
@@ -69,6 +81,7 @@ export const useChat = create<ChatState>((set, get) => ({
   members: {},
   loaded: false,
   pendingIds: new Set(),
+  lastSeenAt: 0,
 
   loadForCampaign: async (id) => {
     const [msgRes, memRes] = await Promise.all([
@@ -91,7 +104,22 @@ export const useChat = create<ChatState>((set, get) => ({
       members[m.userId] = m;
     }
 
-    set({ messages, members, loaded: true });
+    // Hydrate lastSeenAt from localStorage — falls back to "now" on first
+    // visit so we don't surface old history as new notifications.
+    let lastSeenAt = Date.now();
+    try {
+      const raw = localStorage.getItem(LAST_SEEN_KEY(id));
+      if (raw) {
+        const n = parseInt(raw, 10);
+        if (Number.isFinite(n)) lastSeenAt = n;
+      } else {
+        localStorage.setItem(LAST_SEEN_KEY(id), String(lastSeenAt));
+      }
+    } catch {
+      /* ignore quota / private-mode */
+    }
+
+    set({ messages, members, loaded: true, lastSeenAt });
   },
 
   subscribe: (id) => {
@@ -148,7 +176,7 @@ export const useChat = create<ChatState>((set, get) => ({
     };
   },
 
-  clear: () => set({ messages: [], members: {}, loaded: false, pendingIds: new Set() }),
+  clear: () => set({ messages: [], members: {}, loaded: false, pendingIds: new Set(), lastSeenAt: 0 }),
 
   send: async (campaignId, body, opts) => {
     const trimmed = body.trim();
@@ -221,6 +249,19 @@ export const useChat = create<ChatState>((set, get) => ({
       .update({ deleted_at: new Date().toISOString() })
       .eq('id', id);
     if (error) console.error('[chat] delete failed', error);
+  },
+
+  markSeen: (campaignId) => {
+    const now = Date.now();
+    // Skip the write if we're already up-to-date to keep effect dependencies
+    // from re-triggering this hundreds of times per second.
+    if (now - get().lastSeenAt < 1000) return;
+    set({ lastSeenAt: now });
+    try {
+      localStorage.setItem(LAST_SEEN_KEY(campaignId), String(now));
+    } catch {
+      /* ignore */
+    }
   },
 
   clearAll: async (campaignId) => {

@@ -88,6 +88,34 @@ export default function ChatPanel({ variant = 'floating' }: { variant?: 'floatin
     if (ids.length > 0) void loadProfiles(ids);
   }, [members, loadProfiles]);
 
+  // Unread + mention counts derived from messages with created_at > lastSeenAt.
+  const lastSeenAt = useChat((s) => s.lastSeenAt);
+  const markSeen = useChat((s) => s.markSeen);
+  const { hasNew, mentionCount } = useMemo(() => {
+    if (!userId) return { hasNew: false, mentionCount: 0 };
+    let any = false;
+    let mentions = 0;
+    for (const m of messages) {
+      if (m.senderId === userId) continue;
+      const ts = new Date(m.createdAt).getTime();
+      if (ts <= lastSeenAt) continue;
+      // Soft-deleted rows shouldn't notify — they're effectively gone.
+      if (m.deletedAt) continue;
+      any = true;
+      if (m.mentions.includes(userId)) mentions++;
+    }
+    return { hasNew: any, mentionCount: mentions };
+  }, [messages, lastSeenAt, userId]);
+
+  // Mark messages as read whenever chat is visible (embedded view, or
+  // floating panel open). Re-fires on new message arrivals so the count
+  // stays at zero while the user is actively reading.
+  useEffect(() => {
+    if (!campaignId) return;
+    const visible = embedded || open;
+    if (visible) markSeen(campaignId);
+  }, [embedded, open, messages.length, campaignId, markSeen]);
+
   // Load + subscribe once per campaign; clear on unmount.
   useEffect(() => {
     if (!campaignId) return;
@@ -158,11 +186,30 @@ export default function ChatPanel({ variant = 'floating' }: { variant?: 'floatin
     return (
       <button
         onClick={openPanel}
-        title="Party chat"
+        title={
+          mentionCount > 0
+            ? `Party chat — ${mentionCount} mention${mentionCount === 1 ? '' : 's'}`
+            : hasNew
+            ? 'Party chat — new messages'
+            : 'Party chat'
+        }
         className="fixed bottom-4 right-4 z-40 h-12 w-12 rounded-full bg-slate-900 border border-slate-700 hover:bg-slate-800 text-slate-200 shadow-lg flex items-center justify-center"
         style={{ color: 'var(--ac-200)' }}
       >
         <MessageCircle size={20} />
+        {mentionCount > 0 ? (
+          <span
+            className="absolute -top-1 -right-1 min-w-[18px] h-[18px] px-1 rounded-full bg-rose-500 text-white text-[10px] font-semibold flex items-center justify-center border-2 border-slate-950"
+            aria-label={`${mentionCount} unread mention${mentionCount === 1 ? '' : 's'}`}
+          >
+            {mentionCount > 9 ? '9+' : mentionCount}
+          </span>
+        ) : hasNew ? (
+          <span
+            className="absolute top-1.5 right-1.5 w-2.5 h-2.5 rounded-full bg-white border border-slate-950"
+            aria-label="New messages"
+          />
+        ) : null}
       </button>
     );
   }
