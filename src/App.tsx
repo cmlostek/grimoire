@@ -1,11 +1,12 @@
 import { useEffect, useState } from 'react';
 import { NavLink, Route, Routes, Navigate, useLocation } from 'react-router-dom';
-import { Swords, NotebookPen, Map as MapIcon, BookOpen, Sparkles, Coins, Package, ScrollText, Users, FlaskConical, Dices, LogOut, ArrowLeftRight, Copy, Mic, Eye, EyeOff, Settings, BookMarked, Sun, Moon, PanelLeftClose, PanelLeftOpen, Radio, LayoutDashboard } from 'lucide-react';
+import { Swords, NotebookPen, Map as MapIcon, BookOpen, Sparkles, Coins, Package, ScrollText, Users, FlaskConical, Dices, LogOut, ArrowLeftRight, Copy, Mic, Eye, EyeOff, Settings, BookMarked, Sun, Moon, PanelLeftClose, PanelLeftOpen, Radio, LayoutDashboard, Network } from 'lucide-react';
 import { QuickDice } from './features/dice/QuickDice';
 import { useQuickDice } from './features/dice/quickDiceStore';
 import ChatPanel from './features/chat/ChatPanel';
 import Initiative from './features/initiative/Initiative';
 import Notes from './features/notes/Notes';
+import MindMap from './features/notes/MindMap';
 import MapBoard from './features/map/MapBoard';
 import Spells from './features/spells/Spells';
 import Items from './features/items/Items';
@@ -35,6 +36,7 @@ const nav: NavItem[] = [
   { to: '/initiative', label: 'Initiative', icon: Swords },
   { to: '/party', label: 'Party', icon: Users },
   { to: '/notes', label: 'Notes', icon: NotebookPen },
+  { to: '/mind-map', label: 'Mind Map', icon: Network },
   { to: '/npcs',  label: 'NPCs',  icon: BookMarked },
   { to: '/map', label: 'Map', icon: MapIcon },
   { to: '/spells', label: 'Spells', icon: Sparkles },
@@ -423,6 +425,7 @@ function AppShell() {
           <Route path="/dice" element={<Navigate to="/dashboard" replace />} />
           <Route path="/initiative" element={<Initiative />} />
           <Route path="/notes" element={<Notes />} />
+          <Route path="/mind-map" element={<MindMap />} />
           <Route path="/npcs" element={<NPCs />} />
           <Route path="/map" element={<MapBoard />} />
           <Route path="/party" element={<Party />} />
