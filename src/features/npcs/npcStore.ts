@@ -151,8 +151,12 @@ export const useNpcStore = create<NpcState>((set, get) => ({
       .channel(`npcs:${id}`)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'npcs', filter: `campaign_id=eq.${id}` },
         ({ eventType, new: r, old }) => {
-          if (eventType === 'INSERT')
-            set((s) => ({ npcs: [...s.npcs, rowTo(r as Row)] }));
+          if (eventType === 'INSERT') {
+            const next = rowTo(r as Row);
+            // Optimistic insert in create() may have already added this row;
+            // realtime echoes the same id, so dedupe.
+            set((s) => s.npcs.some((n) => n.id === next.id) ? s : { npcs: [...s.npcs, next] });
+          }
           else if (eventType === 'UPDATE')
             set((s) => ({ npcs: s.npcs.map((n) => n.id === (r as Row).id ? rowTo(r as Row) : n) }));
           else if (eventType === 'DELETE')
@@ -200,7 +204,11 @@ export const useNpcStore = create<NpcState>((set, get) => ({
       .single();
     if (row) {
       const npc = rowTo(row as Row);
-      set((s) => ({ npcs: [...s.npcs, npc], activeNpcId: npc.id }));
+      // Realtime echo may have already added this row; dedupe on id.
+      set((s) => ({
+        npcs: s.npcs.some((n) => n.id === npc.id) ? s.npcs : [...s.npcs, npc],
+        activeNpcId: npc.id,
+      }));
     }
   },
 

@@ -97,8 +97,16 @@ export const useInitiativeStore = create<InitiativeState>((set, get) => ({
       .channel(`init:${id}`)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'initiative_entries', filter: `campaign_id=eq.${id}` },
         ({ eventType, new: r, old }) => {
-          if (eventType === 'INSERT')
-            set((s) => ({ combatants: [...s.combatants, rowTo(r as Row)].sort((a, b) => a.turnOrder - b.turnOrder) }));
+          if (eventType === 'INSERT') {
+            const next = rowTo(r as Row);
+            // add() does an optimistic local insert; the realtime echo
+            // arrives with the same id, so dedupe before re-inserting.
+            set((s) =>
+              s.combatants.some((c) => c.id === next.id)
+                ? s
+                : { combatants: [...s.combatants, next].sort((a, b) => a.turnOrder - b.turnOrder) },
+            );
+          }
           else if (eventType === 'UPDATE')
             set((s) => ({ combatants: s.combatants.map((c) => c.id === (r as Row).id ? rowTo(r as Row) : c) }));
           else if (eventType === 'DELETE')
@@ -128,7 +136,15 @@ export const useInitiativeStore = create<InitiativeState>((set, get) => ({
       })
       .select()
       .single();
-    if (data) set((s) => ({ combatants: [...s.combatants, rowTo(data as Row)] }));
+    if (data) {
+      const next = rowTo(data as Row);
+      // Realtime echo may race this optimistic insert; dedupe on id.
+      set((s) =>
+        s.combatants.some((c) => c.id === next.id)
+          ? s
+          : { combatants: [...s.combatants, next] },
+      );
+    }
   },
 
   update: async (id, patch) => {

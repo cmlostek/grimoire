@@ -347,7 +347,10 @@ export const useMap = create<MapStore>((set, get) => ({
       return null;
     }
     const token = rowToToken(data as TokenRow);
-    set((s) => ({ tokens: [...s.tokens, token] }));
+    // Dedupe — the realtime echo can win the race with this optimistic insert.
+    set((s) =>
+      s.tokens.some((x) => x.id === token.id) ? s : { tokens: [...s.tokens, token] },
+    );
     return token.id;
   },
 

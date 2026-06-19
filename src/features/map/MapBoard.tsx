@@ -198,6 +198,9 @@ export default function MapBoard() {
   const [tool, setTool] = useState<Tool>('select');
   const [ruler, setRuler] = useState<{ x1: number; y1: number; x2: number; y2: number } | null>(null);
   const [drafting, setDrafting] = useState<{ x: number; y: number } | null>(null);
+  // Live cursor position while drafting a shape — drives the dashed preview
+  // so the GM can actually see what they're about to drop on the canvas.
+  const [draftEnd, setDraftEnd] = useState<{ x: number; y: number } | null>(null);
   const [selectedShapeColor, setSelectedShapeColor] = useState(SHAPE_COLORS[0]);
   const [tokenName, setTokenName] = useState('');
   const [tokenEmoji, setTokenEmoji] = useState('');
@@ -718,9 +721,12 @@ export default function MapBoard() {
       return;
     }
 
-    // Ruler is available to everyone, not just the GM.
+    // Ruler is available to everyone, not just the GM. Click-to-toggle: a
+    // first click anchors the start, mousemove tracks the cursor, the next
+    // click clears the ruler so it stops following you around.
     if (tool === 'ruler') {
-      setRuler({ x1: p.x, y1: p.y, x2: p.x, y2: p.y });
+      if (ruler) setRuler(null);
+      else setRuler({ x1: p.x, y1: p.y, x2: p.x, y2: p.y });
       return;
     }
 
@@ -765,6 +771,9 @@ export default function MapBoard() {
     if (ruler && tool === 'ruler') {
       setRuler({ ...ruler, x2: p.x, y2: p.y });
     }
+    if (drafting) {
+      setDraftEnd(p);
+    }
   };
 
   const onMouseUp = (e: React.MouseEvent) => {
@@ -803,6 +812,7 @@ export default function MapBoard() {
       }
       if (shape) void addShape(campaignId, shape);
       setDrafting(null);
+      setDraftEnd(null);
     }
   };
 
@@ -1205,7 +1215,10 @@ export default function MapBoard() {
         <div className="flex-1 min-w-0 relative bg-slate-950 overflow-hidden">
           {/* Ruler readout */}
           {ruler && tool === 'ruler' && (
-            <div className="absolute top-3 left-3 z-10 px-3 py-1.5 bg-slate-950/80 border border-slate-700 rounded font-mono text-xs text-sky-200">
+            <div
+              className="absolute top-3 left-3 z-10 px-3 py-1.5 bg-slate-950/80 border border-slate-700 rounded font-mono text-xs"
+              style={{ color: 'var(--ac-200)' }}
+            >
               {rulerDistance} ft
             </div>
           )}
@@ -1339,15 +1352,81 @@ export default function MapBoard() {
                 return null;
               })}
 
-              {/* Ruler */}
+              {/* Draft shape outline — dashed preview of the shape the GM
+                  is currently dragging out. Cleared on mouseup. */}
+              {drafting && draftEnd && (tool === 'circle' || tool === 'square' || tool === 'cone') && (() => {
+                const dx = draftEnd.x - drafting.x;
+                const dy = draftEnd.y - drafting.y;
+                const dash = `${6 / zoom} ${4 / zoom}`;
+                const sw = 2 / zoom;
+                if (tool === 'circle') {
+                  const r = Math.hypot(dx, dy);
+                  return (
+                    <g pointerEvents="none">
+                      <circle
+                        cx={drafting.x} cy={drafting.y} r={r}
+                        fill={selectedShapeColor}
+                        fillOpacity={0.25}
+                        stroke={selectedShapeColor}
+                        strokeWidth={sw}
+                        strokeDasharray={dash}
+                      />
+                    </g>
+                  );
+                }
+                if (tool === 'square') {
+                  return (
+                    <g pointerEvents="none">
+                      <rect
+                        x={Math.min(drafting.x, draftEnd.x)}
+                        y={Math.min(drafting.y, draftEnd.y)}
+                        width={Math.abs(dx)}
+                        height={Math.abs(dy)}
+                        fill={selectedShapeColor}
+                        fillOpacity={0.25}
+                        stroke={selectedShapeColor}
+                        strokeWidth={sw}
+                        strokeDasharray={dash}
+                      />
+                    </g>
+                  );
+                }
+                // Cone: draw a triangle from origin to the cursor with a
+                // 60° spread (~D&D SRD cone).
+                const len = Math.hypot(dx, dy) || 1;
+                const ux = dx / len;
+                const uy = dy / len;
+                const half = len * Math.tan((Math.PI / 180) * 30);
+                const px = -uy * half;
+                const py = ux * half;
+                const ax = drafting.x + dx + px;
+                const ay = drafting.y + dy + py;
+                const bx = drafting.x + dx - px;
+                const by = drafting.y + dy - py;
+                return (
+                  <g pointerEvents="none">
+                    <polygon
+                      points={`${drafting.x},${drafting.y} ${ax},${ay} ${bx},${by}`}
+                      fill={selectedShapeColor}
+                      fillOpacity={0.25}
+                      stroke={selectedShapeColor}
+                      strokeWidth={sw}
+                      strokeDasharray={dash}
+                    />
+                  </g>
+                );
+              })()}
+
+              {/* Ruler — uses the viewer's dashboard accent so each player
+                  sees their own colour for measurements. */}
               {ruler && tool === 'ruler' && (
                 <g pointerEvents="none">
                   <line
                     x1={ruler.x1} y1={ruler.y1} x2={ruler.x2} y2={ruler.y2}
-                    stroke="#fbbf24" strokeWidth={2 / zoom} strokeDasharray={`${6 / zoom} ${4 / zoom}`}
+                    stroke="var(--ac-400)" strokeWidth={2 / zoom} strokeDasharray={`${6 / zoom} ${4 / zoom}`}
                   />
-                  <circle cx={ruler.x1} cy={ruler.y1} r={4 / zoom} fill="#fbbf24" />
-                  <circle cx={ruler.x2} cy={ruler.y2} r={4 / zoom} fill="#fbbf24" />
+                  <circle cx={ruler.x1} cy={ruler.y1} r={4 / zoom} fill="var(--ac-400)" />
+                  <circle cx={ruler.x2} cy={ruler.y2} r={4 / zoom} fill="var(--ac-400)" />
                 </g>
               )}
 
