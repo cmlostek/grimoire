@@ -33,7 +33,7 @@ export default function Items() {
   }, [campaignId, loadShared, subscribeShared]);
 
   const homebrewItems = useMemo<HomebrewItem[]>(() => {
-    if (role === 'gm') return localHomebrewItems;
+    if (role === 'gm' || role === 'cogm') return localHomebrewItems;
     return sharedItems.map((r) => {
       const d = r.data as Record<string, unknown>;
       const now = Date.now();
@@ -179,7 +179,7 @@ export default function Items() {
                 ))}
               </select>
             )}
-            {tab === 'custom' && role === 'gm' && (
+            {tab === 'custom' && (role === 'gm' || role === 'cogm') && (
               <Link
                 to="/homebrew"
                 className="block text-center px-2 py-1 text-[11px] bg-slate-900 hover:bg-slate-800 border border-slate-800 rounded text-slate-300"
@@ -254,7 +254,7 @@ export default function Items() {
               (tab === 'custom' && filteredCustom.length === 0)) && (
               <div className="p-4 text-xs text-slate-600 italic">
                 {tab === 'custom' ? (
-                  role === 'gm' ? (
+                  (role === 'gm' || role === 'cogm') ? (
                     <>
                       No custom items.{' '}
                       <Link to="/homebrew" className="text-sky-400 hover:underline">
@@ -276,7 +276,7 @@ export default function Items() {
           {!selected ? (
             <div className="h-full flex items-center justify-center text-slate-500">Select an item.</div>
           ) : isHomebrew(selected) ? (
-            <CustomDetail item={selected} onClose={() => setSelected(null)} canEdit={role === 'gm'} />
+            <CustomDetail item={selected} onClose={() => setSelected(null)} canEdit={role === 'gm' || role === 'cogm'} />
           ) : 'rarity' in selected ? (
             <MagicDetail item={selected} onClose={() => setSelected(null)} />
           ) : (

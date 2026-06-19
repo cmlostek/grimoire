@@ -1,5 +1,6 @@
-import { useRef, useState, useEffect, useCallback } from 'react';
+import { useRef, useState, useEffect, useCallback, useMemo } from 'react';
 import { useMap, MAX_DAMAGE_LOG, type DamageLogEntry, type MapShape, type MapToken } from './mapStore';
+import { useInitiativeStore } from '../initiative/initiativeStore';
 import { useSession } from '../session/sessionStore';
 import { supabase } from '../../lib/supabase';
 import { userCollabColor } from '../notes/collabProvider';
@@ -147,7 +148,7 @@ export default function MapBoard() {
   const campaignId = useSession((s) => s.campaignId);
   const userId = useSession((s) => s.userId);
   const role = useSession((s) => s.role);
-  const isGM = role === 'gm';
+  const isGM = role === 'gm' || role === 'cogm';
   const displayName = useSession((s) => s.displayName);
 
   const state = useMap((s) => s.state);
@@ -232,6 +233,16 @@ export default function MapBoard() {
     const unsub = subscribe(campaignId);
     return unsub;
   }, [campaignId, loadForCampaign, subscribe]);
+
+  // Initiative is loaded for sidebar ordering; the Initiative panel manages
+  // it primarily but the map needs the rows to sort tokens by turn order.
+  const loadInitiative = useInitiativeStore((s) => s.loadForCampaign);
+  const subscribeInitiative = useInitiativeStore((s) => s.subscribe);
+  useEffect(() => {
+    if (!campaignId) return;
+    loadInitiative(campaignId);
+    return subscribeInitiative(campaignId);
+  }, [campaignId, loadInitiative, subscribeInitiative]);
 
   useVisibilityReload(() => {
     if (campaignId) loadForCampaign(campaignId);
@@ -745,6 +756,29 @@ export default function MapBoard() {
     return t;
   });
 
+  // Sidebar order: match each token to an initiative combatant by name
+  // (case-insensitive) and use that initiative as the sort key — highest
+  // first, ties broken by turn_order so the in-encounter sequence is stable.
+  // Tokens with no matching combatant fall to the end alphabetically.
+  const combatants = useInitiativeStore((s) => s.combatants);
+  const sidebarTokens = useMemo(() => {
+    const byName = new Map<string, { initiative: number; turnOrder: number }>();
+    for (const c of combatants) {
+      byName.set(c.name.trim().toLowerCase(), { initiative: c.initiative, turnOrder: c.turnOrder });
+    }
+    return [...visibleTokens].sort((a, b) => {
+      const ai = byName.get(a.name.trim().toLowerCase());
+      const bi = byName.get(b.name.trim().toLowerCase());
+      if (ai && bi) {
+        if (bi.initiative !== ai.initiative) return bi.initiative - ai.initiative;
+        return ai.turnOrder - bi.turnOrder;
+      }
+      if (ai) return -1;
+      if (bi) return 1;
+      return a.name.localeCompare(b.name);
+    });
+  }, [visibleTokens, combatants]);
+
   // Get the display color for a token: use the owner's deterministic collab
   // color when an owner is set, otherwise fall back to the stored color.
   const tokenDisplayColor = (t: MapToken): string => {
@@ -923,10 +957,10 @@ export default function MapBoard() {
 
           <div>
             <div className="text-xs uppercase tracking-wider text-slate-500 mb-1">
-              Tokens ({visibleTokens.length})
+              Tokens ({sidebarTokens.length})
             </div>
             <div className="space-y-1">
-              {visibleTokens.map((t) => {
+              {sidebarTokens.map((t) => {
                 const dispColor = tokenDisplayColor(t);
                 return (
                   <div

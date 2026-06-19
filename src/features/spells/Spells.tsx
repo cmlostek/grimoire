@@ -56,7 +56,7 @@ export default function Spells() {
   }, [campaignId, loadShared, subscribeShared]);
 
   const homebrewSpells = useMemo<HomebrewSpell[]>(() => {
-    if (role === 'gm') return localHomebrewSpells;
+    if (role === 'gm' || role === 'cogm') return localHomebrewSpells;
     return sharedSpells.map((r) => {
       const d = r.data as Record<string, unknown>;
       return {
@@ -269,7 +269,7 @@ export default function Spells() {
             {filtered.length === 0 && (
               <div className="p-4 text-xs text-slate-600 italic">
                 {source === 'custom' ? (
-                  role === 'gm' ? (
+                  (role === 'gm' || role === 'cogm') ? (
                     <>
                       No custom spells.{' '}
                       <Link to="/homebrew" className="text-sky-400 hover:underline">
@@ -295,7 +295,7 @@ export default function Spells() {
           ) : selected.kind === 'srd' ? (
             <SrdDetail spell={selected.srd!} onClose={() => setSelected(null)} />
           ) : (
-            <CustomDetail spell={selected.custom!} onClose={() => setSelected(null)} canEdit={role === 'gm'} />
+            <CustomDetail spell={selected.custom!} onClose={() => setSelected(null)} canEdit={role === 'gm' || role === 'cogm'} />
           )}
         </section>
       </div>

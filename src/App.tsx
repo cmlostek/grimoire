@@ -98,7 +98,7 @@ function AppShell() {
   const [collapsed, setCollapsed] = useSidebarCollapsed();
   const viewAsPlayer = useSession((s) => s.viewAsPlayer);
   const setViewAsPlayer = useSession((s) => s.setViewAsPlayer);
-  const trueIsGM = role === 'gm';
+  const trueIsGM = role === 'gm' || role === 'cogm';
   // Effective GM for UI gating. View-as-player downgrades the GM's UI to a
   // player's view; server-side RLS is unaffected, so they can still
   // technically edit anything they could before — this is purely so they can

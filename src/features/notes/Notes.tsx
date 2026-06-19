@@ -124,6 +124,7 @@ import { remarkNoteDecorators, preprocessDecorators } from './decorators';
 import { Secret } from './Secret';
 import { PartyRefSpan } from './PartyTooltip';
 import { useParty } from '../party/partyStore';
+import { useNpcStore } from '../npcs/npcStore';
 
 function extractText(children: React.ReactNode): string {
   if (typeof children === 'string') return children;
@@ -176,7 +177,7 @@ export default function Notes() {
   const userId = useSession((s) => s.userId);
   const displayName = useSession((s) => s.displayName);
   const role = useSession((s) => s.role);
-  const isGM = role === 'gm';
+  const isGM = role === 'gm' || role === 'cogm';
 
   // ── Store state (must come before refs that depend on activeNoteId) ───────
   const notes = useNotes((s) => s.notes);
@@ -208,6 +209,7 @@ export default function Notes() {
   const party = useParty((s) => s.party);
   const loadParty = useParty((s) => s.loadForCampaign);
   const subscribeParty = useParty((s) => s.subscribe);
+  const npcs = useNpcStore((s) => s.npcs);
   const rollFormula = useQuickDice((s) => s.rollFormula);
 
   const loadSettings = useCampaignSettings((s) => s.load);
@@ -883,6 +885,7 @@ export default function Notes() {
                     onNavigate={onWikiClick}
                     rollFormula={rollFormula}
                     party={party}
+                    npcs={npcs}
                     noteId={active.id}
                     ydocState={active.ydoc_state ?? null}
                     userId={userId ?? ''}

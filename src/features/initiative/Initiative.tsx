@@ -9,7 +9,7 @@ import { useCampaignSettings } from '../notes/campaignSettingsStore';
 export default function Initiative() {
   const campaignId = useSession((s) => s.campaignId);
   const role = useSession((s) => s.role);
-  const isGM = role === 'gm';
+  const isGM = role === 'gm' || role === 'cogm';
   const allowedGmPages = useCampaignSettings((s) => s.settings.allowedGmPages ?? []);
   const playerCanView = isGM || allowedGmPages.includes('initiative');
 

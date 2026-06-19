@@ -4,7 +4,10 @@ import { supabase } from '../../lib/supabase';
 const STORAGE_KEY = 'dnd-gm:campaignId';
 const NAME_KEY = 'dnd-gm:displayName';
 
-export type Role = 'gm' | 'player';
+export type Role = 'gm' | 'cogm' | 'player';
+
+/** True when the actor has GM permissions (primary GM or co-GM). */
+export const hasGmPerms = (r: Role | null) => r === 'gm' || r === 'cogm';
 
 export type CampaignSummary = {
   id: string;

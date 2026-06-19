@@ -1382,7 +1382,9 @@ function SpellbookBlock({
         </div>
       </div>
 
-      {/* Known spells list */}
+      {/* Known spells list — grouped under their slot level for at-a-glance
+          prep planning. Cantrips first, then 1-9. Within a level spells stay
+          in insertion order so the player keeps control of personal order. */}
       <div>
         <div className="text-[10px] uppercase tracking-wider text-slate-500 mb-2">Known &amp; prepared</div>
         <SpellPicker
@@ -1400,18 +1402,70 @@ function SpellbookBlock({
         {spells.length === 0 ? (
           <div className="text-sm text-slate-500 italic py-2">No spells known yet.</div>
         ) : (
-          <div className="space-y-1 mt-2">
-            {spells.map((sp) => (
+          <SpellsByLevel
+            spells={spells}
+            spellAttack={ability ? spellAttack : null}
+            spellDc={ability ? spellDc : null}
+            onChange={(id, patch) => onApply({ spells: spells.map((s) => (s.id === id ? { ...s, ...patch } : s)) })}
+            onRemove={(id) => onApply({ spells: spells.filter((s) => s.id !== id) })}
+          />
+        )}
+      </div>
+    </div>
+  );
+}
+
+function spellLevelFor(spell: KnownSpell): number {
+  if (spell.sourceKind === 'srd-spell' && spell.sourceId) {
+    return SPELLS_BY_INDEX[spell.sourceId]?.level ?? 0;
+  }
+  return 0;
+}
+
+function SpellsByLevel({
+  spells,
+  spellAttack,
+  spellDc,
+  onChange,
+  onRemove,
+}: {
+  spells: KnownSpell[];
+  spellAttack: number | null;
+  spellDc: number | null;
+  onChange: (id: string, patch: Partial<KnownSpell>) => void;
+  onRemove: (id: string) => void;
+}) {
+  const groups = useMemo(() => {
+    const m = new Map<number, KnownSpell[]>();
+    for (const sp of spells) {
+      const lv = spellLevelFor(sp);
+      if (!m.has(lv)) m.set(lv, []);
+      m.get(lv)!.push(sp);
+    }
+    return [...m.entries()].sort(([a], [b]) => a - b);
+  }, [spells]);
+
+  return (
+    <div className="space-y-3 mt-2">
+      {groups.map(([level, group]) => (
+        <div key={level}>
+          <div className="text-[10px] uppercase tracking-wider text-slate-500 mb-1">
+            {level === 0 ? 'Cantrips' : `Level ${level}`} <span className="text-slate-700">({group.length})</span>
+          </div>
+          <div className="space-y-1">
+            {group.map((sp) => (
               <SpellRow
                 key={sp.id}
                 spell={sp}
-                onChange={(patch) => onApply({ spells: spells.map((s) => (s.id === sp.id ? { ...s, ...patch } : s)) })}
-                onRemove={() => onApply({ spells: spells.filter((s) => s.id !== sp.id) })}
+                spellAttack={spellAttack}
+                spellDc={spellDc}
+                onChange={(patch) => onChange(sp.id, patch)}
+                onRemove={() => onRemove(sp.id)}
               />
             ))}
           </div>
-        )}
-      </div>
+        </div>
+      ))}
     </div>
   );
 }
@@ -1468,46 +1522,108 @@ function SlotRow({
 
 function SpellRow({
   spell,
+  spellAttack,
+  spellDc,
   onChange,
   onRemove,
 }: {
   spell: KnownSpell;
+  spellAttack: number | null;
+  spellDc: number | null;
   onChange: (patch: Partial<KnownSpell>) => void;
   onRemove: () => void;
 }) {
+  const [open, setOpen] = useState(false);
   const srd = spell.sourceKind === 'srd-spell' && spell.sourceId
     ? SPELLS_BY_INDEX[spell.sourceId]
     : null;
-  const levelLabel = srd ? (srd.level === 0 ? 'Cantrip' : `Lv ${srd.level}`) : null;
+
+  const baseDamage = (() => {
+    if (!srd?.damage) return null;
+    // Cantrips scale by character level; leveled spells by slot level.
+    const map = srd.damage.damage_at_slot_level ?? srd.damage.damage_at_character_level;
+    if (!map) return null;
+    // Pick the spell's own base level (or 1 for cantrips).
+    const key = String(Math.max(1, srd.level));
+    return map[key] ?? Object.values(map)[0] ?? null;
+  })();
+
+  const damageType = srd?.damage?.damage_type?.name ?? null;
+  const saveAbility = srd?.dc?.dc_type?.name ?? null;
+
   return (
-    <div className="flex items-center gap-2 bg-slate-950 border border-slate-800 rounded px-2 py-1.5">
-      <Sparkles size={13} className="text-violet-300 shrink-0" />
-      <input
-        value={spell.name}
-        onChange={(e) => onChange({ name: e.target.value })}
-        className="flex-1 min-w-0 bg-transparent text-sm text-slate-100 outline-none truncate"
-      />
-      {srd && (
-        <span className="text-[10px] uppercase tracking-wider text-slate-500 shrink-0">
-          {levelLabel} · {srd.school.name}
-        </span>
+    <div className="bg-slate-950 border border-slate-800 rounded">
+      <div className="flex items-center gap-2 px-2 py-1.5">
+        <Sparkles size={13} className="text-violet-300 shrink-0" />
+        <button
+          onClick={() => srd && setOpen((v) => !v)}
+          className="flex-1 min-w-0 text-left text-sm text-slate-100 outline-none truncate hover:text-sky-200 disabled:cursor-text disabled:hover:text-slate-100"
+          disabled={!srd}
+          title={srd ? 'Click to view description' : undefined}
+        >
+          {spell.name}
+        </button>
+        {/* Inline at-a-glance chips: attack mod, damage, save DC */}
+        {srd?.attack_type && spellAttack != null && (
+          <span className="text-[10px] font-mono text-sky-300 shrink-0" title="Spell attack bonus">
+            {fmt(spellAttack)}
+          </span>
+        )}
+        {baseDamage && (
+          <span className="text-[10px] font-mono text-rose-300 shrink-0" title={damageType ?? 'damage'}>
+            {baseDamage}
+          </span>
+        )}
+        {saveAbility && spellDc != null && (
+          <span className="text-[10px] uppercase font-mono text-amber-300 shrink-0" title="Save DC">
+            {saveAbility.slice(0, 3)} {spellDc}
+          </span>
+        )}
+        {srd?.concentration && (
+          <span className="text-[9px] uppercase tracking-wider text-amber-400 shrink-0" title="Concentration">C</span>
+        )}
+        {srd?.ritual && (
+          <span className="text-[9px] uppercase tracking-wider text-violet-300 shrink-0" title="Ritual">R</span>
+        )}
+        <label className="flex items-center gap-1 text-[10px] text-slate-500 cursor-pointer shrink-0">
+          <input
+            type="checkbox"
+            checked={spell.prepared}
+            onChange={(e) => onChange({ prepared: e.target.checked })}
+            className="accent-sky-500"
+          />
+          prep
+        </label>
+        <button
+          onClick={onRemove}
+          title="Remove"
+          className="p-1 text-slate-600 hover:text-rose-300 print:hidden"
+        >
+          <XIcon size={12} />
+        </button>
+      </div>
+      {open && srd && (
+        <div className="px-3 pb-3 pt-1 text-[12px] text-slate-300 space-y-1 border-t border-slate-800">
+          <div className="text-[10px] text-slate-500 flex flex-wrap gap-x-3 gap-y-0.5">
+            <span>{srd.school.name}</span>
+            <span>Casting time: {srd.casting_time}</span>
+            <span>Range: {srd.range}</span>
+            <span>Components: {srd.components.join(', ')}</span>
+            <span>Duration: {srd.duration}</span>
+          </div>
+          {srd.desc.map((line, i) => (
+            <p key={i} className="whitespace-pre-wrap leading-snug">{line}</p>
+          ))}
+          {srd.higher_level && srd.higher_level.length > 0 && (
+            <div className="mt-1">
+              <div className="text-[10px] uppercase tracking-wider text-slate-500">At higher levels</div>
+              {srd.higher_level.map((line, i) => (
+                <p key={i} className="whitespace-pre-wrap leading-snug">{line}</p>
+              ))}
+            </div>
+          )}
+        </div>
       )}
-      <label className="flex items-center gap-1 text-[10px] text-slate-500 cursor-pointer">
-        <input
-          type="checkbox"
-          checked={spell.prepared}
-          onChange={(e) => onChange({ prepared: e.target.checked })}
-          className="accent-sky-500"
-        />
-        prep
-      </label>
-      <button
-        onClick={onRemove}
-        title="Remove"
-        className="p-1 text-slate-600 hover:text-rose-300 print:hidden"
-      >
-        <XIcon size={12} />
-      </button>
     </div>
   );
 }

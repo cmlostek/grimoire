@@ -86,7 +86,7 @@ type Props = {
   autoFocus?: boolean;
 };
 
-type MemberItem = SuggestionDataItem & { color: string; role: 'gm' | 'player' };
+type MemberItem = SuggestionDataItem & { color: string; role: 'gm' | 'cogm' | 'player' };
 type CatalogItem = SuggestionDataItem & { kind: CatalogEntry['kind']; hint?: string };
 
 /**

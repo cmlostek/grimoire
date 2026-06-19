@@ -190,8 +190,8 @@ function MyCampaignsList() {
             <div className="min-w-0">
               <div className="text-sm text-slate-100 truncate">{c.name}</div>
               <div className="text-[11px] text-slate-500 flex items-center gap-1">
-                <span className={c.role === 'gm' ? 'text-emerald-400' : 'text-sky-400'}>
-                  {c.role === 'gm' ? 'GM' : 'Player'}
+                <span className={c.role === 'gm' ? 'text-emerald-400' : c.role === 'cogm' ? 'text-teal-400' : 'text-sky-400'}>
+                  {c.role === 'gm' ? 'GM' : c.role === 'cogm' ? 'Co-GM' : 'Player'}
                 </span>
                 <span className="opacity-50">·</span>
                 <span className="truncate">{c.display_name}</span>

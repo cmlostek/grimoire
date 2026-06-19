@@ -39,6 +39,7 @@ import { searchWiki, kindLabel, type WikiEntry } from './wikiIndex';
 import { autocorrectExtension } from './autocorrect';
 import { modifier } from '../../data/srd';
 import type { PartyMember } from '../party/partyStore';
+import type { NPC } from '../npcs/npcStore';
 import { Shield, Heart } from 'lucide-react';
 
 // ─── Decorator token regex (secrets excluded — handled by secretPlugin) ───────
@@ -583,6 +584,7 @@ type Props = {
   onNavigate: (path: string) => void;
   rollFormula: (formula: string) => void;
   party: PartyMember[];
+  npcs?: NPC[];
   // Collab
   noteId: string;
   ydocState: string | null;
@@ -595,7 +597,9 @@ type Props = {
 // ─── Abilities for party tooltip ─────────────────────────────────────────────
 const PARTY_ABILITIES = ['str', 'dex', 'con', 'int', 'wis', 'cha'] as const;
 
-type HoverTooltip = { member: PartyMember; rect: DOMRect };
+type HoverTooltip =
+  | { kind: 'party'; member: PartyMember; rect: DOMRect }
+  | { kind: 'npc'; npc: NPC; rect: DOMRect };
 
 // ─── Exposed handle (for parent to read Yjs state on save / trigger formatting) ─
 export type FormatCmd =
@@ -612,7 +616,7 @@ export type { Collaborator };
 
 // ─── Component ────────────────────────────────────────────────────────────────
 export const LiveEditor = forwardRef<LiveEditorHandle, Props>(function LiveEditor(
-  { body, onChange, wikiIndex, onNavigate, rollFormula, party, noteId, ydocState, userId, userName, onCollaboratorsChange },
+  { body, onChange, wikiIndex, onNavigate, rollFormula, party, npcs, noteId, ydocState, userId, userName, onCollaboratorsChange },
   ref,
 ) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -624,6 +628,7 @@ export const LiveEditor = forwardRef<LiveEditorHandle, Props>(function LiveEdito
   const navRef                  = useRef(onNavigate);         navRef.current                  = onNavigate;
   const rollRef                 = useRef(rollFormula);        rollRef.current                 = rollFormula;
   const partyRef                = useRef(party);              partyRef.current                = party;
+  const npcsRef                 = useRef(npcs ?? []);          npcsRef.current                 = npcs ?? [];
   const onCollaboratorsChangeRef = useRef(onCollaboratorsChange); onCollaboratorsChangeRef.current = onCollaboratorsChange;
 
   const [suggest, setSuggest] = useState<SuggestState | null>(null);
@@ -1010,7 +1015,14 @@ export const LiveEditor = forwardRef<LiveEditorHandle, Props>(function LiveEdito
           const member = partyRef.current.find(
             (m) => m.name.trim().toLowerCase() === inner.toLowerCase()
           );
-          if (member) setHoverTooltip({ member, rect: locEl.getBoundingClientRect() });
+          if (member) {
+            setHoverTooltip({ kind: 'party', member, rect: locEl.getBoundingClientRect() });
+          } else {
+            const npc = npcsRef.current.find(
+              (n) => n.name.trim().toLowerCase() === inner.toLowerCase()
+            );
+            if (npc) setHoverTooltip({ kind: 'npc', npc, rect: locEl.getBoundingClientRect() });
+          }
         } else if (!target.closest('[data-party-tooltip]')) {
           hoverTimerRef.current = setTimeout(() => setHoverTooltip(null), 150);
         }
@@ -1038,52 +1050,108 @@ export const LiveEditor = forwardRef<LiveEditorHandle, Props>(function LiveEdito
 
       {hoverTooltip && createPortal(
         (() => {
-          const m = hoverTooltip.member;
           const rect = hoverTooltip.rect;
           const tooltipW = 264;
           const tooltipH = 190;
           const above = rect.bottom + tooltipH + 10 > window.innerHeight;
           const top  = above ? rect.top - tooltipH - 6 : rect.bottom + 6;
           const left = Math.max(8, Math.min(rect.left, window.innerWidth - tooltipW - 8));
-          const hpPct = m.maxHp > 0 ? Math.min(100, (m.hp / m.maxHp) * 100) : 0;
+          const onEnter = () => { if (hoverTimerRef.current) { clearTimeout(hoverTimerRef.current); hoverTimerRef.current = null; } };
+          const onLeave = () => { hoverTimerRef.current = setTimeout(() => setHoverTooltip(null), 150); };
+
+          if (hoverTooltip.kind === 'party') {
+            const m = hoverTooltip.member;
+            const hpPct = m.maxHp > 0 ? Math.min(100, (m.hp / m.maxHp) * 100) : 0;
+            const hpColor = hpPct > 50 ? '#10b981' : hpPct > 25 ? '#38bdf8' : '#f87171';
+            return (
+              <div
+                data-party-tooltip="true"
+                className="party-tooltip"
+                style={{ position: 'fixed', top, left, zIndex: 9999, width: tooltipW }}
+                onMouseEnter={onEnter}
+                onMouseLeave={onLeave}
+              >
+                <div className="party-tooltip-name">{m.name}</div>
+                <div className="party-tooltip-sub">
+                  {m.classSummary} · {m.race}
+                  {m.owner_user_id && <span className="party-tooltip-owned"> · Lv {m.level}</span>}
+                </div>
+                <div className="party-tooltip-stats">
+                  <span><Shield size={11} /> AC {m.ac}</span>
+                  <span><Heart size={11} className="text-rose-400" /> {m.hp}/{m.maxHp}</span>
+                  <span>Init {m.initiativeBonus >= 0 ? '+' : ''}{m.initiativeBonus}</span>
+                </div>
+                <div className="party-tooltip-hp-bar">
+                  <div style={{ width: `${hpPct}%`, background: hpColor }} />
+                </div>
+                <div className="party-tooltip-abilities">
+                  {PARTY_ABILITIES.map((a) => (
+                    <div key={a} className="party-tooltip-ability">
+                      <div className="party-tooltip-ability-label">{a.toUpperCase()}</div>
+                      <div className="party-tooltip-ability-score">{m[a]}</div>
+                      <div className="party-tooltip-ability-mod">{modifier(m[a])}</div>
+                    </div>
+                  ))}
+                </div>
+                {(m.passivePerception || m.passiveInvestigation || m.passiveInsight) ? (
+                  <div className="party-tooltip-passives">
+                    <span>Perc {m.passivePerception}</span>
+                    <span>Inv {m.passiveInvestigation}</span>
+                    <span>Ins {m.passiveInsight}</span>
+                  </div>
+                ) : null}
+              </div>
+            );
+          }
+
+          // NPC tooltip — same visual frame as party hover, sourcing the
+          // statBlock when available. HP bar appears only if maxHp is set.
+          const n = hoverTooltip.npc;
+          const sb = n.statBlock ?? {};
+          const hp = sb.hpCurrent ?? 0;
+          const maxHp = sb.hpMax ?? 0;
+          const hpPct = maxHp > 0 ? Math.min(100, (hp / maxHp) * 100) : 0;
           const hpColor = hpPct > 50 ? '#10b981' : hpPct > 25 ? '#38bdf8' : '#f87171';
           return (
             <div
               data-party-tooltip="true"
               className="party-tooltip"
               style={{ position: 'fixed', top, left, zIndex: 9999, width: tooltipW }}
-              onMouseEnter={() => { if (hoverTimerRef.current) { clearTimeout(hoverTimerRef.current); hoverTimerRef.current = null; } }}
-              onMouseLeave={() => { hoverTimerRef.current = setTimeout(() => setHoverTooltip(null), 150); }}
+              onMouseEnter={onEnter}
+              onMouseLeave={onLeave}
             >
-              <div className="party-tooltip-name">{m.name}</div>
+              <div className="party-tooltip-name">
+                <span className="mr-1">{n.icon}</span>{n.name}
+              </div>
               <div className="party-tooltip-sub">
-                {m.classSummary} · {m.race}
-                {m.owner_user_id && <span className="party-tooltip-owned"> · Lv {m.level}</span>}
+                {[sb.creatureType, n.faction, n.location].filter(Boolean).join(' · ') || 'NPC'}
               </div>
-              <div className="party-tooltip-stats">
-                <span><Shield size={11} /> AC {m.ac}</span>
-                <span><Heart size={11} className="text-rose-400" /> {m.hp}/{m.maxHp}</span>
-                <span>Init {m.initiativeBonus >= 0 ? '+' : ''}{m.initiativeBonus}</span>
-              </div>
-              <div className="party-tooltip-hp-bar">
-                <div style={{ width: `${hpPct}%`, background: hpColor }} />
-              </div>
-              <div className="party-tooltip-abilities">
-                {PARTY_ABILITIES.map((a) => (
-                  <div key={a} className="party-tooltip-ability">
-                    <div className="party-tooltip-ability-label">{a.toUpperCase()}</div>
-                    <div className="party-tooltip-ability-score">{m[a]}</div>
-                    <div className="party-tooltip-ability-mod">{modifier(m[a])}</div>
-                  </div>
-                ))}
-              </div>
-              {(m.passivePerception || m.passiveInvestigation || m.passiveInsight) ? (
-                <div className="party-tooltip-passives">
-                  <span>Perc {m.passivePerception}</span>
-                  <span>Inv {m.passiveInvestigation}</span>
-                  <span>Ins {m.passiveInsight}</span>
+              {(sb.ac != null || maxHp > 0 || sb.cr) && (
+                <div className="party-tooltip-stats">
+                  {sb.ac != null && <span><Shield size={11} /> AC {sb.ac}</span>}
+                  {maxHp > 0 && <span><Heart size={11} className="text-rose-400" /> {hp}/{maxHp}</span>}
+                  {sb.cr && <span>CR {sb.cr}</span>}
                 </div>
-              ) : null}
+              )}
+              {maxHp > 0 && (
+                <div className="party-tooltip-hp-bar">
+                  <div style={{ width: `${hpPct}%`, background: hpColor }} />
+                </div>
+              )}
+              {(sb.str || sb.dex || sb.con || sb.int || sb.wis || sb.cha) && (
+                <div className="party-tooltip-abilities">
+                  {PARTY_ABILITIES.map((a) => {
+                    const v = sb[a];
+                    return (
+                      <div key={a} className="party-tooltip-ability">
+                        <div className="party-tooltip-ability-label">{a.toUpperCase()}</div>
+                        <div className="party-tooltip-ability-score">{v ?? '—'}</div>
+                        <div className="party-tooltip-ability-mod">{v != null ? modifier(v) : ''}</div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
             </div>
           );
         })(),
