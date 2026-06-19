@@ -1,6 +1,7 @@
 import { useRef, useState, useEffect, useCallback, useMemo } from 'react';
 import { useMap, MAX_DAMAGE_LOG, type DamageLogEntry, type MapShape, type MapToken } from './mapStore';
 import { useInitiativeStore } from '../initiative/initiativeStore';
+import { useNpcStore } from '../npcs/npcStore';
 import { useSession } from '../session/sessionStore';
 import { supabase } from '../../lib/supabase';
 import { userCollabColor } from '../notes/collabProvider';
@@ -26,6 +27,7 @@ import {
   AlertCircle,
   Heart,
   History,
+  X,
 } from 'lucide-react';
 
 type Tool = 'select' | 'ruler' | 'circle' | 'square' | 'cone' | 'token' | 'ping';
@@ -184,6 +186,11 @@ export default function MapBoard() {
   const [selectedShapeColor, setSelectedShapeColor] = useState(SHAPE_COLORS[0]);
   const [tokenName, setTokenName] = useState('');
   const [tokenEmoji, setTokenEmoji] = useState('');
+  // Optional creature template — when set, the next placed token seeds
+  // hp/maxHp from this NPC's stat block. Cleared after manual edits.
+  const [creatureHp, setCreatureHp] = useState<number | null>(null);
+  const [creatureMaxHp, setCreatureMaxHp] = useState<number | null>(null);
+  const [creatureSourceName, setCreatureSourceName] = useState<string | null>(null);
   const [draggingTokenId, setDraggingTokenId] = useState<string | null>(null);
   const [localDrag, setLocalDrag] = useState<{ id: string; x: number; y: number } | null>(null);
   const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 });
@@ -214,6 +221,8 @@ export default function MapBoard() {
   const campaignIdRef  = useRef(campaignId);  campaignIdRef.current  = campaignId;
   const tokenNameRef   = useRef(tokenName);   tokenNameRef.current   = tokenName;
   const tokenEmojiRef  = useRef(tokenEmoji);  tokenEmojiRef.current  = tokenEmoji;
+  const creatureHpRef    = useRef(creatureHp);    creatureHpRef.current    = creatureHp;
+  const creatureMaxHpRef = useRef(creatureMaxHp); creatureMaxHpRef.current = creatureMaxHp;
 
   type TouchMode = 'none' | 'pan' | 'pinch' | 'drag';
   const touchModeRef  = useRef<TouchMode>('none');
@@ -243,6 +252,21 @@ export default function MapBoard() {
     loadInitiative(campaignId);
     return subscribeInitiative(campaignId);
   }, [campaignId, loadInitiative, subscribeInitiative]);
+
+  // NPCs feed the "Add from creature" picker so the GM can drop a token
+  // pre-seeded from a stat block instead of typing everything by hand.
+  const npcs = useNpcStore((s) => s.npcs);
+  const loadNpcs = useNpcStore((s) => s.loadForCampaign);
+  const subscribeNpcs = useNpcStore((s) => s.subscribe);
+  useEffect(() => {
+    if (!campaignId) return;
+    loadNpcs(campaignId);
+    return subscribeNpcs(campaignId);
+  }, [campaignId, loadNpcs, subscribeNpcs]);
+  const npcsWithStats = useMemo(
+    () => npcs.filter((n) => n.statBlock && (n.statBlock.hpMax != null || n.statBlock.hpCurrent != null)),
+    [npcs],
+  );
 
   useVisibilityReload(() => {
     if (campaignId) loadForCampaign(campaignId);
@@ -392,6 +416,8 @@ export default function MapBoard() {
             size: Math.max(30, size * 0.8),
             owner_user_id: userId,
             hidden_from_players: false,
+            hp: creatureHpRef.current ?? undefined,
+            maxHp: creatureMaxHpRef.current ?? undefined,
           });
           return;
         }
@@ -659,6 +685,8 @@ export default function MapBoard() {
         size: tokenSize,
         owner_user_id: userId,
         hidden_from_players: false,
+        hp: creatureHp ?? undefined,
+        maxHp: creatureMaxHp ?? undefined,
       });
     }
   };
@@ -944,6 +972,66 @@ export default function MapBoard() {
               </div>
               <div className="text-[10px] text-slate-500 italic">
                 Token color uses your profile color automatically.
+              </div>
+
+              {/* Creature picker: pull a stat-blocked NPC and seed the next
+                  placed token from it. Clears as soon as the next token is
+                  dropped via the touch path; the mouse path also reads the
+                  current state value. */}
+              <div className="border-t border-slate-800 pt-2 space-y-1.5">
+                <div className="text-[10px] uppercase tracking-wider text-slate-500">
+                  Add from creature
+                </div>
+                {creatureSourceName && (
+                  <div className="flex items-center gap-1 text-[10px] text-emerald-300 bg-emerald-950/40 border border-emerald-900/50 rounded px-2 py-1">
+                    <span className="flex-1 truncate">
+                      {creatureSourceName} · HP {creatureHp ?? '—'}/{creatureMaxHp ?? '—'}
+                    </span>
+                    <button
+                      onClick={() => {
+                        setCreatureSourceName(null);
+                        setCreatureHp(null);
+                        setCreatureMaxHp(null);
+                      }}
+                      className="text-slate-400 hover:text-rose-300"
+                      title="Clear creature template"
+                    >
+                      <X size={10} />
+                    </button>
+                  </div>
+                )}
+                {npcsWithStats.length === 0 ? (
+                  <div className="text-[10px] text-slate-600 italic">
+                    No NPCs with stat blocks yet — add one on the NPCs page.
+                  </div>
+                ) : (
+                  <div className="max-h-40 overflow-y-auto space-y-0.5">
+                    {npcsWithStats.map((n) => {
+                      const sb = n.statBlock;
+                      const maxHp = sb.hpMax ?? sb.hpCurrent ?? 0;
+                      const hp = sb.hpCurrent ?? maxHp;
+                      return (
+                        <button
+                          key={n.id}
+                          onClick={() => {
+                            setTokenName(n.name);
+                            if (n.icon) setTokenEmoji(n.icon);
+                            setCreatureHp(hp);
+                            setCreatureMaxHp(maxHp);
+                            setCreatureSourceName(n.name);
+                          }}
+                          className="w-full text-left flex items-center gap-1.5 px-1.5 py-1 rounded hover:bg-slate-900 text-[11px] text-slate-300"
+                        >
+                          <span className="shrink-0">{n.icon || '👤'}</span>
+                          <span className="flex-1 truncate">{n.name}</span>
+                          <span className="text-[10px] text-slate-500 font-mono shrink-0">
+                            {hp}/{maxHp}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
             </div>
           )}
