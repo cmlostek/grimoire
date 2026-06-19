@@ -631,6 +631,7 @@ create policy chat_messages_select on chat_messages for select to authenticated
       whisper_to is null
       or sender_id = auth.uid()
       or auth.uid() = any(whisper_to)
+      or is_gm(campaign_id)
     )
   );
 

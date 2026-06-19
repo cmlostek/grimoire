@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { MessageCircle, X, Send, Pencil, Trash2, Check, Palette, HelpCircle } from 'lucide-react';
+import { MessageCircle, X, Send, Pencil, Trash2, Check, Palette, HelpCircle, Eye } from 'lucide-react';
 import { useChat, type ChatMember, type ChatMessage } from './chatStore';
 import { useChatPanel } from './chatPanelStore';
 import { useSession } from '../session/sessionStore';
@@ -711,6 +711,9 @@ function Composer({
       {whisperTo && (
         <WhisperBar member={whisperTo} onCancel={() => setWhisperTargetId(null)} />
       )}
+      <div className="px-2 pt-1 text-[10px] text-slate-600 italic flex items-center gap-1">
+        <Eye size={10} /> The GM can see every message, including whispers.
+      </div>
       <div className="relative px-2 py-2 flex items-end gap-2">
         {pickerActive && (
           <WhisperPicker

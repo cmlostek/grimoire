@@ -1,6 +1,22 @@
 import { create } from 'zustand';
 import { supabase } from '../../lib/supabase';
 
+/** Append-only HP change log; kept on the token row so anyone with select
+ *  rights can hover to see what's happened. Capped to the most recent
+ *  MAX_DAMAGE_LOG entries to keep payloads small. */
+export type DamageLogEntry = {
+  /** ISO timestamp. */
+  ts: string;
+  /** Negative = damage taken, positive = healing. */
+  delta: number;
+  /** Resulting HP after applying the delta. */
+  hp: number;
+  /** Optional acting user id (defaults to the editor). */
+  by?: string;
+};
+
+export const MAX_DAMAGE_LOG = 25;
+
 export type MapToken = {
   id: string;
   owner_user_id: string | null;
@@ -11,6 +27,9 @@ export type MapToken = {
   emoji?: string;
   size: number;
   hidden_from_players: boolean;
+  hp?: number;
+  maxHp?: number;
+  damageLog?: DamageLogEntry[];
 };
 
 export type MapShape =
@@ -34,6 +53,13 @@ export type MapState = {
   height: number;
 };
 
+type TokenData = {
+  emoji?: string;
+  hp?: number;
+  maxHp?: number;
+  damageLog?: DamageLogEntry[];
+};
+
 type TokenRow = {
   id: string;
   campaign_id: string;
@@ -44,7 +70,7 @@ type TokenRow = {
   y: number;
   hidden_from_players: boolean;
   size: number;
-  data: { emoji?: string } | null;
+  data: TokenData | null;
 };
 
 type StateRow = {
@@ -79,7 +105,19 @@ function rowToToken(r: TokenRow): MapToken {
     emoji: r.data?.emoji,
     size: r.size,
     hidden_from_players: r.hidden_from_players,
+    hp: r.data?.hp,
+    maxHp: r.data?.maxHp,
+    damageLog: r.data?.damageLog,
   };
+}
+
+function tokenDataPayload(t: Pick<MapToken, 'emoji' | 'hp' | 'maxHp' | 'damageLog'>): TokenData {
+  const d: TokenData = {};
+  if (t.emoji) d.emoji = t.emoji;
+  if (t.hp != null) d.hp = t.hp;
+  if (t.maxHp != null) d.maxHp = t.maxHp;
+  if (t.damageLog && t.damageLog.length > 0) d.damageLog = t.damageLog;
+  return d;
 }
 
 function rowToState(r: StateRow): MapState {
@@ -300,7 +338,7 @@ export const useMap = create<MapStore>((set, get) => ({
         y: t.y,
         hidden_from_players: t.hidden_from_players,
         size: t.size,
-        data: t.emoji ? { emoji: t.emoji } : {},
+        data: tokenDataPayload(t),
       })
       .select()
       .single();
@@ -327,7 +365,9 @@ export const useMap = create<MapStore>((set, get) => ({
     if ('size' in patch) row.size = next.size;
     if ('owner_user_id' in patch) row.owner_user_id = next.owner_user_id;
     if ('hidden_from_players' in patch) row.hidden_from_players = next.hidden_from_players;
-    if ('emoji' in patch) row.data = next.emoji ? { emoji: next.emoji } : {};
+    if ('emoji' in patch || 'hp' in patch || 'maxHp' in patch || 'damageLog' in patch) {
+      row.data = tokenDataPayload(next);
+    }
 
     const { error } = await supabase.from('map_tokens').update(row).eq('id', id);
     if (error) {

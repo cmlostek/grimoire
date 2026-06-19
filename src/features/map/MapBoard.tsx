@@ -1,5 +1,5 @@
 import { useRef, useState, useEffect, useCallback } from 'react';
-import { useMap, type MapShape, type MapToken } from './mapStore';
+import { useMap, MAX_DAMAGE_LOG, type DamageLogEntry, type MapShape, type MapToken } from './mapStore';
 import { useSession } from '../session/sessionStore';
 import { supabase } from '../../lib/supabase';
 import { userCollabColor } from '../notes/collabProvider';
@@ -23,6 +23,8 @@ import {
   ZoomIn,
   ZoomOut,
   AlertCircle,
+  Heart,
+  History,
 } from 'lucide-react';
 
 type Tool = 'select' | 'ruler' | 'circle' | 'square' | 'cone' | 'token' | 'ping';
@@ -37,6 +39,109 @@ const EMOJI_PRESETS = ['🧙', '🗡️', '🏹', '🛡️', '🐉', '👹', '�
 const uid = () => crypto.randomUUID();
 
 type Member = { user_id: string; display_name: string; role: string };
+
+function appendDamageLog(
+  prev: DamageLogEntry[] | undefined,
+  delta: number,
+  hp: number,
+  by?: string,
+): DamageLogEntry[] {
+  const next: DamageLogEntry[] = [
+    ...(prev ?? []),
+    { ts: new Date().toISOString(), delta, hp, by },
+  ];
+  return next.length > MAX_DAMAGE_LOG ? next.slice(-MAX_DAMAGE_LOG) : next;
+}
+
+function TokenHpRow({
+  token,
+  canEdit,
+  actorId,
+  onApply,
+}: {
+  token: MapToken;
+  canEdit: boolean;
+  actorId: string | undefined;
+  onApply: (patch: Partial<MapToken>) => void;
+}) {
+  const [logOpen, setLogOpen] = useState(false);
+  const hp = token.hp ?? 0;
+  const maxHp = token.maxHp ?? 0;
+  const pct = maxHp > 0 ? Math.max(0, Math.min(100, (hp / maxHp) * 100)) : 0;
+  const barColor =
+    pct > 60 ? 'bg-emerald-500' : pct > 25 ? 'bg-amber-500' : 'bg-rose-500';
+
+  const commitHp = (next: number) => {
+    if (next === hp) return;
+    onApply({
+      hp: next,
+      damageLog: appendDamageLog(token.damageLog, next - hp, next, actorId),
+    });
+  };
+
+  const log = token.damageLog ?? [];
+
+  return (
+    <div className="space-y-1">
+      <div className="flex items-center gap-1.5 text-[10px] text-slate-400">
+        <Heart size={10} className="text-rose-400 shrink-0" />
+        {canEdit ? (
+          <>
+            <input
+              type="number"
+              value={hp}
+              onChange={(e) => commitHp(parseInt(e.target.value || '0', 10))}
+              className="w-12 bg-slate-950 border border-slate-800 rounded px-1 py-0.5 font-mono text-[10px]"
+            />
+            <span className="text-slate-600">/</span>
+            <input
+              type="number"
+              value={maxHp}
+              onChange={(e) => onApply({ maxHp: Math.max(0, parseInt(e.target.value || '0', 10)) })}
+              className="w-12 bg-slate-950 border border-slate-800 rounded px-1 py-0.5 font-mono text-[10px]"
+            />
+          </>
+        ) : (
+          <span className="font-mono">
+            {maxHp > 0 ? `${hp}/${maxHp}` : '—'}
+          </span>
+        )}
+        {log.length > 0 && (
+          <button
+            onClick={() => setLogOpen((v) => !v)}
+            className="ml-auto text-slate-500 hover:text-slate-200"
+            title={`${log.length} HP change${log.length === 1 ? '' : 's'}`}
+          >
+            <History size={10} />
+          </button>
+        )}
+      </div>
+      {maxHp > 0 && (
+        <div className="h-1 bg-slate-800 rounded overflow-hidden">
+          <div className={`h-full ${barColor}`} style={{ width: `${pct}%` }} />
+        </div>
+      )}
+      {logOpen && log.length > 0 && (
+        <ul className="text-[10px] text-slate-500 font-mono max-h-24 overflow-y-auto border-t border-slate-800 pt-1 space-y-0.5">
+          {[...log].reverse().map((e, i) => {
+            const t = new Date(e.ts).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+            const sign = e.delta > 0 ? '+' : '';
+            return (
+              <li key={i} className="flex justify-between gap-2">
+                <span className={e.delta < 0 ? 'text-rose-400' : 'text-emerald-400'}>
+                  {sign}
+                  {e.delta}
+                </span>
+                <span>→ {e.hp}</span>
+                <span className="text-slate-700">{t}</span>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </div>
+  );
+}
 
 export default function MapBoard() {
   const campaignId = useSession((s) => s.campaignId);
@@ -863,6 +968,12 @@ export default function MapBoard() {
                         </>
                       )}
                     </div>
+                    <TokenHpRow
+                      token={t}
+                      canEdit={isGM || (!!userId && t.owner_user_id === userId)}
+                      actorId={userId ?? undefined}
+                      onApply={(patch) => void updateToken(t.id, patch)}
+                    />
                     {isGM && (
                       <select
                         value={t.owner_user_id ?? ''}
@@ -1100,6 +1211,21 @@ export default function MapBoard() {
                         {t.emoji}
                       </text>
                     )}
+                    {/* HP bar — drawn directly above the token when maxHp set */}
+                    {(t.maxHp ?? 0) > 0 && (() => {
+                      const barW = r * 1.8;
+                      const barH = Math.max(2, 4 / zoom);
+                      const barX = t.x - barW / 2;
+                      const barY = t.y - r - barH - 2 / zoom;
+                      const pct = Math.max(0, Math.min(1, (t.hp ?? 0) / (t.maxHp ?? 1)));
+                      const fill = pct > 0.6 ? '#10b981' : pct > 0.25 ? '#f59e0b' : '#ef4444';
+                      return (
+                        <g pointerEvents="none">
+                          <rect x={barX} y={barY} width={barW} height={barH} fill="#0f172a" opacity={0.7} rx={barH / 2} />
+                          <rect x={barX} y={barY} width={barW * pct} height={barH} fill={fill} rx={barH / 2} />
+                        </g>
+                      );
+                    })()}
                     {/* Name label */}
                     <text
                       x={t.x} y={labelY}
@@ -1113,6 +1239,10 @@ export default function MapBoard() {
                     >
                       {t.name}
                     </text>
+                    {/* Tooltip exposing current HP on hover (works even for non-editors) */}
+                    {(t.maxHp ?? 0) > 0 && (
+                      <title>{`${t.name} — HP ${t.hp ?? 0}/${t.maxHp ?? 0}`}</title>
+                    )}
                   </g>
                 );
               })}
