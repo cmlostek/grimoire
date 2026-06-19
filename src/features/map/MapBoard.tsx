@@ -3,6 +3,7 @@ import { useMap, MAX_DAMAGE_LOG, type DamageLogEntry, type MapShape, type MapTok
 import { useInitiativeStore } from '../initiative/initiativeStore';
 import { useNpcStore } from '../npcs/npcStore';
 import { useSession } from '../session/sessionStore';
+import { useStore } from '../../store';
 import { supabase } from '../../lib/supabase';
 import { userCollabColor } from '../notes/collabProvider';
 import PageHeader from '../../components/PageHeader';
@@ -38,6 +39,20 @@ type Presence = { user_id: string; display_name: string; role: 'gm' | 'player' }
 // Shape palette (semi-transparent)
 const SHAPE_COLORS = ['#f59e0b80', '#10b98180', '#3b82f680', '#ef444480', '#a855f780'];
 const EMOJI_PRESETS = ['🧙', '🗡️', '🏹', '🛡️', '🐉', '👹', '🧌', '💀', '🐺', '🕷️', '👑', '🧚'];
+
+// NPC.icon stores a Lucide icon key ("shield", "swords", …), not an emoji.
+// The map token UI expects an actual emoji glyph, so translate when seeding
+// a token from an NPC. Unknown keys fall back to the generic 🧙.
+const NPC_ICON_TO_EMOJI: Record<string, string> = {
+  user:     '🧙',
+  crown:    '👑',
+  skull:    '💀',
+  shield:   '🛡️',
+  swords:   '⚔️',
+  book:     '📖',
+  coins:    '💰',
+  sparkles: '✨',
+};
 
 const uid = () => crypto.randomUUID();
 
@@ -253,8 +268,9 @@ export default function MapBoard() {
     return subscribeInitiative(campaignId);
   }, [campaignId, loadInitiative, subscribeInitiative]);
 
-  // NPCs feed the "Add from creature" picker so the GM can drop a token
-  // pre-seeded from a stat block instead of typing everything by hand.
+  // NPCs and homebrew stat blocks both feed the "Add from creature" picker
+  // so the GM can drop a token pre-seeded from existing source material
+  // instead of typing everything by hand.
   const npcs = useNpcStore((s) => s.npcs);
   const loadNpcs = useNpcStore((s) => s.loadForCampaign);
   const subscribeNpcs = useNpcStore((s) => s.subscribe);
@@ -263,10 +279,50 @@ export default function MapBoard() {
     loadNpcs(campaignId);
     return subscribeNpcs(campaignId);
   }, [campaignId, loadNpcs, subscribeNpcs]);
-  const npcsWithStats = useMemo(
-    () => npcs.filter((n) => n.statBlock && (n.statBlock.hpMax != null || n.statBlock.hpCurrent != null)),
-    [npcs],
-  );
+  const statBlocks = useStore((s) => s.statBlocks);
+
+  type CreatureRow = {
+    key: string;
+    source: 'npc' | 'statblock';
+    name: string;
+    emoji: string;
+    hp: number;
+    maxHp: number;
+  };
+  // Combined, sorted creature list. Every NPC is shown (even ones without
+  // HP set yet — the GM can edit on the token after placing); stat blocks
+  // come from the local /statblocks page and use their `hp` as both
+  // current and max. Sort alphabetically so it's predictable.
+  const creatureRoster: CreatureRow[] = useMemo(() => {
+    const rows: CreatureRow[] = [];
+    for (const n of npcs) {
+      const sb = n.statBlock ?? {};
+      const maxHp = sb.hpMax ?? sb.hpCurrent ?? 0;
+      const hp = sb.hpCurrent ?? maxHp;
+      rows.push({
+        key: `npc:${n.id}`,
+        source: 'npc',
+        name: n.name,
+        emoji: NPC_ICON_TO_EMOJI[n.icon] ?? '🧙',
+        hp,
+        maxHp,
+      });
+    }
+    for (const s of statBlocks) {
+      // Scope to the active campaign if the stat block was filed under one.
+      if (s.campaign && campaignId && s.campaign !== campaignId) continue;
+      const hp = s.hp ?? 0;
+      rows.push({
+        key: `sb:${s.id}`,
+        source: 'statblock',
+        name: s.name,
+        emoji: '📜',
+        hp,
+        maxHp: hp,
+      });
+    }
+    return rows.sort((a, b) => a.name.localeCompare(b.name));
+  }, [npcs, statBlocks, campaignId]);
 
   useVisibilityReload(() => {
     if (campaignId) loadForCampaign(campaignId);
@@ -1000,36 +1056,37 @@ export default function MapBoard() {
                     </button>
                   </div>
                 )}
-                {npcsWithStats.length === 0 ? (
+                {creatureRoster.length === 0 ? (
                   <div className="text-[10px] text-slate-600 italic">
-                    No NPCs with stat blocks yet — add one on the NPCs page.
+                    No NPCs or stat blocks yet — add one on the NPCs or Stat Blocks page.
                   </div>
                 ) : (
-                  <div className="max-h-40 overflow-y-auto space-y-0.5">
-                    {npcsWithStats.map((n) => {
-                      const sb = n.statBlock;
-                      const maxHp = sb.hpMax ?? sb.hpCurrent ?? 0;
-                      const hp = sb.hpCurrent ?? maxHp;
-                      return (
-                        <button
-                          key={n.id}
-                          onClick={() => {
-                            setTokenName(n.name);
-                            if (n.icon) setTokenEmoji(n.icon);
-                            setCreatureHp(hp);
-                            setCreatureMaxHp(maxHp);
-                            setCreatureSourceName(n.name);
-                          }}
-                          className="w-full text-left flex items-center gap-1.5 px-1.5 py-1 rounded hover:bg-slate-900 text-[11px] text-slate-300"
+                  <div className="max-h-48 overflow-y-auto space-y-0.5">
+                    {creatureRoster.map((row) => (
+                      <button
+                        key={row.key}
+                        onClick={() => {
+                          setTokenName(row.name);
+                          setTokenEmoji(row.emoji);
+                          setCreatureHp(row.maxHp || null);
+                          setCreatureMaxHp(row.maxHp || null);
+                          setCreatureSourceName(row.name);
+                        }}
+                        className="w-full text-left flex items-center gap-1.5 px-1.5 py-1 rounded hover:bg-slate-900 text-[11px] text-slate-300"
+                      >
+                        <span className="shrink-0 text-base leading-none">{row.emoji}</span>
+                        <span className="flex-1 truncate">{row.name}</span>
+                        <span
+                          className="text-[9px] uppercase tracking-wider text-slate-600 shrink-0"
+                          title={row.source === 'npc' ? 'From NPCs' : 'From Stat Blocks'}
                         >
-                          <span className="shrink-0">{n.icon || '👤'}</span>
-                          <span className="flex-1 truncate">{n.name}</span>
-                          <span className="text-[10px] text-slate-500 font-mono shrink-0">
-                            {hp}/{maxHp}
-                          </span>
-                        </button>
-                      );
-                    })}
+                          {row.source === 'npc' ? 'npc' : 'sb'}
+                        </span>
+                        <span className="text-[10px] text-slate-500 font-mono shrink-0 w-12 text-right">
+                          {row.maxHp > 0 ? `${row.hp}/${row.maxHp}` : '—'}
+                        </span>
+                      </button>
+                    ))}
                   </div>
                 )}
               </div>
