@@ -1,6 +1,7 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import { useLocation } from 'react-router-dom';
 import PageHeader from '../../components/PageHeader';
 import { RULE_SECTIONS } from '../../data/srd';
 import { CONDITIONS } from '../../data/conditions';
@@ -17,6 +18,21 @@ export default function Rules() {
   const [selectedCondition, setSelectedCondition] = useState<string | null>(
     CONDITIONS[0]?.index ?? null
   );
+  const location = useLocation();
+
+  useEffect(() => {
+    const hash = location.hash.replace(/^#/, '');
+    if (!hash) return;
+    if (CONDITIONS.some((c) => c.index === hash)) {
+      setMode('conditions');
+      setSelectedCondition(hash);
+      return;
+    }
+    if (RULE_SECTIONS.some((r) => r.index === hash)) {
+      setMode('rules');
+      setSelectedRule(hash);
+    }
+  }, [location.hash]);
 
   const entries = mode === 'rules' ? RULE_SECTIONS : CONDITIONS;
   const selectedIndex = mode === 'rules' ? selectedRule : selectedCondition;

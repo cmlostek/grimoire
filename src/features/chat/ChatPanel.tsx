@@ -541,15 +541,19 @@ function MessageBody({
         navigate('/npcs');
         break;
       case 'item':
+        navigate(`/items#custom-${identifier}`);
+        break;
       case 'srd-item':
-        navigate('/items');
+        navigate(`/items#${identifier}`);
         break;
       case 'spell':
+        navigate(`/spells#custom-${identifier}`);
+        break;
       case 'srd-spell':
-        navigate('/spells');
+        navigate(`/spells#${identifier}`);
         break;
       case 'rule':
-        navigate('/rules');
+        navigate(`/rules#${identifier}`);
         break;
     }
   };

@@ -84,7 +84,7 @@ export default function Spells() {
     if (!hash) return;
     if (hash.startsWith('custom-')) {
       const id = hash.slice('custom-'.length);
-      const hit = homebrewSpells.find((sp) => sp.id === id);
+      const hit = homebrewSpells.find((sp) => sp.id === id || sp.id === `shared-${id}`);
       if (hit) {
         setSource('custom');
         setSelected({

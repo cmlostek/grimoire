@@ -57,7 +57,7 @@ export default function Items() {
     if (!hash) return;
     if (hash.startsWith('custom-')) {
       const id = hash.slice('custom-'.length);
-      const hit = homebrewItems.find((i) => i.id === id);
+      const hit = homebrewItems.find((i) => i.id === id || i.id === `shared-${id}`);
       if (hit) {
         setTab('custom');
         setSelected(hit);

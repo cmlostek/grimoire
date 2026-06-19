@@ -820,7 +820,7 @@ export default function MapBoard() {
             <div className="text-xs uppercase tracking-wider text-slate-500 mb-1">
               Tokens ({visibleTokens.length})
             </div>
-            <div className="space-y-1 max-h-64 overflow-y-auto">
+            <div className="space-y-1">
               {visibleTokens.map((t) => {
                 const dispColor = tokenDisplayColor(t);
                 return (

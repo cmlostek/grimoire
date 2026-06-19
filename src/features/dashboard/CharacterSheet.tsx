@@ -137,7 +137,17 @@ export default function CharacterSheet({
   };
 
   return (
-    <div className="px-6 py-6 print-character-sheet">
+    <div className="px-6 py-6 print-character-sheet relative">
+      {dirty && (
+        <button
+          onClick={save}
+          disabled={saving}
+          className="fixed bottom-6 right-6 z-30 px-4 py-2 rounded-full bg-amber-600 hover:bg-amber-500 disabled:opacity-50 text-white text-sm font-semibold shadow-lg flex items-center gap-1.5 print:hidden"
+          title="Save character (unsaved changes)"
+        >
+          <Save size={14} /> {saving ? 'Saving…' : 'Save'}
+        </button>
+      )}
       <SheetHeader
         draft={draft}
         dirty={dirty}
