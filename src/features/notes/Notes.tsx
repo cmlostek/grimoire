@@ -999,6 +999,7 @@ export default function Notes() {
                     rollFormula={rollFormula}
                     party={party}
                     npcs={npcs}
+                    notes={notes}
                     noteId={active.id}
                     ydocState={active.ydoc_state ?? null}
                     userId={userId ?? ''}

@@ -40,6 +40,7 @@ import { autocorrectExtension } from './autocorrect';
 import { modifier } from '../../data/srd';
 import type { PartyMember } from '../party/partyStore';
 import type { NPC } from '../npcs/npcStore';
+import type { Note } from './notesStore';
 import { Shield, Heart } from 'lucide-react';
 
 // ─── Decorator token regex (secrets excluded — handled by secretPlugin) ───────
@@ -590,6 +591,8 @@ type Props = {
   rollFormula: (formula: string) => void;
   party: PartyMember[];
   npcs?: NPC[];
+  /** Full note list — used for [[Title#Heading]] heading autocomplete. */
+  notes?: Note[];
   // Collab
   noteId: string;
   ydocState: string | null;
@@ -624,7 +627,7 @@ export type { Collaborator };
 
 // ─── Component ────────────────────────────────────────────────────────────────
 export const LiveEditor = forwardRef<LiveEditorHandle, Props>(function LiveEditor(
-  { body, onChange, wikiIndex, onNavigate, rollFormula, party, npcs, noteId, ydocState, userId, userName, onCollaboratorsChange },
+  { body, onChange, wikiIndex, onNavigate, rollFormula, party, npcs, notes, noteId, ydocState, userId, userName, onCollaboratorsChange },
   ref,
 ) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -637,6 +640,7 @@ export const LiveEditor = forwardRef<LiveEditorHandle, Props>(function LiveEdito
   const rollRef                 = useRef(rollFormula);        rollRef.current                 = rollFormula;
   const partyRef                = useRef(party);              partyRef.current                = party;
   const npcsRef                 = useRef(npcs ?? []);          npcsRef.current                 = npcs ?? [];
+  const notesRef                = useRef(notes ?? []);         notesRef.current                = notes ?? [];
   const onCollaboratorsChangeRef = useRef(onCollaboratorsChange); onCollaboratorsChangeRef.current = onCollaboratorsChange;
 
   const [suggest, setSuggest] = useState<SuggestState | null>(null);
@@ -781,9 +785,23 @@ export const LiveEditor = forwardRef<LiveEditorHandle, Props>(function LiveEdito
           return true;
         }
         if (token.startsWith('[[') && token.endsWith(']]')) {
-          const name = token.slice(2, -2);
-          const hit  = wikiRef.current.find((e) => e.name === name);
-          if (hit) { event.preventDefault(); navRef.current(hit.route); return true; }
+          const full = token.slice(2, -2);
+          // `[[Note Title#Heading]]` — split off the heading and look up by
+          // the bare name, then re-attach as ?h= so the receiver scrolls.
+          const hashIdx = full.indexOf('#');
+          const name = (hashIdx < 0 ? full : full.slice(0, hashIdx)).trim();
+          const heading = hashIdx < 0 ? '' : full.slice(hashIdx + 1).trim();
+          const hit = wikiRef.current.find(
+            (e) => e.name.toLowerCase() === name.toLowerCase(),
+          );
+          if (hit) {
+            event.preventDefault();
+            const href = heading
+              ? hit.route + (hit.route.includes('?') ? '&' : '?') + 'h=' + encodeURIComponent(heading)
+              : hit.route;
+            navRef.current(href);
+            return true;
+          }
           return false; // unresolved link — let cursor place normally
         }
         if (token.startsWith('&{') && token.endsWith('}')) {
@@ -935,15 +953,41 @@ export const LiveEditor = forwardRef<LiveEditorHandle, Props>(function LiveEdito
             type Candidate = { trigger: string; openAt: number; results: SuggestEntry[] };
             let candidate: Candidate | null = null;
 
-            // [[ wiki link
+            // [[ wiki link — including `[[Note Title#Heading]]` heading
+            //                autocomplete when a `#` is present.
             if (!candidate) {
               const at = upto.lastIndexOf('[[');
               if (at !== -1) {
                 const frag = upto.slice(at + 2);
                 if (!frag.includes(']]') && !frag.includes('\n')) {
-                  const hits = searchWiki(wikiRef.current, frag, 6)
-                    .map((e) => ({ label: e.name, sub: kindLabel(e.kind) }));
-                  if (hits.length) candidate = { trigger: '[[', openAt: at, results: hits };
+                  const hashIdx = frag.indexOf('#');
+                  if (hashIdx >= 0) {
+                    // After `#`: look up the named note and suggest its
+                    // markdown headings. We pre-fix the suggestion with the
+                    // title so accepting it replaces the full `[[…]]` body.
+                    const title = frag.slice(0, hashIdx).trim();
+                    const headingFrag = frag.slice(hashIdx + 1).toLowerCase();
+                    const note = notesRef.current.find(
+                      (n) => (n.title || '').toLowerCase() === title.toLowerCase(),
+                    );
+                    if (note) {
+                      const headings: SuggestEntry[] = [];
+                      for (const line of (note.body || '').split('\n')) {
+                        const m = line.match(/^#{1,6}\s+(.+)$/);
+                        if (!m) continue;
+                        const h = m[1].trim();
+                        if (!headingFrag || h.toLowerCase().includes(headingFrag)) {
+                          headings.push({ label: `${title}#${h}`, sub: 'heading' });
+                        }
+                        if (headings.length >= 6) break;
+                      }
+                      if (headings.length) candidate = { trigger: '[[', openAt: at, results: headings };
+                    }
+                  } else {
+                    const hits = searchWiki(wikiRef.current, frag, 6)
+                      .map((e) => ({ label: e.name, sub: kindLabel(e.kind) }));
+                    if (hits.length) candidate = { trigger: '[[', openAt: at, results: hits };
+                  }
                 }
               }
             }
