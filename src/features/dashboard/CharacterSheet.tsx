@@ -1363,28 +1363,7 @@ function SpellbookBlock({
         </div>
       </div>
 
-      {/* Slot pips per level */}
-      <div>
-        <div className="text-[10px] uppercase tracking-wider text-slate-500 mb-2">Spell slots</div>
-        <div className="space-y-1.5">
-          {Array.from({ length: 9 }, (_, i) => i + 1).map((level) => {
-            const slot = slots[level];
-            return (
-              <SlotRow
-                key={level}
-                level={level}
-                slot={slot}
-                onTogglePip={(idx) => toggleSlotPip(level, idx)}
-                onSetMax={(m) => setSlotMax(level, m)}
-              />
-            );
-          })}
-        </div>
-      </div>
-
-      {/* Known spells list — grouped under their slot level for at-a-glance
-          prep planning. Cantrips first, then 1-9. Within a level spells stay
-          in insertion order so the player keeps control of personal order. */}
+      {/* Picker — adding a spell drops it under its level row below. */}
       <div>
         <div className="text-[10px] uppercase tracking-wider text-slate-500 mb-2">Known &amp; prepared</div>
         <SpellPicker
@@ -1399,18 +1378,83 @@ function SpellbookBlock({
             onApply({ spells: [...spells, next] });
           }}
         />
-        {spells.length === 0 ? (
-          <div className="text-sm text-slate-500 italic py-2">No spells known yet.</div>
-        ) : (
-          <SpellsByLevel
-            spells={spells}
-            spellAttack={ability ? spellAttack : null}
-            spellDc={ability ? spellDc : null}
-            onChange={(id, patch) => onApply({ spells: spells.map((s) => (s.id === id ? { ...s, ...patch } : s)) })}
-            onRemove={(id) => onApply({ spells: spells.filter((s) => s.id !== id) })}
-          />
-        )}
       </div>
+
+      {/* Slot pips per level — each row now owns the known spells at its
+          level, rendered as a compact list right under the pips. Cantrips
+          have no slot so they get their own block above the slot grid. */}
+      {(() => {
+        const byLevel = new Map<number, KnownSpell[]>();
+        for (const sp of spells) {
+          const lv = spellLevelFor(sp);
+          if (!byLevel.has(lv)) byLevel.set(lv, []);
+          byLevel.get(lv)!.push(sp);
+        }
+        const cantrips = byLevel.get(0) ?? [];
+        const onSpellChange = (id: string, patch: Partial<KnownSpell>) =>
+          onApply({ spells: spells.map((s) => (s.id === id ? { ...s, ...patch } : s)) });
+        const onSpellRemove = (id: string) =>
+          onApply({ spells: spells.filter((s) => s.id !== id) });
+        return (
+          <div className="space-y-3">
+            {cantrips.length > 0 && (
+              <div>
+                <div className="text-[11px] uppercase tracking-wider text-slate-500 w-12 shrink-0 font-mono mb-1">
+                  Cantrips <span className="text-slate-700">({cantrips.length})</span>
+                </div>
+                <div className="space-y-1">
+                  {cantrips.map((sp) => (
+                    <SpellRow
+                      key={sp.id}
+                      spell={sp}
+                      spellAttack={ability ? spellAttack : null}
+                      spellDc={ability ? spellDc : null}
+                      onChange={(patch) => onSpellChange(sp.id, patch)}
+                      onRemove={() => onSpellRemove(sp.id)}
+                    />
+                  ))}
+                </div>
+              </div>
+            )}
+            <div>
+              <div className="text-[10px] uppercase tracking-wider text-slate-500 mb-2">Spell slots</div>
+              <div className="space-y-2">
+                {Array.from({ length: 9 }, (_, i) => i + 1).map((level) => {
+                  const slot = slots[level];
+                  const lvSpells = byLevel.get(level) ?? [];
+                  return (
+                    <div key={level}>
+                      <SlotRow
+                        level={level}
+                        slot={slot}
+                        onTogglePip={(idx) => toggleSlotPip(level, idx)}
+                        onSetMax={(m) => setSlotMax(level, m)}
+                      />
+                      {lvSpells.length > 0 && (
+                        <div className="mt-1 ml-12 space-y-1">
+                          {lvSpells.map((sp) => (
+                            <SpellRow
+                              key={sp.id}
+                              spell={sp}
+                              spellAttack={ability ? spellAttack : null}
+                              spellDc={ability ? spellDc : null}
+                              onChange={(patch) => onSpellChange(sp.id, patch)}
+                              onRemove={() => onSpellRemove(sp.id)}
+                            />
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+            {spells.length === 0 && (
+              <div className="text-sm text-slate-500 italic py-2">No spells known yet.</div>
+            )}
+          </div>
+        );
+      })()}
     </div>
   );
 }
@@ -1420,54 +1464,6 @@ function spellLevelFor(spell: KnownSpell): number {
     return SPELLS_BY_INDEX[spell.sourceId]?.level ?? 0;
   }
   return 0;
-}
-
-function SpellsByLevel({
-  spells,
-  spellAttack,
-  spellDc,
-  onChange,
-  onRemove,
-}: {
-  spells: KnownSpell[];
-  spellAttack: number | null;
-  spellDc: number | null;
-  onChange: (id: string, patch: Partial<KnownSpell>) => void;
-  onRemove: (id: string) => void;
-}) {
-  const groups = useMemo(() => {
-    const m = new Map<number, KnownSpell[]>();
-    for (const sp of spells) {
-      const lv = spellLevelFor(sp);
-      if (!m.has(lv)) m.set(lv, []);
-      m.get(lv)!.push(sp);
-    }
-    return [...m.entries()].sort(([a], [b]) => a - b);
-  }, [spells]);
-
-  return (
-    <div className="space-y-3 mt-2">
-      {groups.map(([level, group]) => (
-        <div key={level}>
-          <div className="text-[10px] uppercase tracking-wider text-slate-500 mb-1">
-            {level === 0 ? 'Cantrips' : `Level ${level}`} <span className="text-slate-700">({group.length})</span>
-          </div>
-          <div className="space-y-1">
-            {group.map((sp) => (
-              <SpellRow
-                key={sp.id}
-                spell={sp}
-                spellAttack={spellAttack}
-                spellDc={spellDc}
-                onChange={(patch) => onChange(sp.id, patch)}
-                onRemove={() => onRemove(sp.id)}
-              />
-            ))}
-          </div>
-        </div>
-      ))}
-    </div>
-  );
 }
 
 function SlotRow({
