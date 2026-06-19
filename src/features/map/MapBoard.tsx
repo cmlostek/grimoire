@@ -39,7 +39,7 @@ const EMOJI_PRESETS = ['🧙', '🗡️', '🏹', '🛡️', '🐉', '👹', '�
 
 const uid = () => crypto.randomUUID();
 
-type Member = { user_id: string; display_name: string; role: string };
+type Member = { user_id: string; display_name: string; role: string; color?: string };
 
 function appendDamageLog(
   prev: DamageLogEntry[] | undefined,
@@ -558,17 +558,19 @@ export default function MapBoard() {
     };
   }, [campaignId, userId, role, displayName]);
 
-  // ── Fetch campaign members (for token owner dropdown) ─────────────────────
+  // ── Fetch campaign members ───────────────────────────────────────────────
+  // Loaded for everyone (not just GMs) so player tokens can render in each
+  // owner's chosen chat color, mirroring how their messages look.
   useEffect(() => {
-    if (!campaignId || !isGM) return;
+    if (!campaignId) return;
     (async () => {
       const { data } = await supabase
         .from('campaign_members')
-        .select('user_id, display_name, role')
+        .select('user_id, display_name, role, color')
         .eq('campaign_id', campaignId);
       setMembers((data ?? []) as Member[]);
     })();
-  }, [campaignId, isGM]);
+  }, [campaignId]);
 
   // ── Ping broadcast ────────────────────────────────────────────────────────
   const broadcastPing = (x: number, y: number) => {
@@ -779,10 +781,19 @@ export default function MapBoard() {
     });
   }, [visibleTokens, combatants]);
 
-  // Get the display color for a token: use the owner's deterministic collab
-  // color when an owner is set, otherwise fall back to the stored color.
+  // Get the display color for a token: when an owner is set, prefer their
+  // chosen campaign color (matches their chat / cursor); fall back to the
+  // deterministic collab hash if we haven't loaded members yet, then to the
+  // token's stored color when there's no owner.
+  const memberColorById = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const r of members) if (r.color) m.set(r.user_id, r.color);
+    return m;
+  }, [members]);
   const tokenDisplayColor = (t: MapToken): string => {
-    if (t.owner_user_id) return userCollabColor(t.owner_user_id).color;
+    if (t.owner_user_id) {
+      return memberColorById.get(t.owner_user_id) ?? userCollabColor(t.owner_user_id).color;
+    }
     return t.color;
   };
 

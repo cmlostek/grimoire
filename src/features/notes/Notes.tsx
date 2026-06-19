@@ -126,6 +126,7 @@ import { Secret } from './Secret';
 import { PartyRefSpan } from './PartyTooltip';
 import { useParty } from '../party/partyStore';
 import { useNpcStore } from '../npcs/npcStore';
+import { useChat } from '../chat/chatStore';
 
 function extractText(children: React.ReactNode): string {
   if (typeof children === 'string') return children;
@@ -480,9 +481,26 @@ export default function Notes() {
     () => buildWikiIndex(homebrewItems, homebrewSpells, notes),
     [homebrewItems, homebrewSpells, notes]
   );
+  // Paint `@{Name}` decorations with the player's chosen colour (or the NPC
+  // faction colour) so mentions read like a roster, not just a generic chip.
+  // Player colours live on campaign_members.color (loaded via the chat
+  // store) — we join through party.owner_user_id to find them.
+  const chatMembers = useChat((s) => s.members);
+  const mentionColors = useMemo(() => {
+    const out: Record<string, string> = {};
+    for (const p of party) {
+      if (!p.name) continue;
+      const ownerColor = p.owner_user_id ? chatMembers[p.owner_user_id]?.color : undefined;
+      out[p.name.trim().toLowerCase()] = ownerColor ?? '#94a3b8';
+    }
+    for (const n of npcs) {
+      if (n.name) out[n.name.trim().toLowerCase()] = n.factionColor || '#fbbf24';
+    }
+    return out;
+  }, [party, npcs, chatMembers]);
   const plugins = useMemo(
-    () => [remarkGfm, remarkNoteDecorators(wikiIndex)],
-    [wikiIndex]
+    () => [remarkGfm, remarkNoteDecorators(wikiIndex, mentionColors)],
+    [wikiIndex, mentionColors]
   );
 
   const q = query.toLowerCase().trim();
