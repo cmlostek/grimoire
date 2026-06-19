@@ -242,7 +242,12 @@ function buildImageDecos(view: EditorView): DecorationSet {
     while ((m = IMAGE_RE.exec(text)) !== null) {
       const absFrom = from + m.index;
       const absTo   = absFrom + m[0].length;
-      if (cursorPos >= absFrom && cursorPos <= absTo) continue; // show raw while editing
+      // Only unfurl into raw markdown when the cursor is *strictly* inside
+      // the token. Clicks landing on the edges (just before `[` or just
+      // after `)`) previously popped the raw text on every neighbouring
+      // click, even when the user was aiming at a different part of the
+      // line — they only meant to edit the image when clicking on it.
+      if (cursorPos > absFrom && cursorPos < absTo) continue;
       builder.add(absFrom, absTo, Decoration.replace({
         widget: new ImageWidget(m[2], m[1]),
         inclusive: false,
@@ -610,6 +615,9 @@ export type FormatCmd =
 export type LiveEditorHandle = {
   getYdocState: () => string | null;
   format: (cmd: FormatCmd) => void;
+  /** Scroll the editor to the first line starting with `# Heading` (case-
+   *  insensitive, hash count ignored). Returns true when a match is found. */
+  scrollToHeading: (text: string) => boolean;
 };
 
 export type { Collaborator };
@@ -688,6 +696,26 @@ export const LiveEditor = forwardRef<LiveEditorHandle, Props>(function LiveEdito
         });
         view.focus();
       }
+    },
+    scrollToHeading(text: string): boolean {
+      const view = viewRef.current;
+      if (!view) return false;
+      const needle = text.trim().toLowerCase();
+      if (!needle) return false;
+      const doc = view.state.doc;
+      for (let i = 1; i <= doc.lines; i++) {
+        const line = doc.line(i);
+        const m = line.text.match(/^#{1,6}\s+(.+)$/);
+        if (!m) continue;
+        if (m[1].trim().toLowerCase() === needle) {
+          view.dispatch({
+            selection: { anchor: line.from },
+            effects: EditorView.scrollIntoView(line.from, { y: 'start', yMargin: 16 }),
+          });
+          return true;
+        }
+      }
+      return false;
     },
   }));
 

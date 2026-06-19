@@ -1,5 +1,5 @@
 import type { Root, Text, PhrasingContent, RootContent } from 'mdast';
-import { findWiki, type WikiEntry } from './wikiIndex';
+import { findWiki, extractHeading, type WikiEntry } from './wikiIndex';
 
 export const NEWLINE_PLACEHOLDER = '\uE000';
 // Private-use codepoints to hide markdown syntax from the remark parser.
@@ -185,7 +185,15 @@ function classify(
   if (raw.startsWith(S_WOPEN) && raw.endsWith(S_WCLOSE)) {
     const name = restore(raw.slice(1, -1));
     const hit = findWiki(wiki, name);
-    if (hit) return makeLink(hit.route, name, hit.kind);
+    if (hit) {
+      // Append heading to the route as ?h=<slug> so the click handler can
+      // scroll without re-parsing the link text.
+      const heading = extractHeading(name);
+      const href = heading
+        ? hit.route + (hit.route.includes('?') ? '&' : '?') + 'h=' + encodeURIComponent(heading)
+        : hit.route;
+      return makeLink(href, name, hit.kind);
+    }
     return makeBrokenLink(name);
   }
   // $1d20 + 8$ — inline dice roll chip ($ not followed by {)

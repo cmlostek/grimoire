@@ -1,4 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import { useNavigate } from 'react-router-dom';
 import { MessageCircle, X, Send, Pencil, Trash2, Check, Palette, HelpCircle, Eye } from 'lucide-react';
 import { useChat, type ChatMember, type ChatMessage } from './chatStore';
@@ -29,6 +31,7 @@ const MIN_POPOUT_H = 240;
 const DEFAULT_POPOUT_W = 384;  // matches the old `w-96`
 const DEFAULT_POPOUT_H = 512;  // matches the old `h-[32rem]`
 const POPOUT_SIZE_KEY = 'grimoire:chat:popout-size';
+const POPOUT_POS_KEY = 'grimoire:chat:popout-pos';
 
 const clamp = (n: number, lo: number, hi: number) => Math.min(Math.max(n, lo), hi);
 
@@ -51,6 +54,30 @@ function writePopoutSize(size: { w: number; h: number }) {
     localStorage.setItem(POPOUT_SIZE_KEY, JSON.stringify(size));
   } catch {
     /* ignore quota / private-mode errors */
+  }
+}
+
+/** Stored top/left in viewport pixels. `null` keeps the panel anchored
+ *  bottom-right (the default). Set when the user drags the panel by its
+ *  header to a custom location. */
+function readPopoutPos(): { x: number; y: number } | null {
+  try {
+    const raw = localStorage.getItem(POPOUT_POS_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as { x?: number; y?: number };
+    if (parsed?.x == null || parsed?.y == null) return null;
+    return { x: parsed.x, y: parsed.y };
+  } catch {
+    return null;
+  }
+}
+
+function writePopoutPos(pos: { x: number; y: number } | null) {
+  try {
+    if (pos === null) localStorage.removeItem(POPOUT_POS_KEY);
+    else localStorage.setItem(POPOUT_POS_KEY, JSON.stringify(pos));
+  } catch {
+    /* ignore */
   }
 }
 
@@ -196,6 +223,46 @@ export default function ChatPanel({ variant = 'floating' }: { variant?: 'floatin
     window.addEventListener('mouseup', onUp);
   };
 
+  // Custom panel position (drag-by-header). `null` keeps the bottom-right
+  // anchor — that's the default for new users and after explicit reset.
+  const [pos, setPos] = useState<{ x: number; y: number } | null>(() => readPopoutPos());
+  const posRef = useRef(pos);
+  posRef.current = pos;
+
+  const beginDrag = (e: React.MouseEvent) => {
+    // Ignore drags that started on an interactive child (buttons, inputs).
+    const target = e.target as HTMLElement;
+    if (target.closest('button, input, a, select')) return;
+    e.preventDefault();
+    // Anchor the panel by its current top/left for the duration of the drag.
+    // If we were still bottom-right-anchored, compute the equivalent top/left
+    // from the panel rect so the drag starts from the visible position.
+    const panel = (e.currentTarget as HTMLElement).closest('[data-chat-panel]') as HTMLElement | null;
+    const rect = panel?.getBoundingClientRect();
+    const startPos = posRef.current ?? (rect ? { x: rect.left, y: rect.top } : { x: 16, y: 16 });
+    const startX = e.clientX;
+    const startY = e.clientY;
+    const onMove = (ev: MouseEvent) => {
+      const next = {
+        x: clamp(startPos.x + (ev.clientX - startX), 8, window.innerWidth - sizeRef.current.w - 8),
+        y: clamp(startPos.y + (ev.clientY - startY), 8, window.innerHeight - 48),
+      };
+      setPos(next);
+    };
+    const onUp = () => {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+      writePopoutPos(posRef.current);
+    };
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+  };
+
+  const resetPanelPos = () => {
+    setPos(null);
+    writePopoutPos(null);
+  };
+
   if (!campaignId || !userId) return null;
 
   if (!embedded && !open) {
@@ -232,12 +299,16 @@ export default function ChatPanel({ variant = 'floating' }: { variant?: 'floatin
 
   const containerClass = embedded
     ? 'h-full w-full bg-slate-950 border border-slate-800 rounded-lg overflow-hidden flex flex-col'
-    : 'fixed bottom-4 right-4 z-40 bg-slate-950 border border-slate-700 rounded-lg shadow-2xl overflow-hidden flex flex-col';
+    : 'fixed z-40 bg-slate-950 border border-slate-700 rounded-lg shadow-2xl overflow-hidden flex flex-col';
 
-  const containerStyle = embedded ? undefined : { width: size.w, height: size.h };
+  const containerStyle: React.CSSProperties | undefined = embedded
+    ? undefined
+    : pos
+      ? { width: size.w, height: size.h, left: pos.x, top: pos.y }
+      : { width: size.w, height: size.h, bottom: 16, right: 16 };
 
   return (
-    <div className={containerClass} style={containerStyle}>
+    <div data-chat-panel className={containerClass} style={containerStyle}>
       {!embedded && (
         <button
           onMouseDown={beginResize}
@@ -251,7 +322,13 @@ export default function ChatPanel({ variant = 'floating' }: { variant?: 'floatin
           </svg>
         </button>
       )}
-      <div className="flex items-center justify-between px-3 py-2 border-b border-slate-800 bg-slate-900">
+      <div
+        onMouseDown={embedded ? undefined : beginDrag}
+        onDoubleClick={embedded ? undefined : resetPanelPos}
+        className="flex items-center justify-between px-3 py-2 border-b border-slate-800 bg-slate-900"
+        style={embedded ? undefined : { cursor: 'move' }}
+        title={embedded ? undefined : 'Drag to move · double-click to reset position'}
+      >
         <div className="flex items-center gap-2 text-sm text-slate-200">
           <MessageCircle size={14} style={{ color: 'var(--ac-400)' }} />
           <span className="font-medium">Party Chat</span>
@@ -514,6 +591,39 @@ function EditRow({
   );
 }
 
+/** Inline-only markdown renderer — supports bold/italic/code/strike/links
+ *  and unwraps the top-level `<p>` so the segment stays inline next to
+ *  mention chips and catalog chips. Block-level markdown (headings, lists,
+ *  code fences) is intentionally not surfaced — chat messages are short. */
+function InlineMarkdown({ text }: { text: string }) {
+  return (
+    <ReactMarkdown
+      remarkPlugins={[remarkGfm]}
+      allowedElements={['strong', 'em', 'code', 'del', 'a']}
+      unwrapDisallowed
+      components={{
+        a: ({ children, href }) => (
+          <a
+            href={href}
+            target="_blank"
+            rel="noreferrer noopener"
+            className="text-sky-300 hover:underline"
+          >
+            {children}
+          </a>
+        ),
+        code: ({ children }) => (
+          <code className="bg-slate-800 text-amber-200 rounded px-1 font-mono text-[12px]">
+            {children}
+          </code>
+        ),
+      }}
+    >
+      {text}
+    </ReactMarkdown>
+  );
+}
+
 function MessageBody({
   body,
   members,
@@ -564,7 +674,7 @@ function MessageBody({
       style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}
     >
       {segs.map((s, i) => {
-        if (s.kind === 'text') return <span key={i}>{s.text}</span>;
+        if (s.kind === 'text') return <InlineMarkdown key={i} text={s.text} />;
         if (s.kind === 'mention') {
           const m = members[s.userId];
           const color = m?.color ?? '#94a3b8';

@@ -11,6 +11,7 @@ import PageHeader from '../../components/PageHeader';
 import { SharePopover } from './SharePopover';
 import {
   ChevronRight,
+  ChevronLeft,
   FileText,
   Folder as FolderIcon,
   FolderPlus,
@@ -218,6 +219,52 @@ export default function Notes() {
 
   // ── Ref to the active LiveEditor (exposes getYdocState) ──────────────────
   const editorRef = useRef<LiveEditorHandle>(null);
+  /** Heading to scroll to after the next editor remount — used by
+   *  `[[Note#Heading]]` cross-doc jumps where the editor for the target
+   *  note hasn't mounted yet at click time. */
+  const pendingHeadingRef = useRef<string | null>(null);
+
+  // ── Sidebar collapse / resize (persisted) ────────────────────────────────
+  const SIDEBAR_W_KEY = 'dnd-gm:notesSidebarWidth';
+  const SIDEBAR_COLLAPSED_KEY = 'dnd-gm:notesSidebarCollapsed';
+  const SIDEBAR_W_MIN = 160;
+  const SIDEBAR_W_MAX = 480;
+  const [sidebarWidth, setSidebarWidth] = useState<number>(() => {
+    const raw = parseInt(localStorage.getItem(SIDEBAR_W_KEY) ?? '224', 10);
+    return Number.isFinite(raw) ? Math.max(SIDEBAR_W_MIN, Math.min(SIDEBAR_W_MAX, raw)) : 224;
+  });
+  const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(
+    () => localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === '1',
+  );
+  const beginSidebarResize = (e: React.MouseEvent) => {
+    e.preventDefault();
+    const startX = e.clientX;
+    const startW = sidebarWidth;
+    const onMove = (ev: MouseEvent) => {
+      const next = Math.max(SIDEBAR_W_MIN, Math.min(SIDEBAR_W_MAX, startW + (ev.clientX - startX)));
+      setSidebarWidth(next);
+    };
+    const onUp = () => {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+      try {
+        localStorage.setItem(SIDEBAR_W_KEY, String(sidebarWidthRef.current));
+      } catch {
+        /* ignore */
+      }
+    };
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+  };
+  const sidebarWidthRef = useRef(sidebarWidth);
+  sidebarWidthRef.current = sidebarWidth;
+  const toggleSidebar = () => {
+    setSidebarCollapsed((v) => {
+      const next = !v;
+      try { localStorage.setItem(SIDEBAR_COLLAPSED_KEY, next ? '1' : '0'); } catch { /* ignore */ }
+      return next;
+    });
+  };
 
   // ── Autosave ──────────────────────────────────────────────────────────────
   type SaveStatus = 'idle' | 'saving' | 'saved' | 'failed';
@@ -369,6 +416,17 @@ export default function Notes() {
     // Reset the status indicator — "Saved" from the previous note shouldn't
     // bleed over to the freshly-opened one.
     setSaveStatus('idle');
+
+    // Honor a pending [[Note#Heading]] jump after the new editor has mounted.
+    const heading = pendingHeadingRef.current;
+    if (heading) {
+      pendingHeadingRef.current = null;
+      const tryScroll = (attempt: number) => {
+        if (editorRef.current?.scrollToHeading(heading)) return;
+        if (attempt < 10) setTimeout(() => tryScroll(attempt + 1), 60);
+      };
+      setTimeout(() => tryScroll(0), 80);
+    }
   }, [activeNoteId]);
 
   // ── Save on unmount (navigate away, campaign change, etc.) ───────────────
@@ -419,8 +477,8 @@ export default function Notes() {
   const active = visibleNotes.find((n) => n.id === activeNoteId) ?? null;
 
   const wikiIndex = useMemo(
-    () => buildWikiIndex(homebrewItems, homebrewSpells),
-    [homebrewItems, homebrewSpells]
+    () => buildWikiIndex(homebrewItems, homebrewSpells, notes),
+    [homebrewItems, homebrewSpells, notes]
   );
   const plugins = useMemo(
     () => [remarkGfm, remarkNoteDecorators(wikiIndex)],
@@ -465,6 +523,17 @@ export default function Notes() {
 
   const onWikiClick = (href: string) => {
     const [path, hash] = href.split('#');
+    // Cross-doc note links: switch the active note in-place and scroll to a
+    // heading if one was supplied as `note-<id>?h=<slug>`.
+    if (path === '/notes' && hash?.startsWith('note-')) {
+      const [target, headingSearch] = hash.slice('note-'.length).split('?h=');
+      setActiveNote(target);
+      if (headingSearch) {
+        // Defer until the new note's editor mounts.
+        pendingHeadingRef.current = decodeURIComponent(headingSearch);
+      }
+      return;
+    }
     navigate(path + (hash ? `#${hash}` : ''));
   };
 
@@ -518,12 +587,31 @@ export default function Notes() {
       </PageHeader>
 
       <div className="flex-1 min-h-0 flex">
-        <aside className="w-56 border-r border-slate-800 flex flex-col bg-slate-950">
+        {sidebarCollapsed ? (
+          <button
+            onClick={toggleSidebar}
+            title="Show notes sidebar"
+            className="w-7 shrink-0 border-r border-slate-800 bg-slate-950 hover:bg-slate-900 flex items-start justify-center pt-2 text-slate-500 hover:text-slate-200"
+          >
+            <ChevronRight size={14} />
+          </button>
+        ) : (
+        <aside
+          className="border-r border-slate-800 flex flex-col bg-slate-950 relative shrink-0"
+          style={{ width: sidebarWidth }}
+        >
           <div className="px-2 py-1.5 border-b border-slate-800 flex items-center justify-between">
             <div className="text-[10px] uppercase tracking-wider text-slate-500 font-mono">
               Explorer
             </div>
             <div className="flex gap-0.5">
+              <button
+                onClick={toggleSidebar}
+                title="Hide sidebar"
+                className="p-1 text-slate-400 hover:text-sky-300 hover:bg-slate-800 rounded"
+              >
+                <ChevronLeft size={12} />
+              </button>
               <button
                 onClick={() => {
                   const next = sortMode === 'alpha' ? 'updated' : 'alpha';
@@ -678,7 +766,14 @@ export default function Notes() {
               />
             ))}
           </div>
+          {/* Resize handle — 4px vertical strip on the right edge */}
+          <div
+            onMouseDown={beginSidebarResize}
+            title="Drag to resize"
+            className="absolute top-0 right-0 h-full w-1 cursor-col-resize hover:bg-sky-700/50 z-10"
+          />
         </aside>
+        )}
 
         <section className="flex-1 min-w-0 flex flex-col">
           {!active && (
