@@ -1395,59 +1395,53 @@ function SpellbookBlock({
           onApply({ spells: spells.map((s) => (s.id === id ? { ...s, ...patch } : s)) });
         const onSpellRemove = (id: string) =>
           onApply({ spells: spells.filter((s) => s.id !== id) });
+        const renderSpells = (group: KnownSpell[]) =>
+          group.length > 0 && (
+            <div className="mt-1 ml-[4.25rem] space-y-1">
+              {group.map((sp) => (
+                <SpellRow
+                  key={sp.id}
+                  spell={sp}
+                  spellAttack={ability ? spellAttack : null}
+                  spellDc={ability ? spellDc : null}
+                  onChange={(patch) => onSpellChange(sp.id, patch)}
+                  onRemove={() => onSpellRemove(sp.id)}
+                />
+              ))}
+            </div>
+          );
         return (
-          <div className="space-y-3">
-            {cantrips.length > 0 && (
+          <div>
+            <div className="text-[10px] uppercase tracking-wider text-slate-500 mb-2">Spell slots</div>
+            <div className="space-y-2">
+              {/* Cantrips share the level-row layout (no pips, no max input)
+                  so the "CANTRIPS" label aligns under the "LV N" column. */}
               <div>
-                <div className="text-[11px] uppercase tracking-wider text-slate-500 w-12 shrink-0 font-mono mb-1">
-                  Cantrips <span className="text-slate-700">({cantrips.length})</span>
+                <div className="flex items-center gap-3">
+                  <div className="text-[11px] uppercase tracking-wider text-slate-500 w-14 shrink-0 font-mono">
+                    Cantrips
+                  </div>
+                  <div className="flex gap-1 flex-1 min-w-0">
+                    <span className="text-[11px] text-slate-700 italic">—</span>
+                  </div>
                 </div>
-                <div className="space-y-1">
-                  {cantrips.map((sp) => (
-                    <SpellRow
-                      key={sp.id}
-                      spell={sp}
-                      spellAttack={ability ? spellAttack : null}
-                      spellDc={ability ? spellDc : null}
-                      onChange={(patch) => onSpellChange(sp.id, patch)}
-                      onRemove={() => onSpellRemove(sp.id)}
+                {renderSpells(cantrips)}
+              </div>
+              {Array.from({ length: 9 }, (_, i) => i + 1).map((level) => {
+                const slot = slots[level];
+                const lvSpells = byLevel.get(level) ?? [];
+                return (
+                  <div key={level}>
+                    <SlotRow
+                      level={level}
+                      slot={slot}
+                      onTogglePip={(idx) => toggleSlotPip(level, idx)}
+                      onSetMax={(m) => setSlotMax(level, m)}
                     />
-                  ))}
-                </div>
-              </div>
-            )}
-            <div>
-              <div className="text-[10px] uppercase tracking-wider text-slate-500 mb-2">Spell slots</div>
-              <div className="space-y-2">
-                {Array.from({ length: 9 }, (_, i) => i + 1).map((level) => {
-                  const slot = slots[level];
-                  const lvSpells = byLevel.get(level) ?? [];
-                  return (
-                    <div key={level}>
-                      <SlotRow
-                        level={level}
-                        slot={slot}
-                        onTogglePip={(idx) => toggleSlotPip(level, idx)}
-                        onSetMax={(m) => setSlotMax(level, m)}
-                      />
-                      {lvSpells.length > 0 && (
-                        <div className="mt-1 ml-12 space-y-1">
-                          {lvSpells.map((sp) => (
-                            <SpellRow
-                              key={sp.id}
-                              spell={sp}
-                              spellAttack={ability ? spellAttack : null}
-                              spellDc={ability ? spellDc : null}
-                              onChange={(patch) => onSpellChange(sp.id, patch)}
-                              onRemove={() => onSpellRemove(sp.id)}
-                            />
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
+                    {renderSpells(lvSpells)}
+                  </div>
+                );
+              })}
             </div>
             {spells.length === 0 && (
               <div className="text-sm text-slate-500 italic py-2">No spells known yet.</div>
@@ -1483,7 +1477,7 @@ function SlotRow({
   const pips = Math.min(Math.max(slot.max, 0), PIP_CAP);
   return (
     <div className="flex items-center gap-3">
-      <div className="text-[11px] uppercase tracking-wider text-slate-500 w-10 shrink-0 font-mono">
+      <div className="text-[11px] uppercase tracking-wider text-slate-500 w-14 shrink-0 font-mono">
         Lv {level}
       </div>
       <div className="flex gap-1 flex-1 min-w-0">
