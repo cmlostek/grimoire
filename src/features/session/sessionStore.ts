@@ -9,6 +9,14 @@ export type Role = 'gm' | 'cogm' | 'player';
 /** True when the actor has GM permissions (primary GM or co-GM). */
 export const hasGmPerms = (r: Role | null) => r === 'gm' || r === 'cogm';
 
+/**
+ * Hook for "effective GM" — true when the user actually has GM perms AND
+ * isn't currently in view-as-player mode. Use this anywhere UI gating
+ * should respect the GM's preview toggle (which is most places).
+ */
+export const useIsGM = () =>
+  useSession((s) => hasGmPerms(s.role) && !s.viewAsPlayer);
+
 export type CampaignSummary = {
   id: string;
   name: string;

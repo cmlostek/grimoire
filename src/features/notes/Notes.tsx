@@ -179,7 +179,8 @@ export default function Notes() {
   const userId = useSession((s) => s.userId);
   const displayName = useSession((s) => s.displayName);
   const role = useSession((s) => s.role);
-  const isGM = role === 'gm' || role === 'cogm';
+  const viewAsPlayer = useSession((s) => s.viewAsPlayer);
+  const isGM = (role === 'gm' || role === 'cogm') && !viewAsPlayer;
 
   // ── Store state (must come before refs that depend on activeNoteId) ───────
   const notes = useNotes((s) => s.notes);

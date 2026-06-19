@@ -204,6 +204,9 @@ export type StatBlock = {
   id: string;
   edition: '2014' | '2024';
   campaign?: string;
+  /** Optional single-character emoji used when placing this creature as a
+   *  map token. Falls back to 📜 if empty. */
+  emoji?: string;
   name: string;
   size: string;
   type: string;
@@ -388,6 +391,7 @@ export const useStore = create<State>()(
         const sb: StatBlock = {
           id,
           edition,
+          emoji: '',
           name: 'New Creature',
           size: 'Medium',
           type: 'humanoid',

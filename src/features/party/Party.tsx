@@ -45,7 +45,8 @@ export default function Party() {
   const campaignId = useSession((s) => s.campaignId);
   const userId = useSession((s) => s.userId);
   const role = useSession((s) => s.role);
-  const isGM = role === 'gm' || role === 'cogm';
+  const viewAsPlayer = useSession((s) => s.viewAsPlayer);
+  const isGM = (role === 'gm' || role === 'cogm') && !viewAsPlayer;
 
   const party = useParty((s) => s.party);
   const loadForCampaign = useParty((s) => s.loadForCampaign);

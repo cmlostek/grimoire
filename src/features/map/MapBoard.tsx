@@ -2,6 +2,7 @@ import { useRef, useState, useEffect, useCallback, useMemo } from 'react';
 import { useMap, MAX_DAMAGE_LOG, type DamageLogEntry, type MapShape, type MapToken } from './mapStore';
 import { useInitiativeStore } from '../initiative/initiativeStore';
 import { useNpcStore } from '../npcs/npcStore';
+import { useParty } from '../party/partyStore';
 import { useSession } from '../session/sessionStore';
 import { useStore } from '../../store';
 import { supabase } from '../../lib/supabase';
@@ -165,7 +166,8 @@ export default function MapBoard() {
   const campaignId = useSession((s) => s.campaignId);
   const userId = useSession((s) => s.userId);
   const role = useSession((s) => s.role);
-  const isGM = role === 'gm' || role === 'cogm';
+  const viewAsPlayer = useSession((s) => s.viewAsPlayer);
+  const isGM = (role === 'gm' || role === 'cogm') && !viewAsPlayer;
   const displayName = useSession((s) => s.displayName);
 
   const state = useMap((s) => s.state);
@@ -178,6 +180,7 @@ export default function MapBoard() {
   const setShowGrid = useMap((s) => s.setShowGrid);
   const addShape = useMap((s) => s.addShape);
   const removeShape = useMap((s) => s.removeShape);
+  const updateShape = useMap((s) => s.updateShape);
   const clearShapes = useMap((s) => s.clearShapes);
   const addToken = useMap((s) => s.addToken);
   const updateToken = useMap((s) => s.updateToken);
@@ -201,6 +204,11 @@ export default function MapBoard() {
   // Live cursor position while drafting a shape — drives the dashed preview
   // so the GM can actually see what they're about to drop on the canvas.
   const [draftEnd, setDraftEnd] = useState<{ x: number; y: number } | null>(null);
+  // Shape drag state — { id, ox, oy } where ox/oy are the offsets from the
+  // shape's anchor to the mouse-down point, so the shape doesn't snap to
+  // the cursor on grab.
+  const [shapeDrag, setShapeDrag] = useState<{ id: string; ox: number; oy: number } | null>(null);
+  const [shapeDragPos, setShapeDragPos] = useState<{ id: string; x: number; y: number } | null>(null);
   const [selectedShapeColor, setSelectedShapeColor] = useState(SHAPE_COLORS[0]);
   const [tokenName, setTokenName] = useState('');
   const [tokenEmoji, setTokenEmoji] = useState('');
@@ -271,6 +279,22 @@ export default function MapBoard() {
     return subscribeInitiative(campaignId);
   }, [campaignId, loadInitiative, subscribeInitiative]);
 
+  // Player's claimed character (if any) — drives the "place your token"
+  // affordance for non-GMs: name + HP/maxHp + the character's icon get
+  // copied onto the token they drop on the map.
+  const party = useParty((s) => s.party);
+  const loadParty = useParty((s) => s.loadForCampaign);
+  const subscribeParty = useParty((s) => s.subscribe);
+  useEffect(() => {
+    if (!campaignId) return;
+    loadParty(campaignId);
+    return subscribeParty(campaignId);
+  }, [campaignId, loadParty, subscribeParty]);
+  const myCharacter = useMemo(
+    () => (userId ? party.find((p) => p.owner_user_id === userId) ?? null : null),
+    [party, userId],
+  );
+
   // NPCs and homebrew stat blocks both feed the "Add from creature" picker
   // so the GM can drop a token pre-seeded from existing source material
   // instead of typing everything by hand.
@@ -319,7 +343,7 @@ export default function MapBoard() {
         key: `sb:${s.id}`,
         source: 'statblock',
         name: s.name,
-        emoji: '📜',
+        emoji: s.emoji || '📜',
         hp,
         maxHp: hp,
       });
@@ -459,13 +483,33 @@ export default function MapBoard() {
           return;
         }
 
-        // Token tool: tap to place a new token (GM only)
-        if (tool === 'token' && isGM) {
+        // Token tool: tap to place a new token. GMs place anything; players
+        // place a single token seeded from their claimed character.
+        if (tool === 'token') {
           const cId = campaignIdRef.current;
           if (!cId) return;
           const { grid, size } = snapRef.current;
           const sx = grid && size > 1 ? Math.round(lx / size) * size : lx;
           const sy = grid && size > 1 ? Math.round(ly / size) * size : ly;
+          if (!isGM) {
+            const mine = myCharacter;
+            if (!mine) return;
+            const already = useMap.getState().tokens.some((t) => t.owner_user_id === userId);
+            if (already) return;
+            void useMap.getState().addToken(cId, {
+              name: mine.name,
+              x: sx,
+              y: sy,
+              color: '#94a3b8',
+              emoji: tokenEmojiRef.current || undefined,
+              size: Math.max(30, size * 0.8),
+              owner_user_id: userId,
+              hidden_from_players: false,
+              hp: mine.hp || undefined,
+              maxHp: mine.maxHp || undefined,
+            });
+            return;
+          }
           void useMap.getState().addToken(cId, {
             name: tokenNameRef.current || 'Token',
             x: sx,
@@ -730,14 +774,30 @@ export default function MapBoard() {
       return;
     }
 
-    if (!isGM) return;
-    if (tool === 'circle' || tool === 'square' || tool === 'cone') {
-      setDrafting(p);
-      return;
-    }
+    // Token tool: GMs place freely; players can place a single token for
+    // their claimed character (if any). Seeds name/HP from the character
+    // sheet so the bar shows up immediately.
     if (tool === 'token') {
       const sp = snap(p);
       const tokenSize = Math.max(30, mapGridSize * 0.8);
+      if (!isGM) {
+        if (!myCharacter) return; // No claimed character to place.
+        const alreadyHasToken = tokens.some((t) => t.owner_user_id === userId);
+        if (alreadyHasToken) return; // One token per player.
+        void addToken(campaignId, {
+          name: myCharacter.name,
+          x: sp.x,
+          y: sp.y,
+          color: '#94a3b8',
+          emoji: tokenEmoji || undefined,
+          size: tokenSize,
+          owner_user_id: userId,
+          hidden_from_players: false,
+          hp: myCharacter.hp || undefined,
+          maxHp: myCharacter.maxHp || undefined,
+        });
+        return;
+      }
       void addToken(campaignId, {
         name: tokenName || 'Token',
         x: sp.x,
@@ -750,6 +810,13 @@ export default function MapBoard() {
         hp: creatureHp ?? undefined,
         maxHp: creatureMaxHp ?? undefined,
       });
+      return;
+    }
+
+    if (!isGM) return;
+    if (tool === 'circle' || tool === 'square' || tool === 'cone') {
+      setDrafting(p);
+      return;
     }
   };
 
@@ -774,6 +841,9 @@ export default function MapBoard() {
     if (drafting) {
       setDraftEnd(p);
     }
+    if (shapeDrag) {
+      setShapeDragPos({ id: shapeDrag.id, x: p.x - shapeDrag.ox, y: p.y - shapeDrag.oy });
+    }
   };
 
   const onMouseUp = (e: React.MouseEvent) => {
@@ -783,6 +853,20 @@ export default function MapBoard() {
     }
     if (draggingTokenId) {
       commitDrag();
+      return;
+    }
+    if (shapeDrag && shapeDragPos && campaignId) {
+      const original = shapes.find((s) => s.id === shapeDrag.id);
+      if (original) {
+        // Translate the shape by the drag delta. Each kind anchors slightly
+        // differently — circles/cones anchor at (x,y); squares at top-left.
+        const dx = shapeDragPos.x - original.x;
+        const dy = shapeDragPos.y - original.y;
+        const moved: MapShape = { ...original, x: original.x + dx, y: original.y + dy };
+        void updateShape(campaignId, moved);
+      }
+      setShapeDrag(null);
+      setShapeDragPos(null);
       return;
     }
     if (drafting && isGM && campaignId) {
@@ -964,7 +1048,7 @@ export default function MapBoard() {
               {toolButton('select', MousePointer2, 'Select / drag')}
               {toolButton('ping', Radio, 'Ping — click to flash a marker for everyone')}
               {toolButton('ruler', Ruler, 'Ruler (5 ft/cell)')}
-              {toolButton('token', User, 'Place token', true)}
+              {toolButton('token', User, isGM ? 'Place token' : 'Place your character token')}
               {toolButton('circle', CircleIcon, 'Circle AoE', true)}
               {toolButton('square', SquareIcon, 'Square AoE', true)}
               {toolButton('cone', Triangle, 'Cone AoE', true)}
@@ -996,6 +1080,46 @@ export default function MapBoard() {
               {Math.round(zoom * 100)}% · Hold Space+drag or scroll to zoom
             </div>
           </div>
+
+          {!isGM && tool === 'token' && (
+            <div className="space-y-2">
+              <div className="text-xs uppercase tracking-wider text-slate-500">Your token</div>
+              {!myCharacter ? (
+                <div className="text-[11px] text-slate-500 italic">
+                  Claim a character on the Dashboard first to place your token.
+                </div>
+              ) : tokens.some((t) => t.owner_user_id === userId) ? (
+                <div className="text-[11px] text-emerald-300">
+                  {myCharacter.name} is already on the map. Switch to Select to move it.
+                </div>
+              ) : (
+                <div className="text-[11px] text-slate-300">
+                  Click the map to place <span className="text-sky-300 font-medium">{myCharacter.name}</span>
+                  {' '}({myCharacter.hp}/{myCharacter.maxHp} HP).
+                </div>
+              )}
+              <div>
+                <div className="text-[10px] text-slate-500 mb-1">Icon (optional)</div>
+                <div className="flex flex-wrap gap-1">
+                  <button
+                    onClick={() => setTokenEmoji('')}
+                    className={`w-7 h-7 rounded border text-xs ${
+                      tokenEmoji === '' ? 'bg-slate-700 border-sky-600' : 'bg-slate-900 border-slate-800'
+                    }`}
+                  >—</button>
+                  {EMOJI_PRESETS.map((em) => (
+                    <button
+                      key={em}
+                      onClick={() => setTokenEmoji(em)}
+                      className={`w-7 h-7 rounded border text-base leading-none ${
+                        tokenEmoji === em ? 'bg-slate-700 border-sky-600' : 'bg-slate-900 border-slate-800'
+                      }`}
+                    >{em}</button>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
 
           {isGM && tool === 'token' && (
             <div className="space-y-2">
@@ -1315,21 +1439,38 @@ export default function MapBoard() {
               {/* Shapes */}
               {shapes.map((s) => {
                 const onDbl = isGM && campaignId ? () => void removeShape(campaignId, s.id) : undefined;
+                const draggable = isGM && tool === 'select';
+                const live = shapeDragPos && shapeDragPos.id === s.id;
+                const lx = live ? shapeDragPos.x : s.x;
+                const ly = live ? shapeDragPos.y : s.y;
+                const onMouseDown = draggable
+                  ? (e: React.MouseEvent) => {
+                      e.stopPropagation();
+                      const p = screenToLogical(e);
+                      setShapeDrag({ id: s.id, ox: p.x - s.x, oy: p.y - s.y });
+                      setShapeDragPos({ id: s.id, x: s.x, y: s.y });
+                    }
+                  : undefined;
+                const cursor = draggable ? (live ? 'grabbing' : 'grab') : 'default';
                 if (s.kind === 'circle') {
                   return (
                     <circle
-                      key={s.id} cx={s.x} cy={s.y} r={s.r}
+                      key={s.id} cx={lx} cy={ly} r={s.r}
                       fill={s.color} stroke={s.color.slice(0, 7)} strokeWidth={2 / zoom}
                       onDoubleClick={onDbl}
+                      onMouseDown={onMouseDown}
+                      style={{ cursor }}
                     />
                   );
                 }
                 if (s.kind === 'square') {
                   return (
                     <rect
-                      key={s.id} x={s.x} y={s.y} width={s.w} height={s.h}
+                      key={s.id} x={lx} y={ly} width={s.w} height={s.h}
                       fill={s.color} stroke={s.color.slice(0, 7)} strokeWidth={2 / zoom}
                       onDoubleClick={onDbl}
+                      onMouseDown={onMouseDown}
+                      style={{ cursor }}
                     />
                   );
                 }
@@ -1339,13 +1480,15 @@ export default function MapBoard() {
                   const ux = s.dx / len; const uy = s.dy / len;
                   const px = -uy; const py = ux;
                   const half = len / 2;
-                  const tipX = s.x + s.dx; const tipY = s.y + s.dy;
+                  const tipX = lx + s.dx; const tipY = ly + s.dy;
                   return (
                     <polygon
                       key={s.id}
-                      points={`${s.x},${s.y} ${tipX + px * half},${tipY + py * half} ${tipX - px * half},${tipY - py * half}`}
+                      points={`${lx},${ly} ${tipX + px * half},${tipY + py * half} ${tipX - px * half},${tipY - py * half}`}
                       fill={s.color} stroke={s.color.slice(0, 7)} strokeWidth={2 / zoom}
                       onDoubleClick={onDbl}
+                      onMouseDown={onMouseDown}
+                      style={{ cursor }}
                     />
                   );
                 }
@@ -1480,21 +1623,6 @@ export default function MapBoard() {
                         {t.emoji}
                       </text>
                     )}
-                    {/* HP bar — drawn directly above the token when maxHp set */}
-                    {(t.maxHp ?? 0) > 0 && (() => {
-                      const barW = r * 1.8;
-                      const barH = Math.max(2, 4 / zoom);
-                      const barX = t.x - barW / 2;
-                      const barY = t.y - r - barH - 2 / zoom;
-                      const pct = Math.max(0, Math.min(1, (t.hp ?? 0) / (t.maxHp ?? 1)));
-                      const fill = pct > 0.6 ? '#10b981' : pct > 0.25 ? '#f59e0b' : '#ef4444';
-                      return (
-                        <g pointerEvents="none">
-                          <rect x={barX} y={barY} width={barW} height={barH} fill="#0f172a" opacity={0.7} rx={barH / 2} />
-                          <rect x={barX} y={barY} width={barW * pct} height={barH} fill={fill} rx={barH / 2} />
-                        </g>
-                      );
-                    })()}
                     {/* Name label */}
                     <text
                       x={t.x} y={labelY}
@@ -1508,6 +1636,23 @@ export default function MapBoard() {
                     >
                       {t.name}
                     </text>
+                    {/* HP bar — sits just below the name label so the token
+                        glyph stays unobstructed and the bar reads with the
+                        identity it belongs to. */}
+                    {(t.maxHp ?? 0) > 0 && (() => {
+                      const barW = r * 1.8;
+                      const barH = Math.max(2, 4 / zoom);
+                      const barX = t.x - barW / 2;
+                      const barY = labelY + Math.max(3, 4 / zoom);
+                      const pct = Math.max(0, Math.min(1, (t.hp ?? 0) / (t.maxHp ?? 1)));
+                      const fill = pct > 0.6 ? '#10b981' : pct > 0.25 ? '#f59e0b' : '#ef4444';
+                      return (
+                        <g pointerEvents="none">
+                          <rect x={barX} y={barY} width={barW} height={barH} fill="#0f172a" opacity={0.7} rx={barH / 2} />
+                          <rect x={barX} y={barY} width={barW * pct} height={barH} fill={fill} rx={barH / 2} />
+                        </g>
+                      );
+                    })()}
                     {/* Tooltip exposing current HP on hover (works even for non-editors) */}
                     {(t.maxHp ?? 0) > 0 && (
                       <title>{`${t.name} — HP ${t.hp ?? 0}/${t.maxHp ?? 0}`}</title>

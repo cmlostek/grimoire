@@ -147,6 +147,7 @@ type MapStore = {
   setShowGrid: (campaignId: string, show: boolean) => Promise<void>;
   setCanvasSize: (campaignId: string, w: number, h: number) => Promise<void>;
   addShape: (campaignId: string, shape: MapShape) => Promise<void>;
+  updateShape: (campaignId: string, shape: MapShape) => Promise<void>;
   removeShape: (campaignId: string, shapeId: string) => Promise<void>;
   clearShapes: (campaignId: string) => Promise<void>;
 
@@ -297,6 +298,24 @@ export const useMap = create<MapStore>((set, get) => ({
       await upsertStateData(campaignId, (d) => ({
         ...d,
         shapes: [...(d.shapes ?? []), shape],
+      }));
+    } catch (e) {
+      set({ state: prev, error: e instanceof Error ? e.message : String(e) });
+    }
+  },
+
+  updateShape: async (campaignId, shape) => {
+    const prev = get().state;
+    set({
+      state: {
+        ...prev,
+        shapes: prev.shapes.map((s) => (s.id === shape.id ? shape : s)),
+      },
+    });
+    try {
+      await upsertStateData(campaignId, (d) => ({
+        ...d,
+        shapes: (d.shapes ?? []).map((s) => (s.id === shape.id ? shape : s)),
       }));
     } catch (e) {
       set({ state: prev, error: e instanceof Error ? e.message : String(e) });

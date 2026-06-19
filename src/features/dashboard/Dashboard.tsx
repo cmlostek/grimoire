@@ -62,7 +62,8 @@ export default function Dashboard() {
     [party, userId]
   );
 
-  const isGM = role === 'gm' || role === 'cogm';
+  const viewAsPlayer = useSession((s) => s.viewAsPlayer);
+  const isGM = (role === 'gm' || role === 'cogm') && !viewAsPlayer;
   const [tab, setTab] = useState<DashboardTab>('profile');
   // If the user was on Manage when their role changed, snap them back.
   useEffect(() => {

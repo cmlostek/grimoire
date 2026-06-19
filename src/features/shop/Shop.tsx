@@ -11,7 +11,8 @@ type PickerKind = 'gear' | 'magic' | null;
 export default function Shop() {
   const campaignId = useSession((s) => s.campaignId);
   const role = useSession((s) => s.role);
-  const isGM = role === 'gm' || role === 'cogm';
+  const viewAsPlayer = useSession((s) => s.viewAsPlayer);
+  const isGM = (role === 'gm' || role === 'cogm') && !viewAsPlayer;
 
   const {
     shops,
