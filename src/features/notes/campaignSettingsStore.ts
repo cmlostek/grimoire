@@ -27,7 +27,7 @@ import { create } from 'zustand';
 import { supabase } from '../../lib/supabase';
 
 export type CampaignSettings = {
-  /** Nav path slugs hidden from non-GM players (e.g. 'shop', 'spells'). */
+  /** Nav path slugs hidden from non-GM players (e.g. 'spells', 'rules'). */
   hiddenPages: string[];
   /** GM-only page slugs shared with players (e.g. 'initiative'). */
   allowedGmPages: string[];

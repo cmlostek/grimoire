@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { NavLink, Route, Routes, Navigate, useLocation } from 'react-router-dom';
-import { Swords, NotebookPen, Map as MapIcon, BookOpen, Sparkles, Coins, Package, ScrollText, Users, FlaskConical, Dices, LogOut, ArrowLeftRight, Copy, Mic, Eye, EyeOff, Settings, BookMarked, Sun, Moon, PanelLeftClose, PanelLeftOpen, Radio, LayoutDashboard, Network } from 'lucide-react';
+import { Swords, NotebookPen, Map as MapIcon, BookOpen, Sparkles, Package, ScrollText, Users, FlaskConical, Dices, LogOut, ArrowLeftRight, Copy, Mic, Eye, EyeOff, Settings, BookMarked, Sun, Moon, PanelLeftClose, PanelLeftOpen, Radio, LayoutDashboard, Network } from 'lucide-react';
 import { QuickDice } from './features/dice/QuickDice';
 import { useQuickDice } from './features/dice/quickDiceStore';
 import ChatPanel from './features/chat/ChatPanel';
@@ -10,7 +10,6 @@ import MindMap from './features/notes/MindMap';
 import MapBoard from './features/map/MapBoard';
 import Spells from './features/spells/Spells';
 import Items from './features/items/Items';
-import Shop from './features/shop/Shop';
 import StatBlocks from './features/statblocks/StatBlocks';
 import Rules from './features/rules/Rules';
 import Party from './features/party/Party';
@@ -40,7 +39,6 @@ const nav: NavItem[] = [
   { to: '/map', label: 'Map', icon: MapIcon },
   { to: '/spells', label: 'Spells', icon: Sparkles },
   { to: '/items', label: 'Items', icon: Package },
-  { to: '/shop', label: 'Shop', icon: Coins },
   { to: '/statblocks', label: 'Stat Blocks', icon: ScrollText, gmOnly: true },
   { to: '/homebrew', label: 'Homebrew', icon: FlaskConical, gmOnly: true },
   { to: '/record', label: 'Record', icon: Mic, gmOnly: true },
@@ -432,7 +430,8 @@ function AppShell() {
           <Route path="/party" element={<Party />} />
           <Route path="/spells" element={<Spells />} />
           <Route path="/items" element={<Items />} />
-          <Route path="/shop" element={<Shop />} />
+          {/* /shop removed — redirect any old bookmarks to Items. */}
+          <Route path="/shop" element={<Navigate to="/items" replace />} />
           {isGM && <Route path="/statblocks" element={<StatBlocks />} />}
           {isGM && <Route path="/homebrew" element={<Homebrew />} />}
           {isGM && <Route path="/record" element={<Transcription />} />}
