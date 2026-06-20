@@ -5,7 +5,6 @@ import { useSession } from '../session/sessionStore';
 import { useVisibilityReload } from '../../hooks/useVisibilityReload';
 import { supabase } from '../../lib/supabase';
 import { parseDdb, parseGenericJson, isLikelyDdb, isDdbWrapper } from './ddb';
-import { modifier } from '../../data/srd';
 import {
   Plus, Trash2, UserPlus, FileJson, ExternalLink, X, Shield, Heart,
   Eye, Search, Brain, UserCheck, User as UserIcon, Save,
@@ -13,7 +12,6 @@ import {
 
 type AddMode = null | 'manual' | 'json';
 
-const ABILITIES = ['str', 'dex', 'con', 'int', 'wis', 'cha'] as const;
 
 const blankMember = (): Omit<PartyMember, 'id' | 'owner_user_id'> => ({
   name: 'New Character',
@@ -175,7 +173,6 @@ export function CharCard({
   const [draft, setDraft] = useState<PartyMember>(m);
   const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [expanded, setExpanded] = useState(false);
   const [confirming, setConfirming] = useState(false);
 
   // Sync from server when not being locally edited
@@ -381,64 +378,14 @@ export function CharCard({
         <Passive icon={<Brain size={11} />} label="Insight" value={draft.passiveInsight} onChange={(v) => apply({ passiveInsight: v })} readOnly={!editable} />
       </div>
 
-      <button
-        onClick={() => setExpanded((v) => !v)}
-        className="text-[11px] text-slate-500 hover:text-slate-300 text-left"
-      >
-        {expanded ? '− Hide details' : '+ More'}
-      </button>
-
-      {expanded && (
-        <div className="text-xs space-y-2 pt-2 border-t border-slate-800">
-          <div className="grid grid-cols-6 gap-1">
-            {ABILITIES.map((a) => (
-              <div key={a} className="bg-slate-950 rounded p-1">
-                <div className="text-[9px] uppercase tracking-wider text-slate-500 text-center">{a}</div>
-                <input
-                  type="number"
-                  value={draft[a]}
-                  onChange={(e) => apply({ [a]: parseInt(e.target.value) || 0 } as Partial<PartyMember>)}
-                  readOnly={!editable}
-                  className="w-full bg-transparent text-center font-mono outline-none"
-                />
-                <div className="text-center text-[10px] text-sky-300">{modifier(draft[a])}</div>
-              </div>
-            ))}
-          </div>
-          <Detail label="Speed" value={draft.speed} onChange={(v) => apply({ speed: v })} readOnly={!editable} />
-          <Detail label="Saves" value={draft.saves} onChange={(v) => apply({ saves: v })} readOnly={!editable} />
-          <Detail label="Skills" value={draft.skills} onChange={(v) => apply({ skills: v })} readOnly={!editable} />
-          <Detail label="Languages" value={draft.languages} onChange={(v) => apply({ languages: v })} readOnly={!editable} />
-          {draft.player !== undefined && <Detail label="Player" value={draft.player ?? ''} onChange={(v) => apply({ player: v })} readOnly={!editable} />}
-          <div>
-            <div className="text-[10px] uppercase tracking-wider text-slate-500">Notes</div>
-            <textarea
-              value={draft.notes ?? ''}
-              onChange={(e) => apply({ notes: e.target.value })}
-              readOnly={!editable}
-              rows={2}
-              className="w-full mt-0.5 bg-slate-800 border border-slate-700 rounded px-2 py-1 resize-none"
-            />
-          </div>
-          <input
-            value={draft.ddbUrl ?? ''}
-            onChange={(e) => apply({ ddbUrl: e.target.value })}
-            readOnly={!editable}
-            placeholder="D&D Beyond URL (optional)"
-            className="w-full bg-slate-800 border border-slate-700 rounded px-2 py-1 text-[11px]"
-          />
-          {editable && dirty && (
-            <button
-              onClick={save}
-              disabled={saving}
-              className="w-full py-1.5 text-xs bg-amber-700 hover:bg-amber-600 disabled:opacity-50 text-white font-semibold rounded flex items-center justify-center gap-1.5"
-            >
-              <Save size={12} />
-              {saving ? 'Saving…' : 'Save changes'}
-            </button>
-          )}
-        </div>
-      )}
+      {/* Party rows intentionally stay an at-a-glance summary — name, class,
+          race, HP, AC, Init, level, and the three passive senses. Anything
+          else (abilities, saves, skills, inventory, spells) lives on the
+          full character sheet under Dashboard › Character, and shows in the
+          `@{Name}` hover popup inside notes. */}
+      <div className="text-[10px] text-slate-600">
+        Full sheet on Dashboard › Character.
+      </div>
     </div>
   );
 }
@@ -497,27 +444,6 @@ function Passive({
         onChange={(e) => onChange(parseInt(e.target.value) || 0)}
         readOnly={readOnly}
         className="w-full bg-transparent text-center font-mono text-sm text-slate-200 outline-none"
-      />
-    </div>
-  );
-}
-
-function Detail({
-  label, value, onChange, readOnly,
-}: {
-  label: string;
-  value: string;
-  onChange: (v: string) => void;
-  readOnly?: boolean;
-}) {
-  return (
-    <div>
-      <div className="text-[10px] uppercase tracking-wider text-slate-500">{label}</div>
-      <input
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        readOnly={readOnly}
-        className="w-full mt-0.5 bg-slate-800 border border-slate-700 rounded px-2 py-1 text-[11px]"
       />
     </div>
   );
