@@ -3,17 +3,21 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { useLocation } from 'react-router-dom';
 import PageHeader from '../../components/PageHeader';
-import { RULE_SECTIONS } from '../../data/srd';
+import EditionToggle from '../../components/EditionToggle';
+import { RULE_SECTIONS, ruleSectionsFor } from '../../data/srd';
 import { CONDITIONS } from '../../data/conditions';
 import { Search } from 'lucide-react';
+import { useCampaignSettings } from '../notes/campaignSettingsStore';
 
 type Mode = 'rules' | 'conditions';
 
 export default function Rules() {
   const [mode, setMode] = useState<Mode>('rules');
   const [query, setQuery] = useState('');
+  const edition = useCampaignSettings((s) => s.settings.srdEdition);
+  const rulePool = useMemo(() => ruleSectionsFor(edition), [edition]);
   const [selectedRule, setSelectedRule] = useState<string | null>(
-    RULE_SECTIONS[0]?.index ?? null
+    rulePool[0]?.index ?? null
   );
   const [selectedCondition, setSelectedCondition] = useState<string | null>(
     CONDITIONS[0]?.index ?? null
@@ -28,13 +32,15 @@ export default function Rules() {
       setSelectedCondition(hash);
       return;
     }
+    // Deep-link fallback: resolve across the union so chat chips work even
+    // when the current edition filter would hide the target.
     if (RULE_SECTIONS.some((r) => r.index === hash)) {
       setMode('rules');
       setSelectedRule(hash);
     }
   }, [location.hash]);
 
-  const entries = mode === 'rules' ? RULE_SECTIONS : CONDITIONS;
+  const entries = mode === 'rules' ? rulePool : CONDITIONS;
   const selectedIndex = mode === 'rules' ? selectedRule : selectedCondition;
   const setSelectedIndex = mode === 'rules' ? setSelectedRule : setSelectedCondition;
 
@@ -47,13 +53,23 @@ export default function Rules() {
     );
   }, [query, entries]);
 
-  const selected = entries.find((r) => r.index === selectedIndex) ?? null;
+  // For rules mode, fall back to union if the selected rule isn't in the current edition pool.
+  const selected =
+    mode === 'rules'
+      ? rulePool.find((r) => r.index === selectedIndex) ??
+        RULE_SECTIONS.find((r) => r.index === selectedIndex) ??
+        null
+      : entries.find((r) => r.index === selectedIndex) ?? null;
+
+  const editionLabel =
+    edition === '2014' ? 'SRD 5.1' : edition === '2024' ? 'SRD 5.2' : 'SRD 5.1 + 5.2';
 
   return (
     <div className="h-full flex flex-col">
-      <PageHeader title="Rules (SRD 5.1)">
+      <PageHeader title={`Rules (${editionLabel})`}>
+        <EditionToggle />
         <div className="text-xs text-slate-500">
-          Open-licensed content. Full rules:{' '}
+          Open-licensed content (CC-BY-4.0).{' '}
           <a
             className="text-sky-400 hover:underline"
             href="https://dnd.wizards.com/resources/systems-reference-document"

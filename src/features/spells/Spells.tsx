@@ -1,13 +1,15 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import PageHeader from '../../components/PageHeader';
-import { SPELLS, SPELL_SCHOOLS, SPELL_LEVELS } from '../../data/srd';
+import EditionToggle from '../../components/EditionToggle';
+import { SPELLS, SPELL_SCHOOLS, SPELL_LEVELS, spellsFor } from '../../data/srd';
 import { Search, X, FlaskConical } from 'lucide-react';
 import type { Spell } from '../../data/types';
 import { useStore } from '../../store';
 import type { HomebrewSpell } from '../../store';
 import { useSession } from '../session/sessionStore';
 import { useSharedHomebrew } from '../homebrew/sharedHomebrewStore';
+import { useCampaignSettings } from '../notes/campaignSettingsStore';
 
 type Source = 'all' | 'srd' | 'custom';
 
@@ -46,7 +48,10 @@ export default function Spells() {
   const sharedSpells = useSharedHomebrew((s) => s.spells);
   const loadShared = useSharedHomebrew((s) => s.loadForCampaign);
   const subscribeShared = useSharedHomebrew((s) => s.subscribe);
+  const edition = useCampaignSettings((s) => s.settings.srdEdition);
   const location = useLocation();
+
+  const spellPool = useMemo(() => spellsFor(edition), [edition]);
 
   useEffect(() => {
     if (!campaignId) return;
@@ -101,6 +106,8 @@ export default function Spells() {
       }
       return;
     }
+    // Deep-link fallback: resolve across the union so chat chips work even
+    // when the current edition filter would hide the target spell.
     const srd = SPELLS.find((s) => s.index === hash);
     if (srd) {
       setSource((prev) => (prev === 'custom' ? 'all' : prev));
@@ -121,7 +128,7 @@ export default function Spells() {
     const srd: UnifiedSpell[] =
       source === 'custom'
         ? []
-        : SPELLS.map((s) => ({
+        : spellPool.map((s) => ({
             kind: 'srd',
             id: s.index,
             name: s.name,
@@ -146,7 +153,7 @@ export default function Spells() {
             custom: sp,
           }));
     return [...srd, ...custom];
-  }, [source, homebrewSpells]);
+  }, [source, spellPool, homebrewSpells]);
 
   const filtered = useMemo(() => {
     const q = query.toLowerCase().trim();
@@ -181,10 +188,11 @@ export default function Spells() {
                   : 'bg-slate-900 text-slate-300 hover:bg-slate-800'
               }`}
             >
-              {s === 'all' ? 'All' : s === 'srd' ? `SRD (${SPELLS.length})` : `Custom (${homebrewSpells.length})`}
+              {s === 'all' ? 'All' : s === 'srd' ? `SRD (${spellPool.length})` : `Custom (${homebrewSpells.length})`}
             </button>
           ))}
         </div>
+        <EditionToggle />
         <div className="text-xs text-slate-500 font-mono">{filtered.length}</div>
       </PageHeader>
 

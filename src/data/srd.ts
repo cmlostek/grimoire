@@ -3,13 +3,69 @@ import equipmentJson from './5e-SRD-Equipment.json';
 import magicItemsJson from './5e-SRD-Magic-Items.json';
 import monstersJson from './5e-SRD-Monsters.json';
 import ruleSectionsJson from './5e-SRD-Rule-Sections.json';
+import spells2024Json from './5e-SRD-Spells-2024.json';
+import equipment2024Json from './5e-SRD-Equipment-2024.json';
+import magicItems2024Json from './5e-SRD-Magic-Items-2024.json';
+import ruleSections2024Json from './5e-SRD-Rule-Sections-2024.json';
 import type { Spell, EquipmentItem, MagicItem, Monster, RuleSection } from './types';
 
-export const SPELLS = spellsJson as unknown as Spell[];
-export const EQUIPMENT = equipmentJson as unknown as EquipmentItem[];
-export const MAGIC_ITEMS = magicItemsJson as unknown as MagicItem[];
+export type SrdEdition = '2014' | '2024';
+type WithEdition<T> = T & { edition: SrdEdition };
+
+const tag = <T>(arr: T[], edition: SrdEdition): WithEdition<T>[] =>
+  arr.map((x) => ({ ...x, edition }));
+
+function unionDedupe<T extends { index: string }>(...arrays: T[][]): T[] {
+  const seen = new Set<string>();
+  const out: T[] = [];
+  for (const arr of arrays) {
+    for (const item of arr) {
+      if (seen.has(item.index)) continue;
+      seen.add(item.index);
+      out.push(item);
+    }
+  }
+  return out;
+}
+
+export const SPELLS_2014 = tag(spellsJson as unknown as Spell[], '2014');
+export const SPELLS_2024 = tag(spells2024Json as unknown as Spell[], '2024');
+export const EQUIPMENT_2014 = tag(equipmentJson as unknown as EquipmentItem[], '2014');
+export const EQUIPMENT_2024 = tag(equipment2024Json as unknown as EquipmentItem[], '2024');
+export const MAGIC_ITEMS_2014 = tag(magicItemsJson as unknown as MagicItem[], '2014');
+export const MAGIC_ITEMS_2024 = tag(magicItems2024Json as unknown as MagicItem[], '2024');
+export const RULE_SECTIONS_2014 = tag(ruleSectionsJson as unknown as RuleSection[], '2014');
+export const RULE_SECTIONS_2024 = tag(ruleSections2024Json as unknown as RuleSection[], '2024');
+
+// Deduped unions. 2014 wins on conflicts to preserve historical behavior for
+// non-edition-aware consumers (homebrew, character sheet, wiki index).
+export const SPELLS = unionDedupe(SPELLS_2014, SPELLS_2024);
+export const EQUIPMENT = unionDedupe(EQUIPMENT_2014, EQUIPMENT_2024);
+export const MAGIC_ITEMS = unionDedupe(MAGIC_ITEMS_2014, MAGIC_ITEMS_2024);
+export const RULE_SECTIONS = unionDedupe(RULE_SECTIONS_2014, RULE_SECTIONS_2024);
 export const MONSTERS = monstersJson as unknown as Monster[];
-export const RULE_SECTIONS = ruleSectionsJson as unknown as RuleSection[];
+
+/** Returns the entries for a given edition selector. */
+export function spellsFor(edition: SrdEdition | 'both') {
+  if (edition === '2014') return SPELLS_2014;
+  if (edition === '2024') return SPELLS_2024;
+  return SPELLS;
+}
+export function equipmentFor(edition: SrdEdition | 'both') {
+  if (edition === '2014') return EQUIPMENT_2014;
+  if (edition === '2024') return EQUIPMENT_2024;
+  return EQUIPMENT;
+}
+export function magicItemsFor(edition: SrdEdition | 'both') {
+  if (edition === '2014') return MAGIC_ITEMS_2014;
+  if (edition === '2024') return MAGIC_ITEMS_2024;
+  return MAGIC_ITEMS;
+}
+export function ruleSectionsFor(edition: SrdEdition | 'both') {
+  if (edition === '2014') return RULE_SECTIONS_2014;
+  if (edition === '2024') return RULE_SECTIONS_2024;
+  return RULE_SECTIONS;
+}
 
 export const SPELL_SCHOOLS = Array.from(new Set(SPELLS.map((s) => s.school.name))).sort();
 export const SPELL_LEVELS = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9];
