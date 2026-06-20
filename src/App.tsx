@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { NavLink, Route, Routes, Navigate, useLocation } from 'react-router-dom';
-import { Swords, NotebookPen, Map as MapIcon, BookOpen, Sparkles, Package, ScrollText, Users, FlaskConical, Dices, LogOut, ArrowLeftRight, Copy, Mic, Eye, EyeOff, Settings, BookMarked, Sun, Moon, PanelLeftClose, PanelLeftOpen, Radio, LayoutDashboard, Network } from 'lucide-react';
+import { Swords, NotebookPen, Map as MapIcon, BookOpen, Sparkles, Package, ScrollText, Users, FlaskConical, Dices, LogOut, ArrowLeftRight, Copy, Mic, Eye, EyeOff, Settings, BookMarked, Sun, Moon, PanelLeftClose, PanelLeftOpen, Radio, LayoutDashboard, Network, GripVertical, RotateCcw, Check, Sliders } from 'lucide-react';
 import { QuickDice } from './features/dice/QuickDice';
 import { useQuickDice } from './features/dice/quickDiceStore';
 import ChatPanel from './features/chat/ChatPanel';
@@ -21,6 +21,7 @@ import CampaignPicker from './features/session/CampaignPicker';
 import { useSession } from './features/session/sessionStore';
 import { useCampaignSettings } from './features/notes/campaignSettingsStore';
 import { useTheme } from './features/session/themeStore';
+import { useNavCustomization } from './hooks/useNavCustomization';
 import { useRecording } from './features/transcription/recordingStore';
 
 type NavItem = {
@@ -134,12 +135,20 @@ function AppShell() {
   }, [campaignId, loadSettings, subscribeSettings]);
 
   // Players see non-gmOnly pages the GM hasn't hidden, plus gmOnly pages the GM has shared
-  const visibleNav = nav.filter((n) => {
+  const visibleByRole = nav.filter((n) => {
     const slug = n.to.replace('/', '');
     if (isGM) return true;
     if (n.gmOnly) return allowedGmPages.includes(slug);
     return !hiddenPages.includes(slug);
   });
+
+  // Per-user customization layered on top of the role filter — reorders and
+  // hides items based on local preferences. The edit panel below renders all
+  // role-visible items (including ones the user hid) so they can toggle them
+  // back on.
+  const customNav = useNavCustomization();
+  const visibleNav = customNav.apply(visibleByRole);
+  const editableNav = customNav.apply(visibleByRole, { includeHidden: true });
 
   const copyJoinCode = () => {
     if (joinCode) navigator.clipboard.writeText(joinCode);
@@ -377,6 +386,22 @@ function AppShell() {
               </div>
             </div>
           )}
+          {!collapsed && customNav.editing && (
+            <CustomizeNavPanel
+              items={editableNav}
+              hidden={customNav.hidden}
+              onReorder={(next) => customNav.setOrder(next.map((i) => i.to))}
+              onToggleHidden={(path) => customNav.toggleHidden(path)}
+              onReset={customNav.reset}
+              onClose={() => customNav.setEditing(false)}
+            />
+          )}
+          <FooterButton
+            icon={customNav.editing ? <Check size={12} /> : <Sliders size={12} />}
+            label={customNav.editing ? 'Done customizing' : 'Customize nav'}
+            collapsed={collapsed}
+            onClick={() => customNav.setEditing((v) => !v)}
+          />
           {isGM && (
             <FooterButton
               icon={<Settings size={12} />}
@@ -452,6 +477,120 @@ function AppShell() {
  * tooltip; expanded mode shows icon + label. `danger` switches the hover tint
  * from sky to rose for destructive actions (Switch campaign, Sign out).
  */
+/**
+ * Customize-nav panel — renders the current nav order with drag handles and
+ * a hide toggle next to each row. Drag uses native HTML5 DnD; the order
+ * commits on drop. The user can also click the eye icon to hide a row
+ * (hidden items render greyed-out at the bottom of the panel so they can be
+ * brought back), or hit Restore to wipe localStorage and revert to defaults.
+ */
+function CustomizeNavPanel({
+  items,
+  hidden,
+  onReorder,
+  onToggleHidden,
+  onReset,
+  onClose,
+}: {
+  items: { to: string; label: string; icon: React.ComponentType<{ size?: number }> }[];
+  hidden: string[];
+  onReorder: (next: { to: string; label: string; icon: React.ComponentType<{ size?: number }> }[]) => void;
+  onToggleHidden: (path: string) => void;
+  onReset: () => void;
+  onClose: () => void;
+}) {
+  const [dragFrom, setDragFrom] = useState<number | null>(null);
+  const [dragOver, setDragOver] = useState<number | null>(null);
+
+  const onDragStart = (i: number) => (e: React.DragEvent) => {
+    setDragFrom(i);
+    e.dataTransfer.effectAllowed = 'move';
+    // Firefox needs payload to actually start a drag.
+    e.dataTransfer.setData('text/plain', String(i));
+  };
+  const onDragOver = (i: number) => (e: React.DragEvent) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    setDragOver(i);
+  };
+  const onDrop = (i: number) => (e: React.DragEvent) => {
+    e.preventDefault();
+    if (dragFrom === null || dragFrom === i) {
+      setDragFrom(null);
+      setDragOver(null);
+      return;
+    }
+    const next = items.slice();
+    const [moved] = next.splice(dragFrom, 1);
+    next.splice(i, 0, moved);
+    onReorder(next);
+    setDragFrom(null);
+    setDragOver(null);
+  };
+
+  return (
+    <div className="px-3 py-3 border-b border-slate-800 bg-slate-950 space-y-2">
+      <div className="flex items-center justify-between">
+        <div className="text-[10px] uppercase tracking-wider text-slate-500">
+          Customize sidebar
+        </div>
+        <div className="flex gap-1">
+          <button
+            onClick={onReset}
+            title="Restore defaults"
+            className="px-1.5 py-0.5 text-[10px] text-slate-400 hover:text-slate-200 hover:bg-slate-900 rounded flex items-center gap-1"
+          >
+            <RotateCcw size={10} /> Reset
+          </button>
+          <button
+            onClick={onClose}
+            title="Done"
+            className="px-1.5 py-0.5 text-[10px] text-slate-400 hover:text-slate-200 hover:bg-slate-900 rounded"
+          >
+            Done
+          </button>
+        </div>
+      </div>
+      <div className="space-y-0.5">
+        {items.map((item, i) => {
+          const isHidden = hidden.includes(item.to);
+          return (
+            <div
+              key={item.to}
+              draggable
+              onDragStart={onDragStart(i)}
+              onDragOver={onDragOver(i)}
+              onDragLeave={() => setDragOver(null)}
+              onDrop={onDrop(i)}
+              className={`flex items-center gap-2 px-1.5 py-1 rounded text-[11px] cursor-grab active:cursor-grabbing transition-colors ${
+                dragOver === i && dragFrom !== i
+                  ? 'bg-sky-900/40'
+                  : isHidden
+                    ? 'text-slate-600'
+                    : 'text-slate-300 hover:bg-slate-900'
+              }`}
+            >
+              <GripVertical size={12} className="text-slate-600 shrink-0" />
+              <item.icon size={11} />
+              <span className="flex-1 truncate">{item.label}</span>
+              <button
+                onClick={(e) => { e.stopPropagation(); onToggleHidden(item.to); }}
+                title={isHidden ? 'Show in sidebar' : 'Hide from sidebar'}
+                className="p-0.5 text-slate-500 hover:text-slate-200"
+              >
+                {isHidden ? <EyeOff size={11} /> : <Eye size={11} />}
+              </button>
+            </div>
+          );
+        })}
+      </div>
+      <div className="text-[10px] text-slate-600 leading-snug">
+        Drag a row to reorder. Click the eye to hide it from the sidebar.
+      </div>
+    </div>
+  );
+}
+
 function FooterButton({
   icon,
   label,
