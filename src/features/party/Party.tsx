@@ -310,6 +310,22 @@ export function CharCard({
             Release
           </button>
         )}
+        {/* GM transfer-ownership picker — change `owner_user_id` directly,
+            reuses the existing onUpdate path. Players can also use this on
+            their own row to hand the character off to someone else. */}
+        {(isGM || ownedByMe) && Object.keys(memberNames).length > 0 && (
+          <select
+            value={m.owner_user_id ?? ''}
+            onChange={(e) => onUpdate({ owner_user_id: e.target.value || null })}
+            className="ml-auto bg-slate-900 border border-slate-800 rounded text-[10px] text-slate-300 px-1 py-0.5"
+            title="Transfer ownership"
+          >
+            <option value="">Unclaimed</option>
+            {Object.entries(memberNames).map(([uid, name]) => (
+              <option key={uid} value={uid}>{name}</option>
+            ))}
+          </select>
+        )}
       </div>
 
       <div className="grid grid-cols-3 gap-2 text-center">

@@ -36,7 +36,6 @@ const nav: NavItem[] = [
   { to: '/initiative', label: 'Initiative', icon: Swords },
   { to: '/party', label: 'Party', icon: Users },
   { to: '/notes', label: 'Notes', icon: NotebookPen },
-  { to: '/mind-map', label: 'Mind Map', icon: Network },
   { to: '/npcs',  label: 'NPCs',  icon: BookMarked },
   { to: '/map', label: 'Map', icon: MapIcon },
   { to: '/spells', label: 'Spells', icon: Sparkles },
@@ -425,6 +424,8 @@ function AppShell() {
           <Route path="/dice" element={<Navigate to="/dashboard" replace />} />
           <Route path="/initiative" element={<Initiative />} />
           <Route path="/notes" element={<Notes />} />
+          <Route path="/notes/mind-map" element={<MindMap />} />
+          {/* Legacy / direct link */}
           <Route path="/mind-map" element={<MindMap />} />
           <Route path="/npcs" element={<NPCs />} />
           <Route path="/map" element={<MapBoard />} />

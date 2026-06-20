@@ -13,6 +13,7 @@ import {
   ChevronRight,
   ChevronLeft,
   FileText,
+  Network,
   Folder as FolderIcon,
   FolderPlus,
   FilePlus,
@@ -561,6 +562,13 @@ export default function Notes() {
       <PageHeader title="Notebook">
         <div className="relative flex items-center gap-2">
           <QuickDiceButton compact />
+          <button
+            onClick={() => navigate('/notes/mind-map')}
+            className="px-2 py-1 text-xs bg-slate-800 hover:bg-slate-700 rounded flex items-center gap-1"
+            title="Visualise links between notes"
+          >
+            <Network size={12} /> Mind Map
+          </button>
           <button
             onClick={() => setShowLegend((s) => !s)}
             className="px-2 py-1 text-xs bg-slate-800 hover:bg-slate-700 rounded flex items-center gap-1"
