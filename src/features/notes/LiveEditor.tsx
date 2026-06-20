@@ -39,6 +39,8 @@ import { searchWiki, kindLabel, type WikiEntry } from './wikiIndex';
 import { autocorrectExtension } from './autocorrect';
 import { modifier } from '../../data/srd';
 import type { PartyMember } from '../party/partyStore';
+import type { NPC } from '../npcs/npcStore';
+import type { Note } from './notesStore';
 import { Shield, Heart } from 'lucide-react';
 
 // ─── Decorator token regex (secrets excluded — handled by secretPlugin) ───────
@@ -241,7 +243,12 @@ function buildImageDecos(view: EditorView): DecorationSet {
     while ((m = IMAGE_RE.exec(text)) !== null) {
       const absFrom = from + m.index;
       const absTo   = absFrom + m[0].length;
-      if (cursorPos >= absFrom && cursorPos <= absTo) continue; // show raw while editing
+      // Only unfurl into raw markdown when the cursor is *strictly* inside
+      // the token. Clicks landing on the edges (just before `[` or just
+      // after `)`) previously popped the raw text on every neighbouring
+      // click, even when the user was aiming at a different part of the
+      // line — they only meant to edit the image when clicking on it.
+      if (cursorPos > absFrom && cursorPos < absTo) continue;
       builder.add(absFrom, absTo, Decoration.replace({
         widget: new ImageWidget(m[2], m[1]),
         inclusive: false,
@@ -583,6 +590,9 @@ type Props = {
   onNavigate: (path: string) => void;
   rollFormula: (formula: string) => void;
   party: PartyMember[];
+  npcs?: NPC[];
+  /** Full note list — used for [[Title#Heading]] heading autocomplete. */
+  notes?: Note[];
   // Collab
   noteId: string;
   ydocState: string | null;
@@ -595,7 +605,9 @@ type Props = {
 // ─── Abilities for party tooltip ─────────────────────────────────────────────
 const PARTY_ABILITIES = ['str', 'dex', 'con', 'int', 'wis', 'cha'] as const;
 
-type HoverTooltip = { member: PartyMember; rect: DOMRect };
+type HoverTooltip =
+  | { kind: 'party'; member: PartyMember; rect: DOMRect }
+  | { kind: 'npc'; npc: NPC; rect: DOMRect };
 
 // ─── Exposed handle (for parent to read Yjs state on save / trigger formatting) ─
 export type FormatCmd =
@@ -606,13 +618,16 @@ export type FormatCmd =
 export type LiveEditorHandle = {
   getYdocState: () => string | null;
   format: (cmd: FormatCmd) => void;
+  /** Scroll the editor to the first line starting with `# Heading` (case-
+   *  insensitive, hash count ignored). Returns true when a match is found. */
+  scrollToHeading: (text: string) => boolean;
 };
 
 export type { Collaborator };
 
 // ─── Component ────────────────────────────────────────────────────────────────
 export const LiveEditor = forwardRef<LiveEditorHandle, Props>(function LiveEditor(
-  { body, onChange, wikiIndex, onNavigate, rollFormula, party, noteId, ydocState, userId, userName, onCollaboratorsChange },
+  { body, onChange, wikiIndex, onNavigate, rollFormula, party, npcs, notes, noteId, ydocState, userId, userName, onCollaboratorsChange },
   ref,
 ) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -624,6 +639,8 @@ export const LiveEditor = forwardRef<LiveEditorHandle, Props>(function LiveEdito
   const navRef                  = useRef(onNavigate);         navRef.current                  = onNavigate;
   const rollRef                 = useRef(rollFormula);        rollRef.current                 = rollFormula;
   const partyRef                = useRef(party);              partyRef.current                = party;
+  const npcsRef                 = useRef(npcs ?? []);          npcsRef.current                 = npcs ?? [];
+  const notesRef                = useRef(notes ?? []);         notesRef.current                = notes ?? [];
   const onCollaboratorsChangeRef = useRef(onCollaboratorsChange); onCollaboratorsChangeRef.current = onCollaboratorsChange;
 
   const [suggest, setSuggest] = useState<SuggestState | null>(null);
@@ -683,6 +700,26 @@ export const LiveEditor = forwardRef<LiveEditorHandle, Props>(function LiveEdito
         });
         view.focus();
       }
+    },
+    scrollToHeading(text: string): boolean {
+      const view = viewRef.current;
+      if (!view) return false;
+      const needle = text.trim().toLowerCase();
+      if (!needle) return false;
+      const doc = view.state.doc;
+      for (let i = 1; i <= doc.lines; i++) {
+        const line = doc.line(i);
+        const m = line.text.match(/^#{1,6}\s+(.+)$/);
+        if (!m) continue;
+        if (m[1].trim().toLowerCase() === needle) {
+          view.dispatch({
+            selection: { anchor: line.from },
+            effects: EditorView.scrollIntoView(line.from, { y: 'start', yMargin: 16 }),
+          });
+          return true;
+        }
+      }
+      return false;
     },
   }));
 
@@ -748,9 +785,23 @@ export const LiveEditor = forwardRef<LiveEditorHandle, Props>(function LiveEdito
           return true;
         }
         if (token.startsWith('[[') && token.endsWith(']]')) {
-          const name = token.slice(2, -2);
-          const hit  = wikiRef.current.find((e) => e.name === name);
-          if (hit) { event.preventDefault(); navRef.current(hit.route); return true; }
+          const full = token.slice(2, -2);
+          // `[[Note Title#Heading]]` — split off the heading and look up by
+          // the bare name, then re-attach as ?h= so the receiver scrolls.
+          const hashIdx = full.indexOf('#');
+          const name = (hashIdx < 0 ? full : full.slice(0, hashIdx)).trim();
+          const heading = hashIdx < 0 ? '' : full.slice(hashIdx + 1).trim();
+          const hit = wikiRef.current.find(
+            (e) => e.name.toLowerCase() === name.toLowerCase(),
+          );
+          if (hit) {
+            event.preventDefault();
+            const href = heading
+              ? hit.route + (hit.route.includes('?') ? '&' : '?') + 'h=' + encodeURIComponent(heading)
+              : hit.route;
+            navRef.current(href);
+            return true;
+          }
           return false; // unresolved link — let cursor place normally
         }
         if (token.startsWith('&{') && token.endsWith('}')) {
@@ -902,15 +953,41 @@ export const LiveEditor = forwardRef<LiveEditorHandle, Props>(function LiveEdito
             type Candidate = { trigger: string; openAt: number; results: SuggestEntry[] };
             let candidate: Candidate | null = null;
 
-            // [[ wiki link
+            // [[ wiki link — including `[[Note Title#Heading]]` heading
+            //                autocomplete when a `#` is present.
             if (!candidate) {
               const at = upto.lastIndexOf('[[');
               if (at !== -1) {
                 const frag = upto.slice(at + 2);
                 if (!frag.includes(']]') && !frag.includes('\n')) {
-                  const hits = searchWiki(wikiRef.current, frag, 6)
-                    .map((e) => ({ label: e.name, sub: kindLabel(e.kind) }));
-                  if (hits.length) candidate = { trigger: '[[', openAt: at, results: hits };
+                  const hashIdx = frag.indexOf('#');
+                  if (hashIdx >= 0) {
+                    // After `#`: look up the named note and suggest its
+                    // markdown headings. We pre-fix the suggestion with the
+                    // title so accepting it replaces the full `[[…]]` body.
+                    const title = frag.slice(0, hashIdx).trim();
+                    const headingFrag = frag.slice(hashIdx + 1).toLowerCase();
+                    const note = notesRef.current.find(
+                      (n) => (n.title || '').toLowerCase() === title.toLowerCase(),
+                    );
+                    if (note) {
+                      const headings: SuggestEntry[] = [];
+                      for (const line of (note.body || '').split('\n')) {
+                        const m = line.match(/^#{1,6}\s+(.+)$/);
+                        if (!m) continue;
+                        const h = m[1].trim();
+                        if (!headingFrag || h.toLowerCase().includes(headingFrag)) {
+                          headings.push({ label: `${title}#${h}`, sub: 'heading' });
+                        }
+                        if (headings.length >= 6) break;
+                      }
+                      if (headings.length) candidate = { trigger: '[[', openAt: at, results: headings };
+                    }
+                  } else {
+                    const hits = searchWiki(wikiRef.current, frag, 6)
+                      .map((e) => ({ label: e.name, sub: kindLabel(e.kind) }));
+                    if (hits.length) candidate = { trigger: '[[', openAt: at, results: hits };
+                  }
                 }
               }
             }
@@ -1010,7 +1087,14 @@ export const LiveEditor = forwardRef<LiveEditorHandle, Props>(function LiveEdito
           const member = partyRef.current.find(
             (m) => m.name.trim().toLowerCase() === inner.toLowerCase()
           );
-          if (member) setHoverTooltip({ member, rect: locEl.getBoundingClientRect() });
+          if (member) {
+            setHoverTooltip({ kind: 'party', member, rect: locEl.getBoundingClientRect() });
+          } else {
+            const npc = npcsRef.current.find(
+              (n) => n.name.trim().toLowerCase() === inner.toLowerCase()
+            );
+            if (npc) setHoverTooltip({ kind: 'npc', npc, rect: locEl.getBoundingClientRect() });
+          }
         } else if (!target.closest('[data-party-tooltip]')) {
           hoverTimerRef.current = setTimeout(() => setHoverTooltip(null), 150);
         }
@@ -1038,52 +1122,108 @@ export const LiveEditor = forwardRef<LiveEditorHandle, Props>(function LiveEdito
 
       {hoverTooltip && createPortal(
         (() => {
-          const m = hoverTooltip.member;
           const rect = hoverTooltip.rect;
           const tooltipW = 264;
           const tooltipH = 190;
           const above = rect.bottom + tooltipH + 10 > window.innerHeight;
           const top  = above ? rect.top - tooltipH - 6 : rect.bottom + 6;
           const left = Math.max(8, Math.min(rect.left, window.innerWidth - tooltipW - 8));
-          const hpPct = m.maxHp > 0 ? Math.min(100, (m.hp / m.maxHp) * 100) : 0;
+          const onEnter = () => { if (hoverTimerRef.current) { clearTimeout(hoverTimerRef.current); hoverTimerRef.current = null; } };
+          const onLeave = () => { hoverTimerRef.current = setTimeout(() => setHoverTooltip(null), 150); };
+
+          if (hoverTooltip.kind === 'party') {
+            const m = hoverTooltip.member;
+            const hpPct = m.maxHp > 0 ? Math.min(100, (m.hp / m.maxHp) * 100) : 0;
+            const hpColor = hpPct > 50 ? '#10b981' : hpPct > 25 ? '#38bdf8' : '#f87171';
+            return (
+              <div
+                data-party-tooltip="true"
+                className="party-tooltip"
+                style={{ position: 'fixed', top, left, zIndex: 9999, width: tooltipW }}
+                onMouseEnter={onEnter}
+                onMouseLeave={onLeave}
+              >
+                <div className="party-tooltip-name">{m.name}</div>
+                <div className="party-tooltip-sub">
+                  {m.classSummary} · {m.race}
+                  {m.owner_user_id && <span className="party-tooltip-owned"> · Lv {m.level}</span>}
+                </div>
+                <div className="party-tooltip-stats">
+                  <span><Shield size={11} /> AC {m.ac}</span>
+                  <span><Heart size={11} className="text-rose-400" /> {m.hp}/{m.maxHp}</span>
+                  <span>Init {m.initiativeBonus >= 0 ? '+' : ''}{m.initiativeBonus}</span>
+                </div>
+                <div className="party-tooltip-hp-bar">
+                  <div style={{ width: `${hpPct}%`, background: hpColor }} />
+                </div>
+                <div className="party-tooltip-abilities">
+                  {PARTY_ABILITIES.map((a) => (
+                    <div key={a} className="party-tooltip-ability">
+                      <div className="party-tooltip-ability-label">{a.toUpperCase()}</div>
+                      <div className="party-tooltip-ability-score">{m[a]}</div>
+                      <div className="party-tooltip-ability-mod">{modifier(m[a])}</div>
+                    </div>
+                  ))}
+                </div>
+                {(m.passivePerception || m.passiveInvestigation || m.passiveInsight) ? (
+                  <div className="party-tooltip-passives">
+                    <span>Perc {m.passivePerception}</span>
+                    <span>Inv {m.passiveInvestigation}</span>
+                    <span>Ins {m.passiveInsight}</span>
+                  </div>
+                ) : null}
+              </div>
+            );
+          }
+
+          // NPC tooltip — same visual frame as party hover, sourcing the
+          // statBlock when available. HP bar appears only if maxHp is set.
+          const n = hoverTooltip.npc;
+          const sb = n.statBlock ?? {};
+          const hp = sb.hpCurrent ?? 0;
+          const maxHp = sb.hpMax ?? 0;
+          const hpPct = maxHp > 0 ? Math.min(100, (hp / maxHp) * 100) : 0;
           const hpColor = hpPct > 50 ? '#10b981' : hpPct > 25 ? '#38bdf8' : '#f87171';
           return (
             <div
               data-party-tooltip="true"
               className="party-tooltip"
               style={{ position: 'fixed', top, left, zIndex: 9999, width: tooltipW }}
-              onMouseEnter={() => { if (hoverTimerRef.current) { clearTimeout(hoverTimerRef.current); hoverTimerRef.current = null; } }}
-              onMouseLeave={() => { hoverTimerRef.current = setTimeout(() => setHoverTooltip(null), 150); }}
+              onMouseEnter={onEnter}
+              onMouseLeave={onLeave}
             >
-              <div className="party-tooltip-name">{m.name}</div>
+              <div className="party-tooltip-name">
+                <span className="mr-1">{n.icon}</span>{n.name}
+              </div>
               <div className="party-tooltip-sub">
-                {m.classSummary} · {m.race}
-                {m.owner_user_id && <span className="party-tooltip-owned"> · Lv {m.level}</span>}
+                {[sb.creatureType, n.faction, n.location].filter(Boolean).join(' · ') || 'NPC'}
               </div>
-              <div className="party-tooltip-stats">
-                <span><Shield size={11} /> AC {m.ac}</span>
-                <span><Heart size={11} className="text-rose-400" /> {m.hp}/{m.maxHp}</span>
-                <span>Init {m.initiativeBonus >= 0 ? '+' : ''}{m.initiativeBonus}</span>
-              </div>
-              <div className="party-tooltip-hp-bar">
-                <div style={{ width: `${hpPct}%`, background: hpColor }} />
-              </div>
-              <div className="party-tooltip-abilities">
-                {PARTY_ABILITIES.map((a) => (
-                  <div key={a} className="party-tooltip-ability">
-                    <div className="party-tooltip-ability-label">{a.toUpperCase()}</div>
-                    <div className="party-tooltip-ability-score">{m[a]}</div>
-                    <div className="party-tooltip-ability-mod">{modifier(m[a])}</div>
-                  </div>
-                ))}
-              </div>
-              {(m.passivePerception || m.passiveInvestigation || m.passiveInsight) ? (
-                <div className="party-tooltip-passives">
-                  <span>Perc {m.passivePerception}</span>
-                  <span>Inv {m.passiveInvestigation}</span>
-                  <span>Ins {m.passiveInsight}</span>
+              {(sb.ac != null || maxHp > 0 || sb.cr) && (
+                <div className="party-tooltip-stats">
+                  {sb.ac != null && <span><Shield size={11} /> AC {sb.ac}</span>}
+                  {maxHp > 0 && <span><Heart size={11} className="text-rose-400" /> {hp}/{maxHp}</span>}
+                  {sb.cr && <span>CR {sb.cr}</span>}
                 </div>
-              ) : null}
+              )}
+              {maxHp > 0 && (
+                <div className="party-tooltip-hp-bar">
+                  <div style={{ width: `${hpPct}%`, background: hpColor }} />
+                </div>
+              )}
+              {(sb.str || sb.dex || sb.con || sb.int || sb.wis || sb.cha) && (
+                <div className="party-tooltip-abilities">
+                  {PARTY_ABILITIES.map((a) => {
+                    const v = sb[a];
+                    return (
+                      <div key={a} className="party-tooltip-ability">
+                        <div className="party-tooltip-ability-label">{a.toUpperCase()}</div>
+                        <div className="party-tooltip-ability-score">{v ?? '—'}</div>
+                        <div className="party-tooltip-ability-mod">{v != null ? modifier(v) : ''}</div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
             </div>
           );
         })(),

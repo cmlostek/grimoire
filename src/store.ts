@@ -75,23 +75,6 @@ export type MapShape =
 
 export type MapRuler = { x1: number; y1: number; x2: number; y2: number } | null;
 
-export type ShopItem = {
-  id: string;
-  source: 'gear' | 'magic' | 'custom';
-  sourceIndex?: string;
-  name: string;
-  priceGp: number;
-  stock: number;
-  notes?: string;
-};
-
-export type Shop = {
-  id: string;
-  name: string;
-  description: string;
-  items: ShopItem[];
-};
-
 type State = {
   combatants: Combatant[];
   round: number;
@@ -131,16 +114,6 @@ type State = {
   addShape: (s: MapShape) => void;
   removeShape: (id: string) => void;
   clearShapes: () => void;
-
-  shops: Shop[];
-  activeShopId: string | null;
-  createShop: (name: string) => string;
-  updateShop: (id: string, patch: Partial<Shop>) => void;
-  deleteShop: (id: string) => void;
-  setActiveShop: (id: string | null) => void;
-  addShopItem: (shopId: string, item: Omit<ShopItem, 'id'>) => void;
-  updateShopItem: (shopId: string, itemId: string, patch: Partial<ShopItem>) => void;
-  removeShopItem: (shopId: string, itemId: string) => void;
 
   statBlocks: StatBlock[];
   activeStatBlockId: string | null;
@@ -204,6 +177,9 @@ export type StatBlock = {
   id: string;
   edition: '2014' | '2024';
   campaign?: string;
+  /** Optional single-character emoji used when placing this creature as a
+   *  map token. Falls back to 📜 if empty. */
+  emoji?: string;
   name: string;
   size: string;
   type: string;
@@ -344,43 +320,6 @@ export const useStore = create<State>()(
       removeShape: (id) => set((s) => ({ shapes: s.shapes.filter((sh) => sh.id !== id) })),
       clearShapes: () => set({ shapes: [] }),
 
-      shops: [],
-      activeShopId: null,
-      createShop: (name) => {
-        const id = uid();
-        const shop: Shop = { id, name: name || 'New Shop', description: '', items: [] };
-        set((s) => ({ shops: [...s.shops, shop], activeShopId: id }));
-        return id;
-      },
-      updateShop: (id, patch) =>
-        set((s) => ({ shops: s.shops.map((sh) => (sh.id === id ? { ...sh, ...patch } : sh)) })),
-      deleteShop: (id) =>
-        set((s) => ({
-          shops: s.shops.filter((sh) => sh.id !== id),
-          activeShopId: s.activeShopId === id ? null : s.activeShopId,
-        })),
-      setActiveShop: (id) => set({ activeShopId: id }),
-      addShopItem: (shopId, item) =>
-        set((s) => ({
-          shops: s.shops.map((sh) =>
-            sh.id === shopId ? { ...sh, items: [...sh.items, { ...item, id: uid() }] } : sh
-          ),
-        })),
-      updateShopItem: (shopId, itemId, patch) =>
-        set((s) => ({
-          shops: s.shops.map((sh) =>
-            sh.id === shopId
-              ? { ...sh, items: sh.items.map((i) => (i.id === itemId ? { ...i, ...patch } : i)) }
-              : sh
-          ),
-        })),
-      removeShopItem: (shopId, itemId) =>
-        set((s) => ({
-          shops: s.shops.map((sh) =>
-            sh.id === shopId ? { ...sh, items: sh.items.filter((i) => i.id !== itemId) } : sh
-          ),
-        })),
-
       statBlocks: [],
       activeStatBlockId: null,
       createStatBlock: (edition) => {
@@ -388,6 +327,7 @@ export const useStore = create<State>()(
         const sb: StatBlock = {
           id,
           edition,
+          emoji: '',
           name: 'New Creature',
           size: 'Medium',
           type: 'humanoid',

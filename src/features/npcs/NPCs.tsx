@@ -27,7 +27,7 @@ const STATUS_LABELS: Record<NPCStatus, string> = {
 export default function NPCs() {
   const campaignId = useSession((s) => s.campaignId);
   const role       = useSession((s) => s.role);
-  const isGM       = role === 'gm';
+  const isGM       = role === 'gm' || role === 'cogm';
 
   const { npcs, activeNpcId, loaded, loadForCampaign, subscribe, clear, create, update, remove, setActive } = useNpcStore();
 

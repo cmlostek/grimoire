@@ -561,11 +561,11 @@ export const useNotes = create<NotesState>((set, get) => ({
 export function canViewNote(
   note: Note,
   userId: string | null,
-  role: 'gm' | 'player' | null,
+  role: 'gm' | 'cogm' | 'player' | null,
   perms: NotePermission[],
 ): boolean {
   if (!userId) return false;
-  if (role === 'gm') return true;
+  if (role === 'gm' || role === 'cogm') return true;
   if (note.owner_user_id === userId) return true;
   if (perms.some((p) => p.user_id === userId && p.can_view)) return true;
   // Legacy fallback for notes not migrated to the matrix yet.
@@ -576,11 +576,11 @@ export function canViewNote(
 export function canEditNote(
   note: Note,
   userId: string | null,
-  role: 'gm' | 'player' | null,
+  role: 'gm' | 'cogm' | 'player' | null,
   perms: NotePermission[],
 ): boolean {
   if (!userId) return false;
-  if (role === 'gm') return true;
+  if (role === 'gm' || role === 'cogm') return true;
   if (note.owner_user_id === userId) return true;
   if (perms.some((p) => p.user_id === userId && p.can_edit)) return true;
   // Legacy fallback.

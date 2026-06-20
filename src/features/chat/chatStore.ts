@@ -4,7 +4,7 @@ import { supabase } from '../../lib/supabase';
 export type ChatMember = {
   userId: string;
   displayName: string;
-  role: 'gm' | 'player';
+  role: 'gm' | 'cogm' | 'player';
   color: string;
 };
 
@@ -40,7 +40,7 @@ function rowToMember(r: Row): ChatMember {
   return {
     userId: r.user_id as string,
     displayName: r.display_name as string,
-    role: r.role as 'gm' | 'player',
+    role: r.role as 'gm' | 'cogm' | 'player',
     color: (r.color as string | null) ?? '#94a3b8',
   };
 }

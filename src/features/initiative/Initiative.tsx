@@ -1,15 +1,22 @@
-import { useEffect, useRef, useState } from 'react';
-import { ChevronRight, Shuffle, RotateCcw, Plus, Trash2, Heart, Shield, Swords, Activity, X, Lock } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { ChevronRight, Shuffle, RotateCcw, Plus, Trash2, Heart, Shield, Swords, Activity, X, Lock, Users } from 'lucide-react';
 import PageHeader from '../../components/PageHeader';
 import { QuickDiceButton } from '../dice/QuickDice';
 import { useSession } from '../session/sessionStore';
 import { useInitiativeStore, CONDITIONS, type Condition } from './initiativeStore';
 import { useCampaignSettings } from '../notes/campaignSettingsStore';
+import { useParty } from '../party/partyStore';
+import { useNpcStore } from '../npcs/npcStore';
+import { useStore } from '../../store';
+
+const abilityMod = (score: number) => Math.floor((score - 10) / 2);
+const d20 = () => 1 + Math.floor(Math.random() * 20);
 
 export default function Initiative() {
   const campaignId = useSession((s) => s.campaignId);
   const role = useSession((s) => s.role);
-  const isGM = role === 'gm';
+  const viewAsPlayer = useSession((s) => s.viewAsPlayer);
+  const isGM = (role === 'gm' || role === 'cogm') && !viewAsPlayer;
   const allowedGmPages = useCampaignSettings((s) => s.settings.allowedGmPages ?? []);
   const playerCanView = isGM || allowedGmPages.includes('initiative');
 
@@ -58,6 +65,99 @@ export default function Initiative() {
     add({ name: name.trim(), initiative: parseInt(init || '0', 10) || 0, hp: hpNum, maxHp: hpNum, ac: parseInt(ac || '10', 10) || 10, isPC });
     setName(''); setInit(''); setHp(''); setAc('');
   };
+
+  // ── Add-from-roster picker ─────────────────────────────────────────────
+  // Pulls players, NPCs, and homebrew StatBlocks so the GM doesn't have to
+  // re-type a creature that already exists somewhere in the campaign. Each
+  // pick auto-rolls 1d20 + DEX (or the PC's initiativeBonus) and stamps it
+  // into the tracker.
+  const party = useParty((s) => s.party);
+  const loadParty = useParty((s) => s.loadForCampaign);
+  const subscribeParty = useParty((s) => s.subscribe);
+  const npcs = useNpcStore((s) => s.npcs);
+  const loadNpcs = useNpcStore((s) => s.loadForCampaign);
+  const subscribeNpcs = useNpcStore((s) => s.subscribe);
+  const statBlocks = useStore((s) => s.statBlocks);
+
+  useEffect(() => {
+    if (!campaignId) return;
+    loadParty(campaignId);
+    const unsub1 = subscribeParty(campaignId);
+    loadNpcs(campaignId);
+    const unsub2 = subscribeNpcs(campaignId);
+    return () => { unsub1(); unsub2(); };
+  }, [campaignId, loadParty, subscribeParty, loadNpcs, subscribeNpcs]);
+
+  type RosterRow = {
+    key: string;
+    label: string;
+    sub: string;
+    onPick: () => void;
+  };
+  const roster: RosterRow[] = useMemo(() => {
+    const rows: RosterRow[] = [];
+    for (const p of party) {
+      rows.push({
+        key: `pc:${p.id}`,
+        label: p.name,
+        sub: `PC · init ${p.initiativeBonus >= 0 ? '+' : ''}${p.initiativeBonus}`,
+        onPick: () =>
+          add({
+            name: p.name,
+            initiative: d20() + (p.initiativeBonus ?? 0),
+            hp: p.hp ?? 0,
+            maxHp: p.maxHp ?? 0,
+            ac: p.ac ?? 10,
+            isPC: true,
+          }),
+      });
+    }
+    for (const n of npcs) {
+      const dex = n.statBlock?.dex ?? 10;
+      rows.push({
+        key: `npc:${n.id}`,
+        label: n.name,
+        sub: `NPC · DEX ${dex}`,
+        onPick: () =>
+          add({
+            name: n.name,
+            initiative: d20() + abilityMod(dex),
+            hp: n.statBlock?.hpCurrent ?? n.statBlock?.hpMax ?? 0,
+            maxHp: n.statBlock?.hpMax ?? n.statBlock?.hpCurrent ?? 0,
+            ac: n.statBlock?.ac ?? 10,
+            isPC: false,
+          }),
+      });
+    }
+    for (const s of statBlocks) {
+      if (s.campaign && campaignId && s.campaign !== campaignId) continue;
+      rows.push({
+        key: `sb:${s.id}`,
+        label: s.name,
+        sub: `Creature · DEX ${s.dex}`,
+        onPick: () =>
+          add({
+            name: s.name,
+            initiative: d20() + abilityMod(s.dex),
+            hp: s.hp,
+            maxHp: s.hp,
+            ac: s.ac,
+            isPC: false,
+          }),
+      });
+    }
+    return rows.sort((a, b) => a.label.localeCompare(b.label));
+  }, [party, npcs, statBlocks, campaignId, add]);
+
+  // Auto-sort every 30s — keeps the order in sync if someone edits an
+  // initiative score and forgets to hit Re-roll.
+  useEffect(() => {
+    if (combatants.length === 0) return;
+    const id = setInterval(() => sort(), 30_000);
+    return () => clearInterval(id);
+  }, [combatants.length, sort]);
+
+  const [rosterOpen, setRosterOpen] = useState(false);
 
   const adjustHp = (id: string, delta: number) => {
     const c = combatants.find((x) => x.id === id);
@@ -382,6 +482,35 @@ export default function Initiative() {
                       </span>
                     );
                   })}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Add-from-roster picker — sourced from party, NPCs, stat blocks */}
+          {isGM && roster.length > 0 && (
+            <div className="bg-slate-900 border border-slate-800 rounded-lg p-4 space-y-2">
+              <button
+                onClick={() => setRosterOpen((v) => !v)}
+                className="w-full flex items-center justify-between text-xs uppercase tracking-wider text-slate-400 hover:text-slate-200"
+              >
+                <span className="flex items-center gap-1.5">
+                  <Users size={12} /> Add from roster <span className="text-slate-700">({roster.length})</span>
+                </span>
+                <ChevronRight size={12} className={`transition-transform ${rosterOpen ? 'rotate-90' : ''}`} />
+              </button>
+              {rosterOpen && (
+                <div className="max-h-56 overflow-y-auto -mx-1 space-y-0.5">
+                  {roster.map((r) => (
+                    <button
+                      key={r.key}
+                      onClick={() => r.onPick()}
+                      className="w-full text-left flex items-center gap-2 px-2 py-1 rounded hover:bg-slate-800 text-xs"
+                    >
+                      <span className="flex-1 truncate text-slate-200">{r.label}</span>
+                      <span className="text-[10px] text-slate-500 shrink-0">{r.sub}</span>
+                    </button>
+                  ))}
                 </div>
               )}
             </div>

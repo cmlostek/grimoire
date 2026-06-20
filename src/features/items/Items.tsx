@@ -1,6 +1,15 @@
 import { useEffect, useMemo, useState } from 'react';
 import PageHeader from '../../components/PageHeader';
-import { EQUIPMENT, MAGIC_ITEMS, EQUIPMENT_CATEGORIES, MAGIC_ITEM_RARITIES, formatCost } from '../../data/srd';
+import EditionToggle from '../../components/EditionToggle';
+import {
+  EQUIPMENT,
+  MAGIC_ITEMS,
+  EQUIPMENT_CATEGORIES,
+  MAGIC_ITEM_RARITIES,
+  formatCost,
+  equipmentFor,
+  magicItemsFor,
+} from '../../data/srd';
 import { Search, X, FlaskConical } from 'lucide-react';
 import { Link, useLocation } from 'react-router-dom';
 import type { EquipmentItem, MagicItem } from '../../data/types';
@@ -8,6 +17,7 @@ import { useStore } from '../../store';
 import type { HomebrewItem } from '../../store';
 import { useSession } from '../session/sessionStore';
 import { useSharedHomebrew } from '../homebrew/sharedHomebrewStore';
+import { useCampaignSettings } from '../notes/campaignSettingsStore';
 
 type Tab = 'gear' | 'magic' | 'custom';
 
@@ -23,7 +33,11 @@ export default function Items() {
   const sharedItems = useSharedHomebrew((s) => s.items);
   const loadShared = useSharedHomebrew((s) => s.loadForCampaign);
   const subscribeShared = useSharedHomebrew((s) => s.subscribe);
+  const edition = useCampaignSettings((s) => s.settings.srdEdition);
   const location = useLocation();
+
+  const gearPool = useMemo(() => equipmentFor(edition), [edition]);
+  const magicPool = useMemo(() => magicItemsFor(edition), [edition]);
 
   useEffect(() => {
     if (!campaignId) return;
@@ -33,7 +47,7 @@ export default function Items() {
   }, [campaignId, loadShared, subscribeShared]);
 
   const homebrewItems = useMemo<HomebrewItem[]>(() => {
-    if (role === 'gm') return localHomebrewItems;
+    if (role === 'gm' || role === 'cogm') return localHomebrewItems;
     return sharedItems.map((r) => {
       const d = r.data as Record<string, unknown>;
       const now = Date.now();
@@ -57,43 +71,46 @@ export default function Items() {
     if (!hash) return;
     if (hash.startsWith('custom-')) {
       const id = hash.slice('custom-'.length);
-      const hit = homebrewItems.find((i) => i.id === id);
+      const hit = homebrewItems.find((i) => i.id === id || i.id === `shared-${id}`);
       if (hit) {
         setTab('custom');
         setSelected(hit);
       }
       return;
     }
-    const magic = MAGIC_ITEMS.find((m) => m.index === hash);
+    // Prefer the current edition's entry; fall back to the union so chat
+    // chips and wiki links work even when the current filter would hide
+    // the target.
+    const magic = magicPool.find((m) => m.index === hash) ?? MAGIC_ITEMS.find((m) => m.index === hash);
     if (magic) {
       setTab('magic');
       setSelected(magic);
       return;
     }
-    const gear = EQUIPMENT.find((e) => e.index === hash);
+    const gear = gearPool.find((e) => e.index === hash) ?? EQUIPMENT.find((e) => e.index === hash);
     if (gear) {
       setTab('gear');
       setSelected(gear);
     }
-  }, [location.hash, homebrewItems]);
+  }, [location.hash, homebrewItems, magicPool, gearPool]);
 
   const filteredGear = useMemo(() => {
     const q = query.toLowerCase().trim();
-    return EQUIPMENT.filter((e) => {
+    return gearPool.filter((e) => {
       if (category !== 'all' && e.equipment_category.name !== category) return false;
       if (!q) return true;
       return e.name.toLowerCase().includes(q);
     }).sort((a, b) => a.name.localeCompare(b.name));
-  }, [query, category]);
+  }, [gearPool, query, category]);
 
   const filteredMagic = useMemo(() => {
     const q = query.toLowerCase().trim();
-    return MAGIC_ITEMS.filter((m) => {
+    return magicPool.filter((m) => {
       if (rarity !== 'all' && m.rarity.name !== rarity) return false;
       if (!q) return true;
       return m.name.toLowerCase().includes(q) || m.desc.join(' ').toLowerCase().includes(q);
     }).sort((a, b) => a.name.localeCompare(b.name));
-  }, [query, rarity]);
+  }, [magicPool, query, rarity]);
 
   const filteredCustom = useMemo(() => {
     const q = query.toLowerCase().trim();
@@ -117,7 +134,7 @@ export default function Items() {
             }}
             className={`px-3 py-1.5 text-xs ${tab === 'gear' ? 'bg-sky-900/40 text-sky-200' : 'bg-slate-900 text-slate-300 hover:bg-slate-800'}`}
           >
-            Gear ({EQUIPMENT.length})
+            Gear ({gearPool.length})
           </button>
           <button
             onClick={() => {
@@ -126,7 +143,7 @@ export default function Items() {
             }}
             className={`px-3 py-1.5 text-xs ${tab === 'magic' ? 'bg-sky-900/40 text-sky-200' : 'bg-slate-900 text-slate-300 hover:bg-slate-800'}`}
           >
-            Magic ({MAGIC_ITEMS.length})
+            Magic ({magicPool.length})
           </button>
           <button
             onClick={() => {
@@ -138,6 +155,7 @@ export default function Items() {
             Custom ({homebrewItems.length})
           </button>
         </div>
+        <EditionToggle />
       </PageHeader>
 
       <div className="flex-1 min-h-0 flex">
@@ -179,7 +197,7 @@ export default function Items() {
                 ))}
               </select>
             )}
-            {tab === 'custom' && role === 'gm' && (
+            {tab === 'custom' && (role === 'gm' || role === 'cogm') && (
               <Link
                 to="/homebrew"
                 className="block text-center px-2 py-1 text-[11px] bg-slate-900 hover:bg-slate-800 border border-slate-800 rounded text-slate-300"
@@ -254,7 +272,7 @@ export default function Items() {
               (tab === 'custom' && filteredCustom.length === 0)) && (
               <div className="p-4 text-xs text-slate-600 italic">
                 {tab === 'custom' ? (
-                  role === 'gm' ? (
+                  (role === 'gm' || role === 'cogm') ? (
                     <>
                       No custom items.{' '}
                       <Link to="/homebrew" className="text-sky-400 hover:underline">
@@ -276,7 +294,7 @@ export default function Items() {
           {!selected ? (
             <div className="h-full flex items-center justify-center text-slate-500">Select an item.</div>
           ) : isHomebrew(selected) ? (
-            <CustomDetail item={selected} onClose={() => setSelected(null)} canEdit={role === 'gm'} />
+            <CustomDetail item={selected} onClose={() => setSelected(null)} canEdit={role === 'gm' || role === 'cogm'} />
           ) : 'rarity' in selected ? (
             <MagicDetail item={selected} onClose={() => setSelected(null)} />
           ) : (

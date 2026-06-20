@@ -28,7 +28,7 @@ create table if not exists campaign_members (
   campaign_id   uuid not null references campaigns(id) on delete cascade,
   user_id       uuid not null default auth.uid(),
   display_name  text not null,
-  role          text not null check (role in ('gm','player')),
+  role          text not null check (role in ('gm','cogm','player')),
   color         text not null default '#94a3b8',
   bio           text not null default '',
   joined_at     timestamptz not null default now(),
@@ -212,7 +212,7 @@ set search_path = public
 as $func$
   select exists (
     select 1 from campaign_members
-    where campaign_id = p_campaign and user_id = auth.uid() and role = 'gm'
+    where campaign_id = p_campaign and user_id = auth.uid() and role in ('gm','cogm')
   );
 $func$;
 
@@ -272,7 +272,14 @@ drop policy if exists campaigns_update on campaigns;
 create policy campaigns_update on campaigns for update to authenticated using (is_gm(id)) with check (is_gm(id));
 
 drop policy if exists campaigns_delete on campaigns;
-create policy campaigns_delete on campaigns for delete to authenticated using (is_gm(id));
+-- Delete is restricted to the primary GM — co-GMs can run the campaign but
+-- only the original GM can drop it.
+create policy campaigns_delete on campaigns for delete to authenticated using (
+  exists (
+    select 1 from campaign_members
+    where campaign_id = id and user_id = auth.uid() and role = 'gm'
+  )
+);
 
 drop policy if exists members_select on campaign_members;
 create policy members_select on campaign_members for select to authenticated using (is_member(campaign_id));
@@ -631,6 +638,7 @@ create policy chat_messages_select on chat_messages for select to authenticated
       whisper_to is null
       or sender_id = auth.uid()
       or auth.uid() = any(whisper_to)
+      or is_gm(campaign_id)
     )
   );
 

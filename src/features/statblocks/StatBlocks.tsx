@@ -380,6 +380,14 @@ function StatBlockEditor({
             className="flex-1 bg-slate-900 border border-slate-800 rounded px-2 py-1 text-sm"
           />
         </Row>
+        <Row label="Map icon">
+          <input
+            value={sb.emoji ?? ''}
+            onChange={(e) => updateField('emoji', e.target.value.slice(0, 2))}
+            placeholder="emoji shown on map tokens (e.g. 🐉)"
+            className="w-24 bg-slate-900 border border-slate-800 rounded px-2 py-1 text-base"
+          />
+        </Row>
         <div className="grid grid-cols-3 gap-2">
           <Row label="Size">
             <input

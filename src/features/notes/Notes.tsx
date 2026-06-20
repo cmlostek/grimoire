@@ -11,7 +11,9 @@ import PageHeader from '../../components/PageHeader';
 import { SharePopover } from './SharePopover';
 import {
   ChevronRight,
+  ChevronLeft,
   FileText,
+  Network,
   Folder as FolderIcon,
   FolderPlus,
   FilePlus,
@@ -124,6 +126,8 @@ import { remarkNoteDecorators, preprocessDecorators } from './decorators';
 import { Secret } from './Secret';
 import { PartyRefSpan } from './PartyTooltip';
 import { useParty } from '../party/partyStore';
+import { useNpcStore } from '../npcs/npcStore';
+import { useChat } from '../chat/chatStore';
 
 function extractText(children: React.ReactNode): string {
   if (typeof children === 'string') return children;
@@ -176,7 +180,8 @@ export default function Notes() {
   const userId = useSession((s) => s.userId);
   const displayName = useSession((s) => s.displayName);
   const role = useSession((s) => s.role);
-  const isGM = role === 'gm';
+  const viewAsPlayer = useSession((s) => s.viewAsPlayer);
+  const isGM = (role === 'gm' || role === 'cogm') && !viewAsPlayer;
 
   // ── Store state (must come before refs that depend on activeNoteId) ───────
   const notes = useNotes((s) => s.notes);
@@ -208,6 +213,7 @@ export default function Notes() {
   const party = useParty((s) => s.party);
   const loadParty = useParty((s) => s.loadForCampaign);
   const subscribeParty = useParty((s) => s.subscribe);
+  const npcs = useNpcStore((s) => s.npcs);
   const rollFormula = useQuickDice((s) => s.rollFormula);
 
   const loadSettings = useCampaignSettings((s) => s.load);
@@ -216,6 +222,52 @@ export default function Notes() {
 
   // ── Ref to the active LiveEditor (exposes getYdocState) ──────────────────
   const editorRef = useRef<LiveEditorHandle>(null);
+  /** Heading to scroll to after the next editor remount — used by
+   *  `[[Note#Heading]]` cross-doc jumps where the editor for the target
+   *  note hasn't mounted yet at click time. */
+  const pendingHeadingRef = useRef<string | null>(null);
+
+  // ── Sidebar collapse / resize (persisted) ────────────────────────────────
+  const SIDEBAR_W_KEY = 'dnd-gm:notesSidebarWidth';
+  const SIDEBAR_COLLAPSED_KEY = 'dnd-gm:notesSidebarCollapsed';
+  const SIDEBAR_W_MIN = 160;
+  const SIDEBAR_W_MAX = 480;
+  const [sidebarWidth, setSidebarWidth] = useState<number>(() => {
+    const raw = parseInt(localStorage.getItem(SIDEBAR_W_KEY) ?? '224', 10);
+    return Number.isFinite(raw) ? Math.max(SIDEBAR_W_MIN, Math.min(SIDEBAR_W_MAX, raw)) : 224;
+  });
+  const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(
+    () => localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === '1',
+  );
+  const beginSidebarResize = (e: React.MouseEvent) => {
+    e.preventDefault();
+    const startX = e.clientX;
+    const startW = sidebarWidth;
+    const onMove = (ev: MouseEvent) => {
+      const next = Math.max(SIDEBAR_W_MIN, Math.min(SIDEBAR_W_MAX, startW + (ev.clientX - startX)));
+      setSidebarWidth(next);
+    };
+    const onUp = () => {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+      try {
+        localStorage.setItem(SIDEBAR_W_KEY, String(sidebarWidthRef.current));
+      } catch {
+        /* ignore */
+      }
+    };
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+  };
+  const sidebarWidthRef = useRef(sidebarWidth);
+  sidebarWidthRef.current = sidebarWidth;
+  const toggleSidebar = () => {
+    setSidebarCollapsed((v) => {
+      const next = !v;
+      try { localStorage.setItem(SIDEBAR_COLLAPSED_KEY, next ? '1' : '0'); } catch { /* ignore */ }
+      return next;
+    });
+  };
 
   // ── Autosave ──────────────────────────────────────────────────────────────
   type SaveStatus = 'idle' | 'saving' | 'saved' | 'failed';
@@ -367,6 +419,17 @@ export default function Notes() {
     // Reset the status indicator — "Saved" from the previous note shouldn't
     // bleed over to the freshly-opened one.
     setSaveStatus('idle');
+
+    // Honor a pending [[Note#Heading]] jump after the new editor has mounted.
+    const heading = pendingHeadingRef.current;
+    if (heading) {
+      pendingHeadingRef.current = null;
+      const tryScroll = (attempt: number) => {
+        if (editorRef.current?.scrollToHeading(heading)) return;
+        if (attempt < 10) setTimeout(() => tryScroll(attempt + 1), 60);
+      };
+      setTimeout(() => tryScroll(0), 80);
+    }
   }, [activeNoteId]);
 
   // ── Save on unmount (navigate away, campaign change, etc.) ───────────────
@@ -417,12 +480,29 @@ export default function Notes() {
   const active = visibleNotes.find((n) => n.id === activeNoteId) ?? null;
 
   const wikiIndex = useMemo(
-    () => buildWikiIndex(homebrewItems, homebrewSpells),
-    [homebrewItems, homebrewSpells]
+    () => buildWikiIndex(homebrewItems, homebrewSpells, notes),
+    [homebrewItems, homebrewSpells, notes]
   );
+  // Paint `@{Name}` decorations with the player's chosen colour (or the NPC
+  // faction colour) so mentions read like a roster, not just a generic chip.
+  // Player colours live on campaign_members.color (loaded via the chat
+  // store) — we join through party.owner_user_id to find them.
+  const chatMembers = useChat((s) => s.members);
+  const mentionColors = useMemo(() => {
+    const out: Record<string, string> = {};
+    for (const p of party) {
+      if (!p.name) continue;
+      const ownerColor = p.owner_user_id ? chatMembers[p.owner_user_id]?.color : undefined;
+      out[p.name.trim().toLowerCase()] = ownerColor ?? '#94a3b8';
+    }
+    for (const n of npcs) {
+      if (n.name) out[n.name.trim().toLowerCase()] = n.factionColor || '#fbbf24';
+    }
+    return out;
+  }, [party, npcs, chatMembers]);
   const plugins = useMemo(
-    () => [remarkGfm, remarkNoteDecorators(wikiIndex)],
-    [wikiIndex]
+    () => [remarkGfm, remarkNoteDecorators(wikiIndex, mentionColors)],
+    [wikiIndex, mentionColors]
   );
 
   const q = query.toLowerCase().trim();
@@ -463,6 +543,17 @@ export default function Notes() {
 
   const onWikiClick = (href: string) => {
     const [path, hash] = href.split('#');
+    // Cross-doc note links: switch the active note in-place and scroll to a
+    // heading if one was supplied as `note-<id>?h=<slug>`.
+    if (path === '/notes' && hash?.startsWith('note-')) {
+      const [target, headingSearch] = hash.slice('note-'.length).split('?h=');
+      setActiveNote(target);
+      if (headingSearch) {
+        // Defer until the new note's editor mounts.
+        pendingHeadingRef.current = decodeURIComponent(headingSearch);
+      }
+      return;
+    }
     navigate(path + (hash ? `#${hash}` : ''));
   };
 
@@ -471,6 +562,13 @@ export default function Notes() {
       <PageHeader title="Notebook">
         <div className="relative flex items-center gap-2">
           <QuickDiceButton compact />
+          <button
+            onClick={() => navigate('/notes/mind-map')}
+            className="px-2 py-1 text-xs bg-slate-800 hover:bg-slate-700 rounded flex items-center gap-1"
+            title="Visualise links between notes"
+          >
+            <Network size={12} /> Mind Map
+          </button>
           <button
             onClick={() => setShowLegend((s) => !s)}
             className="px-2 py-1 text-xs bg-slate-800 hover:bg-slate-700 rounded flex items-center gap-1"
@@ -516,12 +614,31 @@ export default function Notes() {
       </PageHeader>
 
       <div className="flex-1 min-h-0 flex">
-        <aside className="w-56 border-r border-slate-800 flex flex-col bg-slate-950">
+        {sidebarCollapsed ? (
+          <button
+            onClick={toggleSidebar}
+            title="Show notes sidebar"
+            className="w-7 shrink-0 border-r border-slate-800 bg-slate-950 hover:bg-slate-900 flex items-start justify-center pt-2 text-slate-500 hover:text-slate-200"
+          >
+            <ChevronRight size={14} />
+          </button>
+        ) : (
+        <aside
+          className="border-r border-slate-800 flex flex-col bg-slate-950 relative shrink-0"
+          style={{ width: sidebarWidth }}
+        >
           <div className="px-2 py-1.5 border-b border-slate-800 flex items-center justify-between">
             <div className="text-[10px] uppercase tracking-wider text-slate-500 font-mono">
               Explorer
             </div>
             <div className="flex gap-0.5">
+              <button
+                onClick={toggleSidebar}
+                title="Hide sidebar"
+                className="p-1 text-slate-400 hover:text-sky-300 hover:bg-slate-800 rounded"
+              >
+                <ChevronLeft size={12} />
+              </button>
               <button
                 onClick={() => {
                   const next = sortMode === 'alpha' ? 'updated' : 'alpha';
@@ -676,7 +793,14 @@ export default function Notes() {
               />
             ))}
           </div>
+          {/* Resize handle — 4px vertical strip on the right edge */}
+          <div
+            onMouseDown={beginSidebarResize}
+            title="Drag to resize"
+            className="absolute top-0 right-0 h-full w-1 cursor-col-resize hover:bg-sky-700/50 z-10"
+          />
         </aside>
+        )}
 
         <section className="flex-1 min-w-0 flex flex-col">
           {!active && (
@@ -883,6 +1007,8 @@ export default function Notes() {
                     onNavigate={onWikiClick}
                     rollFormula={rollFormula}
                     party={party}
+                    npcs={npcs}
+                    notes={notes}
                     noteId={active.id}
                     ydocState={active.ydoc_state ?? null}
                     userId={userId ?? ''}

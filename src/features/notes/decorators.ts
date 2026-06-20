@@ -1,5 +1,10 @@
 import type { Root, Text, PhrasingContent, RootContent } from 'mdast';
-import { findWiki, type WikiEntry } from './wikiIndex';
+import { findWiki, extractHeading, type WikiEntry } from './wikiIndex';
+
+/** Maps a (case-insensitive) player or NPC name to a colour to paint
+ *  `@{Name}` mention decorations with — mirroring the colour the player
+ *  picks in their dashboard / chat. */
+export type MentionColors = Record<string, string>;
 
 export const NEWLINE_PLACEHOLDER = '\uE000';
 // Private-use codepoints to hide markdown syntax from the remark parser.
@@ -135,7 +140,8 @@ function makeBrokenLink(text: string): PhrasingContent {
 function classify(
   raw: string,
   wiki: WikiEntry[],
-  secretCounter: () => number
+  secretCounter: () => number,
+  mentionColors: MentionColors,
 ): PhrasingContent | null {
   if (raw.startsWith('&{') && raw.endsWith('}')) {
     const name = restore(raw.slice(2, -1));
@@ -154,7 +160,15 @@ function classify(
     return makeSpan('note-deco note-loc', name);
   }
   if (raw.startsWith('@{') && raw.endsWith('}')) {
-    return makeSpan('note-deco note-player', restore(raw.slice(2, -1)));
+    const name = restore(raw.slice(2, -1));
+    const color = mentionColors[name.trim().toLowerCase()];
+    if (color) {
+      // Inline style so each mention paints in its owner's chosen colour.
+      const style =
+        `color: ${color}; background: color-mix(in srgb, ${color} 22%, transparent);`;
+      return makeSpan('note-deco note-player', name, { style });
+    }
+    return makeSpan('note-deco note-player', name);
   }
   if (raw.startsWith('?{') && raw.endsWith('}')) {
     return makeSpan('note-deco note-dep', restore(raw.slice(2, -1)));
@@ -185,7 +199,15 @@ function classify(
   if (raw.startsWith(S_WOPEN) && raw.endsWith(S_WCLOSE)) {
     const name = restore(raw.slice(1, -1));
     const hit = findWiki(wiki, name);
-    if (hit) return makeLink(hit.route, name, hit.kind);
+    if (hit) {
+      // Append heading to the route as ?h=<slug> so the click handler can
+      // scroll without re-parsing the link text.
+      const heading = extractHeading(name);
+      const href = heading
+        ? hit.route + (hit.route.includes('?') ? '&' : '?') + 'h=' + encodeURIComponent(heading)
+        : hit.route;
+      return makeLink(href, name, hit.kind);
+    }
     return makeBrokenLink(name);
   }
   // $1d20 + 8$ — inline dice roll chip ($ not followed by {)
@@ -198,7 +220,12 @@ function classify(
   return null;
 }
 
-function splitText(node: Text, wiki: WikiEntry[], secretCounter: () => number): PhrasingContent[] | null {
+function splitText(
+  node: Text,
+  wiki: WikiEntry[],
+  secretCounter: () => number,
+  mentionColors: MentionColors,
+): PhrasingContent[] | null {
   const text = node.value;
   TOKEN.lastIndex = 0;
   let match: RegExpExecArray | null;
@@ -206,7 +233,7 @@ function splitText(node: Text, wiki: WikiEntry[], secretCounter: () => number): 
   let last = 0;
   let found = false;
   while ((match = TOKEN.exec(text)) !== null) {
-    const replacement = classify(match[0], wiki, secretCounter);
+    const replacement = classify(match[0], wiki, secretCounter, mentionColors);
     if (!replacement) continue;
     found = true;
     if (match.index > last) {
@@ -224,7 +251,12 @@ function splitText(node: Text, wiki: WikiEntry[], secretCounter: () => number): 
 
 type Parent = { children: Array<RootContent | PhrasingContent> };
 
-function walk(node: unknown, wiki: WikiEntry[], secretCounter: () => number): void {
+function walk(
+  node: unknown,
+  wiki: WikiEntry[],
+  secretCounter: () => number,
+  mentionColors: MentionColors,
+): void {
   if (!node || typeof node !== 'object') return;
   const n = node as { type?: string; children?: unknown[] };
   if (!Array.isArray(n.children)) return;
@@ -233,22 +265,22 @@ function walk(node: unknown, wiki: WikiEntry[], secretCounter: () => number): vo
   for (const child of parent.children) {
     const c = child as { type?: string };
     if (c?.type === 'text') {
-      const replaced = splitText(child as Text, wiki, secretCounter);
+      const replaced = splitText(child as Text, wiki, secretCounter, mentionColors);
       if (replaced) next.push(...(replaced as Array<RootContent | PhrasingContent>));
       else next.push(child);
     } else if (c?.type === 'code' || c?.type === 'inlineCode') {
       next.push(child);
     } else {
-      walk(child, wiki, secretCounter);
+      walk(child, wiki, secretCounter, mentionColors);
       next.push(child);
     }
   }
   parent.children = next;
 }
 
-export function remarkNoteDecorators(wiki: WikiEntry[]) {
+export function remarkNoteDecorators(wiki: WikiEntry[], mentionColors: MentionColors = {}) {
   return () => (tree: Root) => {
     let idx = 0;
-    walk(tree, wiki, () => idx++);
+    walk(tree, wiki, () => idx++, mentionColors);
   };
 }

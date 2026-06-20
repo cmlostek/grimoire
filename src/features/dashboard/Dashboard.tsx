@@ -62,7 +62,8 @@ export default function Dashboard() {
     [party, userId]
   );
 
-  const isGM = role === 'gm';
+  const viewAsPlayer = useSession((s) => s.viewAsPlayer);
+  const isGM = (role === 'gm' || role === 'cogm') && !viewAsPlayer;
   const [tab, setTab] = useState<DashboardTab>('profile');
   // If the user was on Manage when their role changed, snap them back.
   useEffect(() => {
@@ -244,7 +245,9 @@ function CampaignManagementPanel({
       // Self first (read-only), then GMs, then players by name.
       if (a.userId === selfId) return -1;
       if (b.userId === selfId) return 1;
-      if (a.role !== b.role) return a.role === 'gm' ? -1 : 1;
+      // GM > co-GM > player.
+      const roleRank = (r: 'gm' | 'cogm' | 'player') => (r === 'gm' ? 0 : r === 'cogm' ? 1 : 2);
+      if (a.role !== b.role) return roleRank(a.role) - roleRank(b.role);
       return a.displayName.localeCompare(b.displayName);
     });
   }, [membersMap, selfId]);
@@ -270,6 +273,24 @@ function CampaignManagementPanel({
       return;
     }
     // The realtime sub on chat_messages / members updates the list.
+  };
+
+  // Toggle a player ↔ co-GM. The primary GM (role='gm') is the campaign
+  // owner and can't be downgraded here — that would orphan the campaign.
+  const toggleCogm = async (m: ChatMember) => {
+    if (m.userId === selfId || m.role === 'gm') return;
+    const nextRole = m.role === 'cogm' ? 'player' : 'cogm';
+    setBusyId(m.userId);
+    setError(null);
+    const { error: err } = await supabase
+      .from('campaign_members')
+      .update({ role: nextRole })
+      .eq('campaign_id', campaignId)
+      .eq('user_id', m.userId);
+    setBusyId(null);
+    if (err) {
+      setError(`Couldn't update ${m.displayName}: ${err.message}`);
+    }
   };
 
   return (
@@ -300,10 +321,21 @@ function CampaignManagementPanel({
                   {m.displayName}
                 </div>
                 <div className="text-[10px] uppercase tracking-wider text-slate-500">
-                  {m.role === 'gm' ? 'Game Master' : 'Player'}
+                  {m.role === 'gm' ? 'Game Master' : m.role === 'cogm' ? 'Co-GM' : 'Player'}
                   {isSelf && ' · you'}
                 </div>
               </div>
+              {!isSelf && m.role !== 'gm' && (
+                <button
+                  onClick={() => toggleCogm(m)}
+                  disabled={busyId === m.userId}
+                  title={m.role === 'cogm' ? 'Demote to player' : 'Promote to co-GM'}
+                  className="px-2 py-1 text-[11px] bg-slate-800 hover:bg-slate-700 disabled:opacity-50 text-slate-200 rounded flex items-center gap-1"
+                >
+                  <Shield size={11} />
+                  {m.role === 'cogm' ? 'Demote' : 'Promote'}
+                </button>
+              )}
               {!isSelf && (
                 confirming ? (
                   <div className="flex items-center gap-1">
@@ -792,7 +824,9 @@ function CampaignMembersPanel({ selfId }: { selfId: string | null }) {
     const list = Object.values(membersMap).filter((m) => m.userId !== selfId);
     return list.sort((a, b) => {
       // GMs first, then by display name.
-      if (a.role !== b.role) return a.role === 'gm' ? -1 : 1;
+      // GM > co-GM > player.
+      const roleRank = (r: 'gm' | 'cogm' | 'player') => (r === 'gm' ? 0 : r === 'cogm' ? 1 : 2);
+      if (a.role !== b.role) return roleRank(a.role) - roleRank(b.role);
       return a.displayName.localeCompare(b.displayName);
     });
   }, [membersMap, selfId]);
@@ -825,7 +859,7 @@ function CampaignMembersPanel({ selfId }: { selfId: string | null }) {
               {m.displayName}
             </div>
             <div className="text-[10px] uppercase tracking-wider text-slate-500">
-              {m.role === 'gm' ? 'Game Master' : 'Player'}
+              {m.role === 'gm' ? 'Game Master' : m.role === 'cogm' ? 'Co-GM' : 'Player'}
             </div>
           </div>
           <span className="text-[10px] uppercase tracking-wider text-slate-600 group-hover:text-sky-300 flex items-center gap-1">
@@ -864,7 +898,7 @@ function NoCharacterCTA({
   onClaim,
 }: {
   party: import('../party/partyStore').PartyMember[];
-  role: 'gm' | 'player' | null;
+  role: 'gm' | 'cogm' | 'player' | null;
   onClaim: (id: string) => Promise<void>;
 }) {
   const unclaimed = party.filter((p) => p.owner_user_id === null);
@@ -903,7 +937,7 @@ function NoCharacterCTA({
         to="/party"
         className="inline-flex items-center gap-1 text-xs text-sky-300 hover:text-sky-200"
       >
-        {role === 'gm' ? 'Add or manage characters on the Party page' : 'See all characters on the Party page'} →
+        {(role === 'gm' || role === 'cogm') ? 'Add or manage characters on the Party page' : 'See all characters on the Party page'} →
       </Link>
     </div>
   );

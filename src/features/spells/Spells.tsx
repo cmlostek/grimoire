@@ -1,13 +1,15 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import PageHeader from '../../components/PageHeader';
-import { SPELLS, SPELL_SCHOOLS, SPELL_LEVELS } from '../../data/srd';
+import EditionToggle from '../../components/EditionToggle';
+import { SPELLS, SPELL_SCHOOLS, SPELL_LEVELS, spellsFor } from '../../data/srd';
 import { Search, X, FlaskConical } from 'lucide-react';
 import type { Spell } from '../../data/types';
 import { useStore } from '../../store';
 import type { HomebrewSpell } from '../../store';
 import { useSession } from '../session/sessionStore';
 import { useSharedHomebrew } from '../homebrew/sharedHomebrewStore';
+import { useCampaignSettings } from '../notes/campaignSettingsStore';
 
 type Source = 'all' | 'srd' | 'custom';
 
@@ -46,7 +48,10 @@ export default function Spells() {
   const sharedSpells = useSharedHomebrew((s) => s.spells);
   const loadShared = useSharedHomebrew((s) => s.loadForCampaign);
   const subscribeShared = useSharedHomebrew((s) => s.subscribe);
+  const edition = useCampaignSettings((s) => s.settings.srdEdition);
   const location = useLocation();
+
+  const spellPool = useMemo(() => spellsFor(edition), [edition]);
 
   useEffect(() => {
     if (!campaignId) return;
@@ -56,7 +61,7 @@ export default function Spells() {
   }, [campaignId, loadShared, subscribeShared]);
 
   const homebrewSpells = useMemo<HomebrewSpell[]>(() => {
-    if (role === 'gm') return localHomebrewSpells;
+    if (role === 'gm' || role === 'cogm') return localHomebrewSpells;
     return sharedSpells.map((r) => {
       const d = r.data as Record<string, unknown>;
       return {
@@ -84,7 +89,7 @@ export default function Spells() {
     if (!hash) return;
     if (hash.startsWith('custom-')) {
       const id = hash.slice('custom-'.length);
-      const hit = homebrewSpells.find((sp) => sp.id === id);
+      const hit = homebrewSpells.find((sp) => sp.id === id || sp.id === `shared-${id}`);
       if (hit) {
         setSource('custom');
         setSelected({
@@ -101,7 +106,10 @@ export default function Spells() {
       }
       return;
     }
-    const srd = SPELLS.find((s) => s.index === hash);
+    // Prefer the current edition's entry; fall back to the union so chat
+    // chips and wiki links work even when the current filter would hide
+    // the target spell.
+    const srd = spellPool.find((s) => s.index === hash) ?? SPELLS.find((s) => s.index === hash);
     if (srd) {
       setSource((prev) => (prev === 'custom' ? 'all' : prev));
       setSelected({
@@ -115,13 +123,13 @@ export default function Spells() {
         srd,
       });
     }
-  }, [location.hash, homebrewSpells]);
+  }, [location.hash, homebrewSpells, spellPool]);
 
   const unified = useMemo<UnifiedSpell[]>(() => {
     const srd: UnifiedSpell[] =
       source === 'custom'
         ? []
-        : SPELLS.map((s) => ({
+        : spellPool.map((s) => ({
             kind: 'srd',
             id: s.index,
             name: s.name,
@@ -146,7 +154,7 @@ export default function Spells() {
             custom: sp,
           }));
     return [...srd, ...custom];
-  }, [source, homebrewSpells]);
+  }, [source, spellPool, homebrewSpells]);
 
   const filtered = useMemo(() => {
     const q = query.toLowerCase().trim();
@@ -181,10 +189,11 @@ export default function Spells() {
                   : 'bg-slate-900 text-slate-300 hover:bg-slate-800'
               }`}
             >
-              {s === 'all' ? 'All' : s === 'srd' ? `SRD (${SPELLS.length})` : `Custom (${homebrewSpells.length})`}
+              {s === 'all' ? 'All' : s === 'srd' ? `SRD (${spellPool.length})` : `Custom (${homebrewSpells.length})`}
             </button>
           ))}
         </div>
+        <EditionToggle />
         <div className="text-xs text-slate-500 font-mono">{filtered.length}</div>
       </PageHeader>
 
@@ -269,7 +278,7 @@ export default function Spells() {
             {filtered.length === 0 && (
               <div className="p-4 text-xs text-slate-600 italic">
                 {source === 'custom' ? (
-                  role === 'gm' ? (
+                  (role === 'gm' || role === 'cogm') ? (
                     <>
                       No custom spells.{' '}
                       <Link to="/homebrew" className="text-sky-400 hover:underline">
@@ -295,7 +304,7 @@ export default function Spells() {
           ) : selected.kind === 'srd' ? (
             <SrdDetail spell={selected.srd!} onClose={() => setSelected(null)} />
           ) : (
-            <CustomDetail spell={selected.custom!} onClose={() => setSelected(null)} canEdit={role === 'gm'} />
+            <CustomDetail spell={selected.custom!} onClose={() => setSelected(null)} canEdit={role === 'gm' || role === 'cogm'} />
           )}
         </section>
       </div>

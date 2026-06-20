@@ -26,8 +26,10 @@
 import { create } from 'zustand';
 import { supabase } from '../../lib/supabase';
 
+export type SrdEdition = '2014' | '2024' | 'both';
+
 export type CampaignSettings = {
-  /** Nav path slugs hidden from non-GM players (e.g. 'shop', 'spells'). */
+  /** Nav path slugs hidden from non-GM players (e.g. 'spells', 'rules'). */
   hiddenPages: string[];
   /** GM-only page slugs shared with players (e.g. 'initiative'). */
   allowedGmPages: string[];
@@ -35,6 +37,8 @@ export type CampaignSettings = {
   hiddenFolderIds: string[];
   /** folderId → hex color string. */
   folderColors: Record<string, string>;
+  /** Which SRD edition(s) to show on Spells/Items/Rules. GM-controlled. */
+  srdEdition: SrdEdition;
 };
 
 export const DEFAULTS: CampaignSettings = {
@@ -42,6 +46,7 @@ export const DEFAULTS: CampaignSettings = {
   allowedGmPages: [],
   hiddenFolderIds: [],
   folderColors: {},
+  srdEdition: 'both',
 };
 
 const lsKey = (cid: string) => `dnd-gm:campaignSettings:${cid}`;
@@ -83,6 +88,7 @@ type SettingsState = {
   showAll: () => void;
   toggleFolder: (folderId: string) => void;
   setFolderColor: (folderId: string, color: string | null) => void;
+  setSrdEdition: (edition: SrdEdition) => void;
 };
 
 export const useCampaignSettings = create<SettingsState>((set, get) => ({
@@ -207,6 +213,16 @@ export const useCampaignSettings = create<SettingsState>((set, get) => ({
     if (color) folderColors[folderId] = color;
     else delete folderColors[folderId];
     const next = { ...settings, folderColors };
+    set({ settings: next });
+    if (campaignId) {
+      lsSave(campaignId, next);
+      sbUpsert(campaignId, next);
+    }
+  },
+
+  setSrdEdition: (edition) => {
+    const { settings, campaignId } = get();
+    const next = { ...settings, srdEdition: edition };
     set({ settings: next });
     if (campaignId) {
       lsSave(campaignId, next);
