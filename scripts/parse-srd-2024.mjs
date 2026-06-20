@@ -40,6 +40,8 @@ const SCHOOLS = [
 function stripHtml(s) {
   return s
     .replace(/<br\s*\/?>/gi, ' ')
+    .replace(/<\/?(em|i)>/gi, '*')
+    .replace(/<\/?(strong|b)>/gi, '**')
     .replace(/<[^>]+>/g, '')
     .replace(/&mdash;|&ndash;/g, '—')
     .replace(/&amp;/g, '&')
@@ -48,6 +50,37 @@ function stripHtml(s) {
     .replace(/&[a-z]+;/gi, '')
     .replace(/\s+/g, ' ')
     .trim();
+}
+
+// Convert all <table>...</table> blocks in a string to GFM markdown pipe tables.
+// Lossy: colspan/rowspan attributes are ignored (cells render in their natural slot).
+function htmlTablesToMarkdown(text) {
+  return text.replace(/<table[\s\S]*?<\/table>/gi, (tbl) => {
+    const head = tbl.match(/<thead>([\s\S]*?)<\/thead>/i);
+    const body = tbl.match(/<tbody>([\s\S]*?)<\/tbody>/i);
+    const rowsFrom = (chunk) =>
+      [...chunk.matchAll(/<tr>([\s\S]*?)<\/tr>/gi)].map((tr) =>
+        [...tr[1].matchAll(/<t[dh][^>]*>([\s\S]*?)<\/t[dh]>/gi)].map((c) =>
+          // Escape pipe chars in cell content so they don't break the table
+          stripHtml(c[1]).replace(/\|/g, '\\|') || ' ',
+        ),
+      );
+    const headerRows = head ? rowsFrom(head[1]) : [];
+    const bodyRows = body ? rowsFrom(body[1]) : rowsFrom(tbl);
+    const all = headerRows.length ? headerRows.concat(bodyRows) : bodyRows;
+    if (!all.length) return '';
+    const cols = Math.max(...all.map((r) => r.length));
+    const pad = (row) => {
+      const r = row.slice();
+      while (r.length < cols) r.push(' ');
+      return r;
+    };
+    const headerLine = headerRows.length ? pad(headerRows[0]) : Array(cols).fill(' ');
+    const sep = Array(cols).fill('---');
+    const body2 = (headerRows.length ? headerRows.slice(1).concat(bodyRows) : bodyRows).map(pad);
+    const fmt = (r) => `| ${r.join(' | ')} |`;
+    return ['', fmt(headerLine), fmt(sep), ...body2.map(fmt), ''].join('\n');
+  });
 }
 
 // ---------- Spells ----------
@@ -208,13 +241,12 @@ function parseMagicItems(md) {
     while (i < lines.length && !lines[i].trim()) i++;
 
     // Collect paragraphs until we hit the end of the chunk.
-    const bodyText = lines.slice(i).join('\n').trim();
+    // Convert raw HTML tables to GFM markdown first so they render under react-markdown + remark-gfm.
+    const bodyText = htmlTablesToMarkdown(lines.slice(i).join('\n').trim());
     const paragraphs = bodyText
       .split(/\n\n+/)
       .map((p) => p.trim())
-      .filter(Boolean)
-      // Drop HTML tables — they'd render as raw markup
-      .filter((p) => !/^\s*<table/i.test(p));
+      .filter(Boolean);
 
     items.push({
       index: slug(name),
@@ -410,8 +442,11 @@ function parseEquipment(md) {
           name,
           equipment_category: { name: 'Armor' },
           armor_category: (() => {
-            // section is like "Light Armor (1 Minute to Don or Doff)" or "Shield (Utilize Action to Don or Doff)"
-            const s = section.replace(/\s*\(.*$/, '').trim();
+            // section is like "*Light Armor (1 Minute to Don or Doff)*" (stripHtml renders <em> as *)
+            const s = section
+              .replace(/^\*+|\*+$/g, '')
+              .replace(/\s*\(.*$/, '')
+              .trim();
             if (/^Shield/i.test(s)) return 'Shield';
             return s.replace(/\sArmor$/i, '').trim() || 'Light';
           })(),
@@ -491,7 +526,7 @@ function parseRules(md) {
     const nl = chunk.indexOf('\n');
     if (nl < 0) continue;
     const name = chunk.slice(0, nl).trim();
-    const body = chunk.slice(nl + 1).trim();
+    const body = htmlTablesToMarkdown(chunk.slice(nl + 1).trim());
     if (!body) continue;
     out.push({
       index: slug(name),
