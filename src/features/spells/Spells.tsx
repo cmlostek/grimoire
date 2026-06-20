@@ -106,9 +106,10 @@ export default function Spells() {
       }
       return;
     }
-    // Deep-link fallback: resolve across the union so chat chips work even
-    // when the current edition filter would hide the target spell.
-    const srd = SPELLS.find((s) => s.index === hash);
+    // Prefer the current edition's entry; fall back to the union so chat
+    // chips and wiki links work even when the current filter would hide
+    // the target spell.
+    const srd = spellPool.find((s) => s.index === hash) ?? SPELLS.find((s) => s.index === hash);
     if (srd) {
       setSource((prev) => (prev === 'custom' ? 'all' : prev));
       setSelected({
@@ -122,7 +123,7 @@ export default function Spells() {
         srd,
       });
     }
-  }, [location.hash, homebrewSpells]);
+  }, [location.hash, homebrewSpells, spellPool]);
 
   const unified = useMemo<UnifiedSpell[]>(() => {
     const srd: UnifiedSpell[] =

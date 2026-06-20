@@ -78,20 +78,21 @@ export default function Items() {
       }
       return;
     }
-    // Deep-link fallback: always resolve across the union so a chat chip
-    // works even when the current edition filter would hide the target.
-    const magic = MAGIC_ITEMS.find((m) => m.index === hash);
+    // Prefer the current edition's entry; fall back to the union so chat
+    // chips and wiki links work even when the current filter would hide
+    // the target.
+    const magic = magicPool.find((m) => m.index === hash) ?? MAGIC_ITEMS.find((m) => m.index === hash);
     if (magic) {
       setTab('magic');
       setSelected(magic);
       return;
     }
-    const gear = EQUIPMENT.find((e) => e.index === hash);
+    const gear = gearPool.find((e) => e.index === hash) ?? EQUIPMENT.find((e) => e.index === hash);
     if (gear) {
       setTab('gear');
       setSelected(gear);
     }
-  }, [location.hash, homebrewItems]);
+  }, [location.hash, homebrewItems, magicPool, gearPool]);
 
   const filteredGear = useMemo(() => {
     const q = query.toLowerCase().trim();

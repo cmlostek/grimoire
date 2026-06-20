@@ -32,13 +32,13 @@ export default function Rules() {
       setSelectedCondition(hash);
       return;
     }
-    // Deep-link fallback: resolve across the union so chat chips work even
-    // when the current edition filter would hide the target.
-    if (RULE_SECTIONS.some((r) => r.index === hash)) {
+    // Prefer the current edition; fall back to the union so chat chips and
+    // wiki links work even when the current filter would hide the target.
+    if (rulePool.some((r) => r.index === hash) || RULE_SECTIONS.some((r) => r.index === hash)) {
       setMode('rules');
       setSelectedRule(hash);
     }
-  }, [location.hash]);
+  }, [location.hash, rulePool]);
 
   const entries = mode === 'rules' ? rulePool : CONDITIONS;
   const selectedIndex = mode === 'rules' ? selectedRule : selectedCondition;
