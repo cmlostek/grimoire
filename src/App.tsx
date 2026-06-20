@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { NavLink, Route, Routes, Navigate, useLocation } from 'react-router-dom';
-import { Swords, NotebookPen, Map as MapIcon, BookOpen, Sparkles, Package, ScrollText, Users, FlaskConical, Dices, LogOut, ArrowLeftRight, Copy, Mic, Eye, EyeOff, Settings, BookMarked, Sun, Moon, PanelLeftClose, PanelLeftOpen, Radio, LayoutDashboard, Network, GripVertical, RotateCcw, Check, Sliders } from 'lucide-react';
+import { Swords, NotebookPen, Map as MapIcon, BookOpen, Sparkles, Package, ScrollText, Users, FlaskConical, Dices, Copy, Mic, Eye, Settings as SettingsIcon, BookMarked, Radio, LayoutDashboard } from 'lucide-react';
 import { QuickDice } from './features/dice/QuickDice';
 import { useQuickDice } from './features/dice/quickDiceStore';
 import ChatPanel from './features/chat/ChatPanel';
@@ -17,10 +17,10 @@ import Homebrew from './features/homebrew/Homebrew';
 import Transcription from './features/transcription/Transcription';
 import NPCs from './features/npcs/NPCs';
 import Dashboard from './features/dashboard/Dashboard';
+import Settings from './features/settings/Settings';
 import CampaignPicker from './features/session/CampaignPicker';
 import { useSession } from './features/session/sessionStore';
 import { useCampaignSettings } from './features/notes/campaignSettingsStore';
-import { useTheme } from './features/session/themeStore';
 import { useNavCustomization } from './hooks/useNavCustomization';
 import { useRecording } from './features/transcription/recordingStore';
 
@@ -70,19 +70,6 @@ export default function App() {
   return <AppShell />;
 }
 
-// Sidebar collapse state — persisted across reloads. Header/footer collapse
-// to icon-only, so the nav can fit on narrow displays without losing access
-// to any tool.
-const COLLAPSED_KEY = 'grimoire:sidebar-collapsed';
-function useSidebarCollapsed() {
-  const [collapsed, setCollapsed] = useState(() => localStorage.getItem(COLLAPSED_KEY) === '1');
-  const update = (v: boolean) => {
-    localStorage.setItem(COLLAPSED_KEY, v ? '1' : '0');
-    setCollapsed(v);
-  };
-  return [collapsed, update] as const;
-}
-
 function AppShell() {
   const toggleQuickDice = useQuickDice((s) => s.toggle);
   const quickDiceOpen = useQuickDice((s) => s.open);
@@ -91,11 +78,9 @@ function AppShell() {
   const campaignName = useSession((s) => s.campaignName);
   const joinCode = useSession((s) => s.joinCode);
   const displayName = useSession((s) => s.displayName);
-  const leaveCurrent = useSession((s) => s.leaveCurrent);
-  const signOut = useSession((s) => s.signOut);
-  const [showPagePicker, setShowPagePicker] = useState(false);
-  const { mode, toggle: toggleMode } = useTheme();
-  const [collapsed, setCollapsed] = useSidebarCollapsed();
+  // Sidebar collapse is now transient — start collapsed, expand on hover.
+  // (Persisted state was removed in favour of an always-narrow rail.)
+  const [expanded, setExpanded] = useState(false);
   const viewAsPlayer = useSession((s) => s.viewAsPlayer);
   const setViewAsPlayer = useSession((s) => s.setViewAsPlayer);
   const trueIsGM = role === 'gm' || role === 'cogm';
@@ -104,21 +89,18 @@ function AppShell() {
   // technically edit anything they could before — this is purely so they can
   // preview what the players see.
   const isGM = trueIsGM && !viewAsPlayer;
+  const collapsed = !expanded;
 
   // ── Page title ────────────────────────────────────────────────────────────
   const location = useLocation();
   useEffect(() => {
     const page = nav.find((n) => location.pathname.startsWith(n.to));
-    const pageName = page?.label ?? 'Grimoire';
+    const pageName = page?.label ?? (location.pathname.startsWith('/settings') ? 'Settings' : 'Grimoire');
     document.title = campaignName ? `${pageName} · ${campaignName}` : `${pageName} · Grimoire`;
   }, [location.pathname, campaignName]);
 
   const loadSettings = useCampaignSettings((s) => s.load);
   const subscribeSettings = useCampaignSettings((s) => s.subscribe);
-  const togglePage = useCampaignSettings((s) => s.togglePage);
-  const toggleGmPage = useCampaignSettings((s) => s.toggleGmPage);
-  const hideAll = useCampaignSettings((s) => s.hideAll);
-  const showAll = useCampaignSettings((s) => s.showAll);
   const hiddenPages = useCampaignSettings((s) => s.settings.hiddenPages);
   const allowedGmPages = useCampaignSettings((s) => s.settings.allowedGmPages ?? []);
 
@@ -143,12 +125,10 @@ function AppShell() {
   });
 
   // Per-user customization layered on top of the role filter — reorders and
-  // hides items based on local preferences. The edit panel below renders all
-  // role-visible items (including ones the user hid) so they can toggle them
-  // back on.
+  // hides items based on local preferences. Customization itself moved to the
+  // Settings page.
   const customNav = useNavCustomization();
   const visibleNav = customNav.apply(visibleByRole);
-  const editableNav = customNav.apply(visibleByRole, { includeHidden: true });
 
   const copyJoinCode = () => {
     if (joinCode) navigator.clipboard.writeText(joinCode);
@@ -173,18 +153,18 @@ function AppShell() {
       )}
       <div className="flex-1 flex min-h-0">
       <aside
+        onMouseEnter={() => setExpanded(true)}
+        onMouseLeave={() => setExpanded(false)}
+        onFocus={() => setExpanded(true)}
+        onBlur={(e) => {
+          // Collapse only when focus leaves the sidebar entirely
+          if (!e.currentTarget.contains(e.relatedTarget as Node)) setExpanded(false);
+        }}
         className={`${collapsed ? 'w-14' : 'w-56'} shrink-0 border-r border-slate-800 flex flex-col transition-[width] duration-150`}
       >
         {/* ── Header ───────────────────────────────────────────────────────── */}
         {collapsed ? (
           <div className="px-2 py-3 border-b border-slate-800 flex flex-col items-center gap-2">
-            <button
-              onClick={() => setCollapsed(false)}
-              title="Expand sidebar"
-              className="p-1.5 rounded hover:bg-slate-800 text-slate-400"
-            >
-              <PanelLeftOpen size={14} />
-            </button>
             <button
               onClick={toggleQuickDice}
               title="Quick dice roller"
@@ -225,41 +205,32 @@ function AppShell() {
                 <span className="truncate">{displayName}</span>
               </div>
             </div>
-            <div className="flex flex-col gap-1 items-end shrink-0">
-              <button
-                onClick={() => setCollapsed(true)}
-                title="Collapse sidebar"
-                className="p-1 rounded hover:bg-slate-800 text-slate-500"
-              >
-                <PanelLeftClose size={13} />
-              </button>
-              <div className="flex gap-1">
-                {isGM && recordingSupported && (
-                  <button
-                    onClick={isRecording ? stopRecording : startRecording}
-                    title={isRecording ? 'Stop recording' : 'Start recording'}
-                    className={`p-1.5 rounded border ${
-                      isRecording
-                        ? 'bg-rose-900/60 border-rose-700 text-rose-300'
-                        : 'bg-slate-800 border-slate-700 hover:bg-slate-700 text-slate-300'
-                    }`}
-                  >
-                    {isRecording ? <Radio size={14} className="animate-pulse" /> : <Mic size={14} />}
-                  </button>
-                )}
+            <div className="flex gap-1 shrink-0">
+              {isGM && recordingSupported && (
                 <button
-                  onClick={toggleQuickDice}
-                  title="Quick dice roller"
+                  onClick={isRecording ? stopRecording : startRecording}
+                  title={isRecording ? 'Stop recording' : 'Start recording'}
                   className={`p-1.5 rounded border ${
-                    quickDiceOpen
-                      ? 'bg-slate-900'
+                    isRecording
+                      ? 'bg-rose-900/60 border-rose-700 text-rose-300'
                       : 'bg-slate-800 border-slate-700 hover:bg-slate-700 text-slate-300'
                   }`}
-                  style={quickDiceOpen ? { color: 'var(--ac-200)', borderColor: 'var(--ac-700)' } : undefined}
                 >
-                  <Dices size={14} />
+                  {isRecording ? <Radio size={14} className="animate-pulse" /> : <Mic size={14} />}
                 </button>
-              </div>
+              )}
+              <button
+                onClick={toggleQuickDice}
+                title="Quick dice roller"
+                className={`p-1.5 rounded border ${
+                  quickDiceOpen
+                    ? 'bg-slate-900'
+                    : 'bg-slate-800 border-slate-700 hover:bg-slate-700 text-slate-300'
+                }`}
+                style={quickDiceOpen ? { color: 'var(--ac-200)', borderColor: 'var(--ac-700)' } : undefined}
+              >
+                <Dices size={14} />
+              </button>
             </div>
           </div>
         )}
@@ -301,142 +272,23 @@ function AppShell() {
           ))}
         </nav>
 
-        {/* ── Footer ───────────────────────────────────────────────────────── */}
+        {/* ── Footer ─ single Settings entry; everything else moved into the
+            Settings page. ─────────────────────────────────────────────────── */}
         <div className="border-t border-slate-800">
-          {/* GM page-visibility — only rendered when expanded */}
-          {!collapsed && isGM && showPagePicker && (
-            <div className="px-4 py-2 border-b border-slate-800">
-              <div className="flex items-center justify-between mb-2">
-                <div className="text-[10px] uppercase tracking-wider text-slate-500">
-                  Player Visibility
-                </div>
-                <div className="flex gap-1">
-                  <button
-                    onClick={() => hideAll(nav.filter((n) => !n.gmOnly).map((n) => n.to.replace('/', '')))}
-                    className="text-[9px] px-1.5 py-0.5 bg-slate-800 hover:bg-slate-700 rounded text-slate-400"
-                    title="Hide all pages from players"
-                  >
-                    Hide all
-                  </button>
-                  <button
-                    onClick={showAll}
-                    className="text-[9px] px-1.5 py-0.5 bg-slate-800 hover:bg-slate-700 rounded text-slate-400"
-                    title="Show all pages to players"
-                  >
-                    Show all
-                  </button>
-                </div>
-              </div>
-              <div className="space-y-1">
-                {nav.filter((n) => !n.gmOnly).map((item) => {
-                  const slug = item.to.replace('/', '');
-                  const hidden = hiddenPages.includes(slug);
-                  return (
-                    <button
-                      key={item.to}
-                      onClick={() => togglePage(slug)}
-                      className={`w-full flex items-center justify-between px-2 py-1 rounded text-[11px] transition-colors ${
-                        hidden
-                          ? 'text-slate-500 hover:bg-slate-800 hover:text-slate-300'
-                          : 'text-slate-200 hover:bg-slate-800'
-                      }`}
-                    >
-                      <span className="flex items-center gap-1.5">
-                        <item.icon size={11} />
-                        {item.label}
-                      </span>
-                      {hidden ? (
-                        <EyeOff size={11} className="text-amber-500" />
-                      ) : (
-                        <Eye size={11} className="text-emerald-500" />
-                      )}
-                    </button>
-                  );
-                })}
-                {nav.filter((n) => n.gmOnly).length > 0 && (
-                  <>
-                    <div className="text-[9px] uppercase tracking-wider text-slate-600 mt-2 mb-1 px-2">GM-only pages</div>
-                    {nav.filter((n) => n.gmOnly).map((item) => {
-                      const slug = item.to.replace('/', '');
-                      const shared = allowedGmPages.includes(slug);
-                      return (
-                        <button
-                          key={item.to}
-                          onClick={() => toggleGmPage(slug)}
-                          className={`w-full flex items-center justify-between px-2 py-1 rounded text-[11px] transition-colors ${
-                            shared
-                              ? 'text-slate-200 hover:bg-slate-800'
-                              : 'text-slate-500 hover:bg-slate-800 hover:text-slate-300'
-                          }`}
-                        >
-                          <span className="flex items-center gap-1.5">
-                            <item.icon size={11} />
-                            {item.label}
-                          </span>
-                          {shared ? (
-                            <Eye size={11} className="text-sky-400" />
-                          ) : (
-                            <EyeOff size={11} className="text-slate-600" />
-                          )}
-                        </button>
-                      );
-                    })}
-                  </>
-                )}
-              </div>
-            </div>
-          )}
-          {!collapsed && customNav.editing && (
-            <CustomizeNavPanel
-              items={editableNav}
-              hidden={customNav.hidden}
-              onReorder={(next) => customNav.setOrder(next.map((i) => i.to))}
-              onToggleHidden={(path) => customNav.toggleHidden(path)}
-              onReset={customNav.reset}
-              onClose={() => customNav.setEditing(false)}
-            />
-          )}
-          <FooterButton
-            icon={customNav.editing ? <Check size={12} /> : <Sliders size={12} />}
-            label={customNav.editing ? 'Done customizing' : 'Customize nav'}
-            collapsed={collapsed}
-            onClick={() => customNav.setEditing((v) => !v)}
-          />
-          {isGM && (
-            <FooterButton
-              icon={<Settings size={12} />}
-              label="Player visibility"
-              collapsed={collapsed}
-              onClick={() => setShowPagePicker((v) => !v)}
-            />
-          )}
-          {trueIsGM && (
-            <FooterButton
-              icon={<Eye size={12} />}
-              label={viewAsPlayer ? 'Exit player view' : 'View as player'}
-              collapsed={collapsed}
-              onClick={() => setViewAsPlayer(!viewAsPlayer)}
-            />
-          )}
-          <FooterButton
-            icon={mode === 'dark' ? <Sun size={12} /> : <Moon size={12} />}
-            label={mode === 'dark' ? 'Light mode' : 'Dark mode'}
-            collapsed={collapsed}
-            onClick={toggleMode}
-          />
-          <FooterButton
-            icon={<ArrowLeftRight size={12} />}
-            label="Switch campaign"
-            collapsed={collapsed}
-            onClick={leaveCurrent}
-          />
-          <FooterButton
-            icon={<LogOut size={12} />}
-            label="Sign out"
-            collapsed={collapsed}
-            onClick={signOut}
-            danger
-          />
+          <NavLink
+            to="/settings"
+            title={collapsed ? 'Settings' : undefined}
+            className={({ isActive }) =>
+              `flex items-center ${collapsed ? 'justify-center px-0' : 'gap-3 px-4'} py-2.5 text-sm transition-colors ${
+                isActive
+                  ? 'text-slate-100 bg-slate-900'
+                  : 'text-slate-400 hover:bg-slate-900 hover:text-slate-200'
+              }`
+            }
+          >
+            <SettingsIcon size={16} />
+            {!collapsed && 'Settings'}
+          </NavLink>
         </div>
       </aside>
       <main className="flex-1 min-w-0 overflow-hidden">
@@ -461,6 +313,7 @@ function AppShell() {
           {isGM && <Route path="/homebrew" element={<Homebrew />} />}
           {isGM && <Route path="/record" element={<Transcription />} />}
           <Route path="/rules" element={<Rules />} />
+          <Route path="/settings" element={<Settings />} />
           <Route path="*" element={<Navigate to="/dashboard" replace />} />
         </Routes>
       </main>
@@ -469,159 +322,5 @@ function AppShell() {
       {/* Dashboard embeds its own chat surface, so hide the floating one there. */}
       {location.pathname !== '/dashboard' && <ChatPanel />}
     </div>
-  );
-}
-
-/**
- * Sidebar footer row. Collapsed mode shows an icon-only square button with a
- * tooltip; expanded mode shows icon + label. `danger` switches the hover tint
- * from sky to rose for destructive actions (Switch campaign, Sign out).
- */
-/**
- * Customize-nav panel — renders the current nav order with drag handles and
- * a hide toggle next to each row. Drag uses native HTML5 DnD; the order
- * commits on drop. The user can also click the eye icon to hide a row
- * (hidden items render greyed-out at the bottom of the panel so they can be
- * brought back), or hit Restore to wipe localStorage and revert to defaults.
- */
-function CustomizeNavPanel({
-  items,
-  hidden,
-  onReorder,
-  onToggleHidden,
-  onReset,
-  onClose,
-}: {
-  items: { to: string; label: string; icon: React.ComponentType<{ size?: number }> }[];
-  hidden: string[];
-  onReorder: (next: { to: string; label: string; icon: React.ComponentType<{ size?: number }> }[]) => void;
-  onToggleHidden: (path: string) => void;
-  onReset: () => void;
-  onClose: () => void;
-}) {
-  const [dragFrom, setDragFrom] = useState<number | null>(null);
-  const [dragOver, setDragOver] = useState<number | null>(null);
-
-  const onDragStart = (i: number) => (e: React.DragEvent) => {
-    setDragFrom(i);
-    e.dataTransfer.effectAllowed = 'move';
-    // Firefox needs payload to actually start a drag.
-    e.dataTransfer.setData('text/plain', String(i));
-  };
-  const onDragOver = (i: number) => (e: React.DragEvent) => {
-    e.preventDefault();
-    e.dataTransfer.dropEffect = 'move';
-    setDragOver(i);
-  };
-  const onDrop = (i: number) => (e: React.DragEvent) => {
-    e.preventDefault();
-    if (dragFrom === null || dragFrom === i) {
-      setDragFrom(null);
-      setDragOver(null);
-      return;
-    }
-    const next = items.slice();
-    const [moved] = next.splice(dragFrom, 1);
-    next.splice(i, 0, moved);
-    onReorder(next);
-    setDragFrom(null);
-    setDragOver(null);
-  };
-
-  return (
-    <div className="px-3 py-3 border-b border-slate-800 bg-slate-950 space-y-2">
-      <div className="flex items-center justify-between">
-        <div className="text-[10px] uppercase tracking-wider text-slate-500">
-          Customize sidebar
-        </div>
-        <div className="flex gap-1">
-          <button
-            onClick={onReset}
-            title="Restore defaults"
-            className="px-1.5 py-0.5 text-[10px] text-slate-400 hover:text-slate-200 hover:bg-slate-900 rounded flex items-center gap-1"
-          >
-            <RotateCcw size={10} /> Reset
-          </button>
-          <button
-            onClick={onClose}
-            title="Done"
-            className="px-1.5 py-0.5 text-[10px] text-slate-400 hover:text-slate-200 hover:bg-slate-900 rounded"
-          >
-            Done
-          </button>
-        </div>
-      </div>
-      <div className="space-y-0.5">
-        {items.map((item, i) => {
-          const isHidden = hidden.includes(item.to);
-          return (
-            <div
-              key={item.to}
-              draggable
-              onDragStart={onDragStart(i)}
-              onDragOver={onDragOver(i)}
-              onDragLeave={() => setDragOver(null)}
-              onDrop={onDrop(i)}
-              className={`flex items-center gap-2 px-1.5 py-1 rounded text-[11px] cursor-grab active:cursor-grabbing transition-colors ${
-                dragOver === i && dragFrom !== i
-                  ? 'bg-sky-900/40'
-                  : isHidden
-                    ? 'text-slate-600'
-                    : 'text-slate-300 hover:bg-slate-900'
-              }`}
-            >
-              <GripVertical size={12} className="text-slate-600 shrink-0" />
-              <item.icon size={11} />
-              <span className="flex-1 truncate">{item.label}</span>
-              <button
-                onClick={(e) => { e.stopPropagation(); onToggleHidden(item.to); }}
-                title={isHidden ? 'Show in sidebar' : 'Hide from sidebar'}
-                className="p-0.5 text-slate-500 hover:text-slate-200"
-              >
-                {isHidden ? <EyeOff size={11} /> : <Eye size={11} />}
-              </button>
-            </div>
-          );
-        })}
-      </div>
-      <div className="text-[10px] text-slate-600 leading-snug">
-        Drag a row to reorder. Click the eye to hide it from the sidebar.
-      </div>
-    </div>
-  );
-}
-
-function FooterButton({
-  icon,
-  label,
-  collapsed,
-  onClick,
-  danger,
-}: {
-  icon: React.ReactNode;
-  label: string;
-  collapsed: boolean;
-  onClick: () => void;
-  danger?: boolean;
-}) {
-  const hover = danger ? 'hover:text-rose-300' : 'hover:text-slate-300';
-  if (collapsed) {
-    return (
-      <button
-        onClick={onClick}
-        title={label}
-        className={`w-full py-2 text-xs text-slate-500 ${hover} hover:bg-slate-900 flex items-center justify-center`}
-      >
-        {icon}
-      </button>
-    );
-  }
-  return (
-    <button
-      onClick={onClick}
-      className={`w-full px-4 py-2 text-xs text-slate-500 ${hover} hover:bg-slate-900 flex items-center gap-2`}
-    >
-      {icon} {label}
-    </button>
   );
 }
