@@ -11,7 +11,9 @@ import {
 } from '../party/partyStore';
 import { useQuickDice } from '../dice/quickDiceStore';
 import { useCatalog, searchCatalog, type CatalogEntry } from '../chat/catalog';
-import { EQUIPMENT, MAGIC_ITEMS, SPELLS } from '../../data/srd';
+import { EQUIPMENT, MAGIC_ITEMS, SPELLS, equipmentFor, spellsFor } from '../../data/srd';
+import type { SrdEdition } from '../notes/campaignSettingsStore';
+import { useCampaignSettings } from '../notes/campaignSettingsStore';
 import type { EquipmentItem, Spell } from '../../data/types';
 
 // ── Skill / save definitions ──────────────────────────────────────────────
@@ -64,6 +66,7 @@ export default function CharacterSheet({
   const [draft, setDraft] = useState<PartyMember>(m);
   const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
+  const edition = useCampaignSettings((s) => s.settings.srdEdition);
 
   // Sync from server when not locally edited (matches CharCard's pattern).
   useEffect(() => {
@@ -104,10 +107,10 @@ export default function CharacterSheet({
   // their AC directly.
   const equippedItems = (draft.inventory ?? []).filter((i) => i.equipped);
   const equippedWeapons = equippedItems
-    .map((i) => ({ item: i, srd: srdItemFor(i) }))
+    .map((i) => ({ item: i, srd: srdItemFor(i, edition) }))
     .filter((x) => x.srd?.damage);
   const equippedArmor = equippedItems
-    .map((i) => srdItemFor(i))
+    .map((i) => srdItemFor(i, edition))
     .filter((s): s is EquipmentItem => !!s?.armor_class);
 
   const computedAc = (() => {
@@ -963,26 +966,44 @@ function NumInput({
 
 // ── Inventory ──────────────────────────────────────────────────────────────
 
-/** Lookup tables keyed by SRD index so weapon stats can be computed on render
- *  without scanning the SRD arrays each row. */
-const EQUIPMENT_BY_INDEX: Record<string, EquipmentItem> = Object.fromEntries(
-  EQUIPMENT.map((e) => [e.index, e])
-);
-const SPELLS_BY_INDEX: Record<string, Spell> = Object.fromEntries(
-  SPELLS.map((s) => [s.index, s])
-);
+/** Per-edition lookup tables keyed by SRD index. Built lazily and cached so
+ *  weapon stats can be computed on render without scanning the SRD arrays each
+ *  row. The union is laid down first; the current edition's entries overwrite
+ *  so a saved item still resolves if the campaign switched editions, and the
+ *  preferred edition wins whenever both exist. */
+const equipmentIdxCache: Partial<Record<SrdEdition, Record<string, EquipmentItem>>> = {};
+const spellsIdxCache: Partial<Record<SrdEdition, Record<string, Spell>>> = {};
+
+function getEquipmentIdx(edition: SrdEdition): Record<string, EquipmentItem> {
+  if (!equipmentIdxCache[edition]) {
+    const idx: Record<string, EquipmentItem> = {};
+    for (const e of EQUIPMENT) idx[e.index] = e;
+    for (const e of equipmentFor(edition)) idx[e.index] = e;
+    equipmentIdxCache[edition] = idx;
+  }
+  return equipmentIdxCache[edition]!;
+}
+function getSpellsIdx(edition: SrdEdition): Record<string, Spell> {
+  if (!spellsIdxCache[edition]) {
+    const idx: Record<string, Spell> = {};
+    for (const s of SPELLS) idx[s.index] = s;
+    for (const s of spellsFor(edition)) idx[s.index] = s;
+    spellsIdxCache[edition] = idx;
+  }
+  return spellsIdxCache[edition]!;
+}
 
 /** Try to resolve an inventory item's underlying SRD record so we can derive
  *  attack/damage info. Returns null for non-SRD (homebrew) entries. */
-function srdItemFor(item: InventoryItem): EquipmentItem | null {
+function srdItemFor(item: InventoryItem, edition: SrdEdition): EquipmentItem | null {
   if (item.sourceKind === 'srd-item' && item.sourceId) {
-    return EQUIPMENT_BY_INDEX[item.sourceId] ?? null;
+    return getEquipmentIdx(edition)[item.sourceId] ?? null;
   }
   return null;
 }
-function srdSpellFor(item: InventoryItem): Spell | null {
+function srdSpellFor(item: InventoryItem, edition: SrdEdition): Spell | null {
   if (item.sourceKind === 'srd-spell' && item.sourceId) {
-    return SPELLS_BY_INDEX[item.sourceId] ?? null;
+    return getSpellsIdx(edition)[item.sourceId] ?? null;
   }
   return null;
 }
@@ -1091,10 +1112,11 @@ function InventoryRow({
   onRollAttack: (label: string, bonus: number) => void;
   onRollDamage: (label: string, formula: string) => void;
 }) {
-  const srdItem = srdItemFor(item);
+  const edition = useCampaignSettings((s) => s.settings.srdEdition);
+  const srdItem = srdItemFor(item, edition);
   const isWeapon = !!srdItem?.damage;
   const isArmor = srdItem?.armor_class != null;
-  const srdSpell = srdSpellFor(item);
+  const srdSpell = srdSpellFor(item, edition);
   const isSpell = !!srdSpell || item.sourceKind === 'spell' || item.sourceKind === 'srd-spell';
 
   let KindIcon = Backpack;
@@ -1305,6 +1327,7 @@ function SpellbookBlock({
   draft: PartyMember;
   onApply: (p: Partial<PartyMember>) => void;
 }) {
+  const edition = useCampaignSettings((s) => s.settings.srdEdition);
   const ability = draft.spellAbility ?? null;
   const pb = profBonus(draft.level);
   const abilMod = ability ? abilityMod(draft[ability]) : 0;
@@ -1386,7 +1409,7 @@ function SpellbookBlock({
       {(() => {
         const byLevel = new Map<number, KnownSpell[]>();
         for (const sp of spells) {
-          const lv = spellLevelFor(sp);
+          const lv = spellLevelFor(sp, edition);
           if (!byLevel.has(lv)) byLevel.set(lv, []);
           byLevel.get(lv)!.push(sp);
         }
@@ -1453,9 +1476,9 @@ function SpellbookBlock({
   );
 }
 
-function spellLevelFor(spell: KnownSpell): number {
+function spellLevelFor(spell: KnownSpell, edition: SrdEdition): number {
   if (spell.sourceKind === 'srd-spell' && spell.sourceId) {
-    return SPELLS_BY_INDEX[spell.sourceId]?.level ?? 0;
+    return getSpellsIdx(edition)[spell.sourceId]?.level ?? 0;
   }
   return 0;
 }
@@ -1524,8 +1547,9 @@ function SpellRow({
   onRemove: () => void;
 }) {
   const [open, setOpen] = useState(false);
+  const edition = useCampaignSettings((s) => s.settings.srdEdition);
   const srd = spell.sourceKind === 'srd-spell' && spell.sourceId
-    ? SPELLS_BY_INDEX[spell.sourceId]
+    ? getSpellsIdx(edition)[spell.sourceId]
     : null;
 
   const baseDamage = (() => {
