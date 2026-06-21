@@ -391,9 +391,9 @@ export function CharCard({
         <div className="h-2 bg-slate-800 rounded-full overflow-hidden">
           <div
             className={`h-full transition-all ${
-              hpPct > 50 ? 'bg-emerald-600' : hpPct > 25 ? 'bg-sky-500' : 'bg-rose-600'
+              hpPct > 50 ? 'bg-green-500' : hpPct > 25 ? 'bg-yellow-500' : 'bg-red-600'
             }`}
-            style={{ width: `${Math.min(100, hpPct)}%` }}
+            style={{ width: `${Math.max(0, Math.min(100, hpPct))}%` }}
           />
         </div>
       </div>

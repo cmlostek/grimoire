@@ -456,6 +456,8 @@ export default function CharacterBuilder({
       spells,
       customActions: [],
       features,
+      hitDieSize: cls.hitDie,
+      hitDiceCurrent: 1,
       details: Object.keys(s.details).length > 0 ? s.details : undefined,
     };
 

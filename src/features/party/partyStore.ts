@@ -128,6 +128,11 @@ export type PartyMember = {
    *  character builder (phase 5) or the class picker in the level-up modal,
    *  used by phase 4 to look up level-progression data. */
   classId?: string;
+  /** Hit die size (6/8/10/12). Derived from class but stored so the sheet
+   *  works for imported characters too. Max hit dice = character level. */
+  hitDieSize?: number;
+  /** Number of hit dice the character can still spend before a long rest. */
+  hitDiceCurrent?: number;
   /** Chosen subclass slug from the matching Class's subclasses[] entries. */
   subclassId?: string;
   /** Free-form appearance/personality fields collected during creation. */
@@ -199,6 +204,8 @@ function rowToMember(r: Row): PartyMember {
     classId: d.classId,
     subclassId: d.subclassId,
     details: d.details,
+    hitDieSize: d.hitDieSize,
+    hitDiceCurrent: d.hitDiceCurrent,
   };
 }
 
@@ -242,7 +249,7 @@ function patchToUpdate(
     'race', 'classSummary',
     'xp', 'gold', 'deathSaves', 'skillProfs', 'saveProfs', 'inventory',
     'spellAbility', 'spellSlots', 'spells', 'customActions', 'features',
-    'classId', 'subclassId', 'details',
+    'classId', 'subclassId', 'details', 'hitDieSize', 'hitDiceCurrent',
   ];
   const needsDataUpdate = dataKeys.some((k) => k in patch);
   if (needsDataUpdate) {

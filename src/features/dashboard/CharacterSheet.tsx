@@ -97,12 +97,17 @@ export default function CharacterSheet({
 
   const longRest = () => {
     // Restore HP to max, clear temp HP, reset death saves, refill spell slots.
+    // Hit dice recover up to half max (rounded down, min 1) per 5e rules.
     const slots = (draft.spellSlots ?? []).map((s) => ({ ...s, current: s.max }));
+    const maxDice = draft.level;
+    const regained = Math.max(1, Math.floor(maxDice / 2));
+    const newDice = Math.min(maxDice, (draft.hitDiceCurrent ?? maxDice) + regained);
     apply({
       hp: draft.maxHp,
       tempHp: 0,
       deathSaves: { ...DEFAULT_DEATH_SAVES },
       spellSlots: slots.length > 0 ? slots : undefined,
+      hitDiceCurrent: newDice,
     });
   };
 
@@ -182,10 +187,27 @@ export default function CharacterSheet({
               const delta = bumps[k];
               if (delta) bumped[k] = Math.min(20, draft[k] + delta);
             }
+            // Level-up grants one new hit die. If the character doesn't have
+            // a stored die size yet, derive it from the class lookup table.
+            const newMaxDice = result.level;
+            const newCurrentDice = (draft.hitDiceCurrent ?? draft.level) + 1;
+            const inferredDieSize = (() => {
+              if (draft.hitDieSize) return undefined; // already set
+              if (!result.classId && !draft.classId) return undefined;
+              const cid = result.classId ?? draft.classId!;
+              const HIT_DIE_BY_CLASS: Record<string, number> = {
+                barbarian: 12, fighter: 10, paladin: 10, ranger: 10,
+                bard: 8, cleric: 8, druid: 8, monk: 8, rogue: 8, warlock: 8,
+                sorcerer: 6, wizard: 6,
+              };
+              return HIT_DIE_BY_CLASS[cid];
+            })();
             apply({
               level: result.level,
               maxHp: result.maxHp,
               hp: result.hp,
+              // Reset XP — sheet stores xp as "since last level".
+              xp: 0,
               spellSlots: result.spellSlots ?? draft.spellSlots,
               features: [...(draft.features ?? []), ...result.features],
               ...(result.spellsAdded && result.spellsAdded.length > 0
@@ -193,6 +215,8 @@ export default function CharacterSheet({
                 : {}),
               ...(result.classId ? { classId: result.classId } : {}),
               ...(result.subclassId ? { subclassId: result.subclassId } : {}),
+              hitDiceCurrent: Math.min(newMaxDice, newCurrentDice),
+              ...(inferredDieSize ? { hitDieSize: inferredDieSize } : {}),
               ...bumped,
             });
             setShowLevelUp(false);
@@ -292,50 +316,39 @@ export default function CharacterSheet({
 
 // ── XP / Level ────────────────────────────────────────────────────────────
 
-/** Standard SRD character XP table — same in 2014 and 2024. Index 1..20 maps
- *  to the XP required to *be* that level. Index 0 is unused. */
-const XP_THRESHOLDS: number[] = [
-  0,        // (unused — slot for level 0)
-  0,        // 1
-  300,      // 2
-  900,      // 3
-  2700,     // 4
-  6500,     // 5
-  14000,    // 6
-  23000,    // 7
-  34000,    // 8
-  48000,    // 9
-  64000,    // 10
-  85000,    // 11
-  100000,   // 12
-  120000,   // 13
-  140000,   // 14
-  165000,   // 15
-  195000,   // 16
-  225000,   // 17
-  265000,   // 18
-  305000,   // 19
-  355000,   // 20
+/** Cumulative XP table for reference — index 1..20 maps to the total XP a
+ *  character would need under standard SRD rules to *be* that level. We don't
+ *  store XP as a cumulative value, but the deltas below are derived from it. */
+const XP_THRESHOLDS_CUMULATIVE: number[] = [
+  0, 0, 300, 900, 2700, 6500, 14000, 23000, 34000, 48000, 64000,
+  85000, 100000, 120000, 140000, 165000, 195000, 225000, 265000, 305000, 355000,
 ];
 
+/** XP needed to advance *from* level N to level N+1 (the band, not the
+ *  cumulative threshold). We store xp on the sheet as "earned since last
+ *  level" so each level starts at 0 — easier to scan than cumulative numbers
+ *  in the hundred-thousands at high levels. */
+const XP_PER_LEVEL: number[] = Array.from({ length: 21 }, (_, i) =>
+  i < 1 || i >= 20 ? 0 : XP_THRESHOLDS_CUMULATIVE[i + 1] - XP_THRESHOLDS_CUMULATIVE[i],
+);
+
 /** How much XP separates the current level from the next, and how far the
- *  character has progressed into that band. */
+ *  character has progressed into that band. XP is now "since last level"
+ *  semantics — the value resets to 0 each time the player levels up. */
 function xpProgress(xp: number, level: number) {
   const lv = Math.max(1, Math.min(20, level));
   if (lv >= 20) return { atMax: true as const };
-  const base = XP_THRESHOLDS[lv];
-  const next = XP_THRESHOLDS[lv + 1];
-  const remaining = Math.max(0, next - xp);
-  const eligible = xp >= next;
+  const needed = XP_PER_LEVEL[lv];
+  const remaining = Math.max(0, needed - xp);
+  const eligible = xp >= needed;
   return {
     atMax: false as const,
     nextLevel: lv + 1,
-    nextThreshold: next,
-    base,
+    needed,
     remaining,
     eligible,
     /** 0..1 progress fraction inside the current XP band. */
-    pct: Math.max(0, Math.min(1, (xp - base) / Math.max(1, next - base))),
+    pct: Math.max(0, Math.min(1, xp / Math.max(1, needed))),
   };
 }
 
@@ -444,6 +457,21 @@ function VitalsBlock({
 }) {
   const rollFormula = useQuickDice((s) => s.rollFormula);
   const hpPct = draft.maxHp > 0 ? (draft.hp / draft.maxHp) * 100 : 0;
+  // SRD instant-death rule: damage taken at 0 HP that equals or exceeds your
+  // HP maximum kills you outright — i.e. current HP would be at or below
+  // -maxHp. Show a status badge so the table notices.
+  const isDead = draft.maxHp > 0 && draft.hp <= -draft.maxHp;
+  const hpBarColor = hpPct > 50 ? 'bg-green-500' : hpPct > 25 ? 'bg-yellow-500' : 'bg-red-600';
+  // Hit dice — max equals character level. Default current to max on first
+  // render so older characters without a stored value behave sanely.
+  const maxHitDice = draft.level;
+  const currentHitDice = draft.hitDiceCurrent ?? maxHitDice;
+  const hitDieSize = draft.hitDieSize ?? 8;
+  const spendHitDie = () => {
+    if (currentHitDice <= 0) return;
+    rollFormula(`1d${hitDieSize} + ${abilityMod(draft.con)}`, 'Hit Die spend');
+    onApply({ hitDiceCurrent: Math.max(0, currentHitDice - 1) });
+  };
   return (
     <div className="space-y-3">
       <div className="flex gap-2 items-center text-sm text-slate-300">
@@ -455,12 +483,50 @@ function VitalsBlock({
         <span className="text-slate-500 ml-3">+</span>
         <NumInput value={draft.tempHp} onChange={(v) => onApply({ tempHp: v })} className="w-14" />
         <span className="text-slate-500">temp</span>
+        {isDead && (
+          <span
+            className="ml-auto px-2 py-0.5 text-[10px] uppercase tracking-widest font-semibold rounded bg-rose-900/60 border border-rose-700 text-rose-100"
+            title="Damage at 0 HP reached your HP maximum — your character has died (SRD instant-death rule)."
+          >
+            Dead
+          </span>
+        )}
       </div>
       <div className="h-1.5 rounded-full bg-slate-800 overflow-hidden">
         <div
-          className="h-full bg-rose-500/70 transition-[width]"
+          className={`h-full transition-[width,background-color] ${hpBarColor}`}
           style={{ width: `${Math.max(0, Math.min(100, hpPct))}%` }}
         />
+      </div>
+
+      {/* Hit dice — spend during short rests to heal. Long rest restores half. */}
+      <div className="flex items-center gap-2 text-xs text-slate-400 bg-slate-950 border border-slate-800 rounded px-2 py-1.5">
+        <Dices size={12} className="text-amber-400" />
+        <span className="text-slate-500 uppercase tracking-wider text-[10px]">Hit Dice</span>
+        <span className="font-mono text-slate-200">
+          {currentHitDice}
+          <span className="text-slate-600">/</span>
+          {maxHitDice}
+        </span>
+        <select
+          value={hitDieSize}
+          onChange={(e) => onApply({ hitDieSize: parseInt(e.target.value, 10) })}
+          className="bg-slate-900 border border-slate-700 rounded px-1 py-0.5 text-[11px] text-slate-300 font-mono focus:outline-none focus:border-sky-700"
+          title="Hit die size — usually set by your class on creation"
+        >
+          <option value={6}>d6</option>
+          <option value={8}>d8</option>
+          <option value={10}>d10</option>
+          <option value={12}>d12</option>
+        </select>
+        <button
+          onClick={spendHitDie}
+          disabled={currentHitDice <= 0}
+          className="ml-auto px-2 py-0.5 text-[11px] rounded bg-slate-800 hover:bg-slate-700 disabled:opacity-40 disabled:cursor-not-allowed text-slate-200"
+          title={`Roll 1d${hitDieSize} + Con mod and reduce the pool by one`}
+        >
+          Spend
+        </button>
       </div>
       <div className="grid grid-cols-3 gap-2">
         {armorEquipped ? (
@@ -1085,7 +1151,7 @@ function LevelUpControl({
       <div className="text-[10px] uppercase tracking-wider text-slate-500 mb-1">Next</div>
       <div
         className="px-3 py-1 rounded border border-slate-800 bg-slate-950 text-xs text-slate-400 flex items-center gap-2 h-[34px]"
-        title={`${p.remaining.toLocaleString()} XP until level ${p.nextLevel} (${p.nextThreshold.toLocaleString()} total)`}
+        title={`${p.remaining.toLocaleString()} XP until level ${p.nextLevel} (need ${p.needed.toLocaleString()} this level)`}
       >
         <span className="font-mono">{p.remaining.toLocaleString()}</span>
         <span className="text-slate-600">→ {p.nextLevel}</span>
