@@ -1,9 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Save, Printer, BedDouble, Coffee, Heart, Dices, HeartPulse, Skull, Eye, Search, Brain, Plus, X as XIcon, Swords, Shield as ShieldIcon, Sparkles, Backpack } from 'lucide-react';
+import { Save, Printer, BedDouble, Coffee, Heart, Dices, HeartPulse, Skull, Eye, Search, Brain, Plus, X as XIcon, Swords, Shield as ShieldIcon, Sparkles, Backpack, Trash2, ChevronUp } from 'lucide-react';
 import {
   DEFAULT_DEATH_SAVES,
   DEFAULT_GOLD,
   DEFAULT_SPELL_SLOTS,
+  type ActionCategory,
+  type CharacterFeature,
+  type CustomAction,
   type InventoryItem,
   type KnownSpell,
   type PartyMember,
@@ -208,6 +211,22 @@ export default function CharacterSheet({
           <SpellbookBlock draft={draft} onApply={apply} />
         </Card>
 
+        <Card
+          title="Actions"
+          subtitle="Weapons + spells, grouped by action economy · add custom entries per bucket"
+          className="lg:col-span-2"
+        >
+          <ActionsBlock draft={draft} onApply={apply} />
+        </Card>
+
+        <Card
+          title="Features & traits"
+          subtitle="Class, race, feat, and other features · track limited uses inline"
+          className="lg:col-span-2"
+        >
+          <FeaturesBlock draft={draft} onApply={apply} />
+        </Card>
+
         <Card title="Skills" subtitle="Click pip to toggle proficiency · click modifier to roll" className="lg:col-span-2">
           <SkillsBlock draft={draft} onApply={apply} />
         </Card>
@@ -228,6 +247,55 @@ export default function CharacterSheet({
       </div>
     </div>
   );
+}
+
+// ── XP / Level ────────────────────────────────────────────────────────────
+
+/** Standard SRD character XP table — same in 2014 and 2024. Index 1..20 maps
+ *  to the XP required to *be* that level. Index 0 is unused. */
+const XP_THRESHOLDS: number[] = [
+  0,        // (unused — slot for level 0)
+  0,        // 1
+  300,      // 2
+  900,      // 3
+  2700,     // 4
+  6500,     // 5
+  14000,    // 6
+  23000,    // 7
+  34000,    // 8
+  48000,    // 9
+  64000,    // 10
+  85000,    // 11
+  100000,   // 12
+  120000,   // 13
+  140000,   // 14
+  165000,   // 15
+  195000,   // 16
+  225000,   // 17
+  265000,   // 18
+  305000,   // 19
+  355000,   // 20
+];
+
+/** How much XP separates the current level from the next, and how far the
+ *  character has progressed into that band. */
+function xpProgress(xp: number, level: number) {
+  const lv = Math.max(1, Math.min(20, level));
+  if (lv >= 20) return { atMax: true as const };
+  const base = XP_THRESHOLDS[lv];
+  const next = XP_THRESHOLDS[lv + 1];
+  const remaining = Math.max(0, next - xp);
+  const eligible = xp >= next;
+  return {
+    atMax: false as const,
+    nextLevel: lv + 1,
+    nextThreshold: next,
+    base,
+    remaining,
+    eligible,
+    /** 0..1 progress fraction inside the current XP band. */
+    pct: Math.max(0, Math.min(1, (xp - base) / Math.max(1, next - base))),
+  };
 }
 
 // ── Header ──────────────────────────────────────────────────────────────
@@ -286,6 +354,11 @@ function SheetHeader({
             value={draft.xp ?? 0}
             onChange={(v) => onApply({ xp: v })}
             width="w-24"
+          />
+          <LevelUpControl
+            xp={draft.xp ?? 0}
+            level={draft.level}
+            onLevelUp={() => onApply({ level: draft.level + 1 })}
           />
           <button
             onClick={onPrint}
@@ -921,6 +994,63 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
   );
 }
 
+/**
+ * Renders next to the XP field in the header. Three states:
+ *   1. Below threshold → muted "X to N" hint
+ *   2. At/above threshold → highlighted "Level up to N" button
+ *   3. Level 20 → "Max level"
+ * Click bumps `level` by 1. HP, slot, and feature changes stay manual — those
+ * arrive in phase 4 once class data is parsed.
+ */
+function LevelUpControl({
+  xp,
+  level,
+  onLevelUp,
+}: {
+  xp: number;
+  level: number;
+  onLevelUp: () => void;
+}) {
+  const p = xpProgress(xp, level);
+  if (p.atMax) {
+    return (
+      <div className="text-center">
+        <div className="text-[10px] uppercase tracking-wider text-slate-500 mb-1">Next</div>
+        <div className="px-3 py-1 rounded border border-slate-800 bg-slate-950 text-xs text-slate-500 italic flex items-center h-[34px]">
+          Max level
+        </div>
+      </div>
+    );
+  }
+  if (p.eligible) {
+    return (
+      <div className="text-center">
+        <div className="text-[10px] uppercase tracking-wider text-amber-400/80 mb-1">Ready!</div>
+        <button
+          onClick={onLevelUp}
+          className="px-3 py-1 rounded border border-amber-600/60 bg-amber-900/30 hover:bg-amber-800/40 text-amber-200 text-xs font-medium flex items-center gap-1.5 h-[34px]"
+          title={`You have enough XP to advance — click to bump level to ${p.nextLevel}.`}
+        >
+          <ChevronUp size={13} />
+          Level up to {p.nextLevel}
+        </button>
+      </div>
+    );
+  }
+  return (
+    <div className="text-center">
+      <div className="text-[10px] uppercase tracking-wider text-slate-500 mb-1">Next</div>
+      <div
+        className="px-3 py-1 rounded border border-slate-800 bg-slate-950 text-xs text-slate-400 flex items-center gap-2 h-[34px]"
+        title={`${p.remaining.toLocaleString()} XP until level ${p.nextLevel} (${p.nextThreshold.toLocaleString()} total)`}
+      >
+        <span className="font-mono">{p.remaining.toLocaleString()}</span>
+        <span className="text-slate-600">→ {p.nextLevel}</span>
+      </div>
+    </div>
+  );
+}
+
 function LabeledNumber({
   label,
   value,
@@ -1466,6 +1596,45 @@ function SpellbookBlock({
                 );
               })}
             </div>
+            {(() => {
+              // Ritual list — shows rituals across all levels in one place
+              // so players can scan their no-slot options quickly. Each entry
+              // is also still rendered above under its level.
+              const rituals = spells.filter((sp) => {
+                if (sp.sourceKind !== 'srd-spell' || !sp.sourceId) return false;
+                return getSpellsIdx(edition)[sp.sourceId]?.ritual ?? false;
+              });
+              if (rituals.length === 0) return null;
+              return (
+                <div className="mt-5 pt-3 border-t border-slate-800">
+                  <div className="text-[10px] uppercase tracking-wider text-amber-300/80 mb-2">
+                    Ritual spells
+                  </div>
+                  <div className="text-[11px] text-slate-500 mb-2 leading-snug">
+                    Can be cast without a slot in 10 extra minutes.
+                  </div>
+                  <div className="flex flex-wrap gap-1.5">
+                    {rituals
+                      .slice()
+                      .sort((a, b) => spellLevelFor(a, edition) - spellLevelFor(b, edition) || a.name.localeCompare(b.name))
+                      .map((sp) => {
+                        const lv = spellLevelFor(sp, edition);
+                        return (
+                          <span
+                            key={sp.id}
+                            className="inline-flex items-center gap-1 px-1.5 py-0.5 text-xs rounded bg-slate-950 border border-slate-800 text-slate-200"
+                          >
+                            {sp.name}
+                            <span className="text-[10px] text-slate-500">
+                              ({lv === 0 ? 'Cantrip' : `Lv ${lv}`})
+                            </span>
+                          </span>
+                        );
+                      })}
+                  </div>
+                </div>
+              );
+            })()}
             {spells.length === 0 && (
               <div className="text-sm text-slate-500 italic py-2">No spells known yet.</div>
             )}
@@ -1576,6 +1745,22 @@ function SpellRow({
           title={srd ? 'Click to view description' : undefined}
         >
           {spell.name}
+          {srd?.ritual && (
+            <span
+              className="ml-1.5 inline-block px-1 py-0 text-[9px] uppercase tracking-wider rounded bg-amber-900/40 text-amber-300 align-middle"
+              title="Ritual — can be cast without a slot in 10 extra minutes"
+            >
+              R
+            </span>
+          )}
+          {srd?.concentration && (
+            <span
+              className="ml-1 inline-block px-1 py-0 text-[9px] uppercase tracking-wider rounded bg-sky-900/40 text-sky-300 align-middle"
+              title="Concentration"
+            >
+              C
+            </span>
+          )}
         </button>
         {/* Inline at-a-glance chips: attack mod, damage, save DC */}
         {srd?.attack_type && spellAttack != null && (
@@ -1725,6 +1910,584 @@ function SpellPicker({
           )}
         </div>
       )}
+    </div>
+  );
+}
+
+// ── Actions ───────────────────────────────────────────────────────────────
+
+/** Standard SRD combat actions that are always available regardless of class.
+ *  Mirrors the 2024 SRD "Actions in Combat" list — we include both editions'
+ *  vocabulary where they diverge so the row reads naturally either way. */
+const STANDARD_ACTIONS: { name: string; category: ActionCategory; desc?: string }[] = [
+  { name: 'Attack', category: 'action', desc: 'Make one attack roll with a weapon or Unarmed Strike.' },
+  { name: 'Dash', category: 'action', desc: 'Extra movement equal to your Speed.' },
+  { name: 'Disengage', category: 'action', desc: 'Your movement doesn\'t provoke Opportunity Attacks until the end of your turn.' },
+  { name: 'Dodge', category: 'action', desc: 'Until your next turn, attack rolls against you have Disadvantage and you have Advantage on Dex saves.' },
+  { name: 'Help', category: 'action', desc: 'Give an ally Advantage on their next ability check, or their next attack against a creature within 5 ft of you.' },
+  { name: 'Hide', category: 'action', desc: 'Make a Stealth check vs the highest passive Perception of any creature that can see you.' },
+  { name: 'Influence', category: 'action', desc: 'Convince a creature to do something via a Charisma check (or other ability the GM determines).' },
+  { name: 'Ready', category: 'action', desc: 'Prepare a reaction trigger and the action to take when it occurs.' },
+  { name: 'Search', category: 'action', desc: 'Look for something — Perception, Investigation, Insight, or Survival depending on what.' },
+  { name: 'Study', category: 'action', desc: 'Recall lore about a creature, object, or phenomenon — Arcana, History, Nature, or Religion.' },
+  { name: 'Utilize', category: 'action', desc: 'Activate a non-magical object (e.g. pull a lever).' },
+  { name: 'Opportunity Attack', category: 'reaction', desc: 'When a hostile creature you can see leaves your reach, use your Reaction to make one melee attack.' },
+  { name: 'Interact with an Object', category: 'other', desc: 'Once per turn, free: draw, drop, pick up, or manipulate one object.' },
+  { name: 'Grapple', category: 'other', desc: 'Special Attack: target makes a Str/Dex save vs your Athletics DC. On a fail, the target has the Grappled condition.' },
+  { name: 'Shove', category: 'other', desc: 'Special Attack: target makes a Str/Dex save vs your Athletics DC. On a fail, push 5 ft or knock Prone.' },
+];
+
+function bucketByCastingTime(time: string): ActionCategory {
+  const t = (time || '').toLowerCase();
+  if (t.startsWith('bonus action')) return 'bonus';
+  if (t.startsWith('reaction')) return 'reaction';
+  if (t.startsWith('action')) return 'action';
+  return 'other';
+}
+
+const CATEGORY_LABEL: Record<ActionCategory, string> = {
+  action: 'Actions',
+  bonus: 'Bonus actions',
+  reaction: 'Reactions',
+  other: 'Other',
+};
+
+function ActionsBlock({ draft, onApply }: { draft: PartyMember; onApply: (p: Partial<PartyMember>) => void }) {
+  const edition = useCampaignSettings((s) => s.settings.srdEdition);
+  const rollFormula = useQuickDice((s) => s.rollFormula);
+  const [adding, setAdding] = useState<ActionCategory | null>(null);
+
+  const customActions = draft.customActions ?? [];
+  const setCustomActions = (next: CustomAction[]) => onApply({ customActions: next });
+
+  // Weapons → attack rows (Actions bucket). Use existing weaponStats() to
+  // compute attack bonus + damage from the character's mods.
+  const weaponRows = useMemo(() => {
+    const inv = draft.inventory ?? [];
+    const rows: { id: string; name: string; attackBonus: number; damage: string; ability: 'str' | 'dex'; equipped: boolean }[] = [];
+    for (const item of inv) {
+      const srd = srdItemFor(item, edition);
+      if (!srd?.damage) continue;
+      const stats = weaponStats(draft, srd);
+      const dmg = stats.damageDice
+        ? `${stats.damageDice}${stats.abilityMod !== 0 ? ` ${stats.abilityMod >= 0 ? '+' : ''}${stats.abilityMod}` : ''} ${srd.damage.damage_type.name}`
+        : '';
+      rows.push({
+        id: item.id,
+        name: item.name,
+        attackBonus: stats.attackBonus,
+        damage: dmg,
+        ability: stats.ability,
+        equipped: item.equipped,
+      });
+    }
+    return rows;
+  }, [draft, edition]);
+
+  // Spell rows bucketed by casting_time. Skips entries we can't resolve to
+  // a SRD spell (homebrew spells don't have a casting_time field on the
+  // KnownSpell stub — they'd need to be looked up via the homebrew store).
+  const spellsByBucket = useMemo(() => {
+    const out: Record<ActionCategory, { id: string; name: string; level: number; ritual: boolean; concentration: boolean; castingTime: string }[]> = {
+      action: [],
+      bonus: [],
+      reaction: [],
+      other: [],
+    };
+    for (const sp of draft.spells ?? []) {
+      if (sp.sourceKind !== 'srd-spell' || !sp.sourceId) continue;
+      const srd = getSpellsIdx(edition)[sp.sourceId];
+      if (!srd) continue;
+      const bucket = bucketByCastingTime(srd.casting_time);
+      out[bucket].push({
+        id: sp.id,
+        name: sp.name,
+        level: srd.level,
+        ritual: srd.ritual,
+        concentration: srd.concentration,
+        castingTime: srd.casting_time,
+      });
+    }
+    return out;
+  }, [draft.spells, edition]);
+
+  // Two-Weapon Fighting only when wielding two equipped Light melee weapons.
+  const twoWeaponEligible = useMemo(() => {
+    const inv = draft.inventory ?? [];
+    let lightEquipped = 0;
+    for (const item of inv) {
+      if (!item.equipped) continue;
+      const srd = srdItemFor(item, edition);
+      if (!srd?.damage || srd.weapon_range === 'Ranged') continue;
+      const props = (srd.properties ?? []).map((p) => p.name.toLowerCase());
+      if (props.includes('light')) lightEquipped++;
+    }
+    return lightEquipped >= 2;
+  }, [draft.inventory, edition]);
+
+  const rollAttack = (label: string, bonus: number) => {
+    rollFormula(`1d20 + ${bonus}`, `${label} attack`);
+  };
+  const rollDamage = (label: string, formula: string) => {
+    rollFormula(formula, `${label} damage`);
+  };
+
+  const buckets: ActionCategory[] = ['action', 'bonus', 'reaction', 'other'];
+
+  const renderBucket = (cat: ActionCategory) => {
+    const standard = STANDARD_ACTIONS.filter((a) => a.category === cat);
+    const spells = spellsByBucket[cat];
+    const customs = customActions.filter((a) => a.category === cat);
+    const weapons = cat === 'action' ? weaponRows : [];
+    const twoWeapon = cat === 'bonus' && twoWeaponEligible;
+
+    const hasContent = weapons.length || spells.length || standard.length || customs.length || twoWeapon;
+    if (!hasContent && cat !== 'action') return null;
+
+    return (
+      <div key={cat} className="mt-4 first:mt-0">
+        <div className="flex items-center justify-between border-b border-slate-800 pb-1">
+          <div className="text-[11px] uppercase tracking-wider text-rose-300/80">{CATEGORY_LABEL[cat]}</div>
+          <button
+            onClick={() => setAdding(adding === cat ? null : cat)}
+            className="text-[10px] uppercase tracking-wider text-slate-500 hover:text-slate-300 flex items-center gap-1"
+            title={`Add a custom ${CATEGORY_LABEL[cat].toLowerCase().replace(/s$/, '')}`}
+          >
+            <Plus size={10} /> Custom
+          </button>
+        </div>
+
+        {adding === cat && (
+          <CustomActionAdder
+            category={cat}
+            onAdd={(entry) => {
+              setCustomActions([...customActions, entry]);
+              setAdding(null);
+            }}
+            onCancel={() => setAdding(null)}
+          />
+        )}
+
+        {weapons.length > 0 && (
+          <Subgroup title="Weapon attacks">
+            {weapons.map((w) => (
+              <ActionRow
+                key={w.id}
+                name={w.name}
+                hint={`${w.equipped ? '' : '(unequipped) '}${w.ability.toUpperCase()}-based`}
+              >
+                <button
+                  onClick={() => rollAttack(w.name, w.attackBonus)}
+                  className="px-1.5 py-0.5 text-[11px] rounded bg-slate-800 hover:bg-slate-700 text-slate-200 font-mono"
+                  title="Roll attack"
+                >
+                  {w.attackBonus >= 0 ? '+' : ''}{w.attackBonus}
+                </button>
+                {w.damage && (
+                  <button
+                    onClick={() => rollDamage(w.name, (() => {
+                      // Strip the trailing damage-type word from the display string
+                      const parts = w.damage.split(' ');
+                      return parts.slice(0, -1).join(' ');
+                    })())}
+                    className="px-1.5 py-0.5 text-[11px] rounded bg-slate-800 hover:bg-slate-700 text-slate-300 font-mono"
+                    title="Roll damage"
+                  >
+                    {w.damage}
+                  </button>
+                )}
+              </ActionRow>
+            ))}
+          </Subgroup>
+        )}
+
+        {(standard.length > 0 || twoWeapon) && (
+          <Subgroup title="Standard">
+            {twoWeapon && (
+              <ActionRow
+                name="Two-Weapon Fighting"
+                hint="Bonus Action — attack with your other Light melee weapon"
+              />
+            )}
+            {standard.map((a) => (
+              <ActionRow key={a.name} name={a.name} hint={a.desc} />
+            ))}
+          </Subgroup>
+        )}
+
+        {spells.length > 0 && (
+          <Subgroup title="Spells">
+            {spells
+              .slice()
+              .sort((a, b) => a.level - b.level || a.name.localeCompare(b.name))
+              .map((s) => (
+                <ActionRow
+                  key={s.id}
+                  name={s.name}
+                  hint={`${s.level === 0 ? 'Cantrip' : `Lv ${s.level}`}${s.concentration ? ' · C' : ''}${s.ritual ? ' · R' : ''} — ${s.castingTime}`}
+                />
+              ))}
+          </Subgroup>
+        )}
+
+        {customs.length > 0 && (
+          <Subgroup title="Custom">
+            {customs.map((a) => (
+              <ActionRow
+                key={a.id}
+                name={a.name}
+                hint={a.desc}
+                onRemove={() => setCustomActions(customActions.filter((x) => x.id !== a.id))}
+              />
+            ))}
+          </Subgroup>
+        )}
+      </div>
+    );
+  };
+
+  return <div>{buckets.map(renderBucket)}</div>;
+}
+
+function Subgroup({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <div className="mt-3">
+      <div className="text-[10px] uppercase tracking-wider text-slate-500 mb-1">{title}</div>
+      <div className="space-y-1">{children}</div>
+    </div>
+  );
+}
+
+function ActionRow({
+  name,
+  hint,
+  onRemove,
+  children,
+}: {
+  name: string;
+  hint?: string;
+  onRemove?: () => void;
+  children?: React.ReactNode;
+}) {
+  return (
+    <div className="flex items-start gap-2 border-l-2 border-slate-800 pl-2 py-1 text-sm">
+      <div className="flex-1 min-w-0">
+        <div className="text-slate-100">{name}</div>
+        {hint && <div className="text-[11px] text-slate-500 leading-snug">{hint}</div>}
+      </div>
+      {children && <div className="flex gap-1 shrink-0 mt-0.5">{children}</div>}
+      {onRemove && (
+        <button
+          onClick={onRemove}
+          className="p-1 text-slate-600 hover:text-rose-400"
+          title="Remove"
+        >
+          <Trash2 size={11} />
+        </button>
+      )}
+    </div>
+  );
+}
+
+function CustomActionAdder({
+  category,
+  onAdd,
+  onCancel,
+}: {
+  category: ActionCategory;
+  onAdd: (entry: CustomAction) => void;
+  onCancel: () => void;
+}) {
+  const [name, setName] = useState('');
+  const [desc, setDesc] = useState('');
+  const submit = () => {
+    if (!name.trim()) return;
+    onAdd({ id: crypto.randomUUID(), category, name: name.trim(), desc: desc.trim() || undefined });
+    setName('');
+    setDesc('');
+  };
+  return (
+    <div className="mt-2 mb-1 p-2 bg-slate-950 border border-slate-800 rounded space-y-1.5">
+      <input
+        autoFocus
+        value={name}
+        onChange={(e) => setName(e.target.value)}
+        onKeyDown={(e) => e.key === 'Enter' && submit()}
+        placeholder={`New ${CATEGORY_LABEL[category].toLowerCase().replace(/s$/, '')}…`}
+        className="w-full bg-slate-900 border border-slate-700 rounded px-2 py-1 text-sm text-slate-100 placeholder:text-slate-600 focus:outline-none focus:border-sky-700"
+      />
+      <input
+        value={desc}
+        onChange={(e) => setDesc(e.target.value)}
+        onKeyDown={(e) => e.key === 'Enter' && submit()}
+        placeholder="Optional description"
+        className="w-full bg-slate-900 border border-slate-700 rounded px-2 py-1 text-xs text-slate-300 placeholder:text-slate-600 focus:outline-none focus:border-sky-700"
+      />
+      <div className="flex justify-end gap-1">
+        <button onClick={onCancel} className="px-2 py-0.5 text-[11px] text-slate-400 hover:text-slate-200">
+          Cancel
+        </button>
+        <button
+          onClick={submit}
+          disabled={!name.trim()}
+          className="px-2 py-0.5 text-[11px] rounded bg-sky-700 hover:bg-sky-600 disabled:opacity-40 text-white"
+        >
+          Add
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ── Features & traits ─────────────────────────────────────────────────────
+
+const FEATURE_SOURCES: CharacterFeature['source'][] = ['Class', 'Race', 'Feat', 'Background', 'Other'];
+const USE_PERIODS: NonNullable<CharacterFeature['uses']>['period'][] = ['Short', 'Long', 'Day', 'Encounter'];
+
+function FeaturesBlock({ draft, onApply }: { draft: PartyMember; onApply: (p: Partial<PartyMember>) => void }) {
+  const features = draft.features ?? [];
+  const [adding, setAdding] = useState(false);
+
+  const update = (next: CharacterFeature[]) => onApply({ features: next });
+
+  // Group by source so Class/Race/etc. read cleanly together.
+  const grouped: Record<CharacterFeature['source'], CharacterFeature[]> = {
+    Class: [], Race: [], Feat: [], Background: [], Other: [],
+  };
+  for (const f of features) grouped[f.source].push(f);
+
+  return (
+    <div>
+      <div className="flex justify-end mb-2">
+        <button
+          onClick={() => setAdding(true)}
+          className="px-2 py-1 text-xs rounded bg-slate-800 hover:bg-slate-700 text-slate-200 flex items-center gap-1"
+        >
+          <Plus size={12} /> Add feature
+        </button>
+      </div>
+
+      {adding && (
+        <FeatureAdder
+          onAdd={(f) => {
+            update([...features, f]);
+            setAdding(false);
+          }}
+          onCancel={() => setAdding(false)}
+        />
+      )}
+
+      {features.length === 0 && !adding && (
+        <div className="text-sm text-slate-500 italic py-3">
+          No features yet. Add class features, racial traits, or feats so you can track their uses inline.
+        </div>
+      )}
+
+      {FEATURE_SOURCES.map((src) => {
+        if (grouped[src].length === 0) return null;
+        return (
+          <div key={src} className="mt-4 first:mt-0">
+            <div className="text-[11px] uppercase tracking-wider text-rose-300/80 border-b border-slate-800 pb-1 mb-2">
+              {src}
+            </div>
+            <div className="space-y-2">
+              {grouped[src].map((f) => (
+                <FeatureRow
+                  key={f.id}
+                  feature={f}
+                  onChange={(patch) =>
+                    update(features.map((x) => (x.id === f.id ? { ...x, ...patch } : x)))
+                  }
+                  onRemove={() => update(features.filter((x) => x.id !== f.id))}
+                />
+              ))}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function FeatureRow({
+  feature,
+  onChange,
+  onRemove,
+}: {
+  feature: CharacterFeature;
+  onChange: (patch: Partial<CharacterFeature>) => void;
+  onRemove: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const uses = feature.uses;
+
+  return (
+    <div className="bg-slate-950 border border-slate-800 rounded p-2">
+      <div className="flex items-center gap-2">
+        <button
+          onClick={() => setOpen((v) => !v)}
+          className="flex-1 text-left text-sm text-slate-100 hover:text-sky-200"
+        >
+          {feature.name}
+        </button>
+        {uses && (
+          <UsesControl
+            current={uses.current}
+            max={uses.max}
+            period={uses.period}
+            onChange={(next) => onChange({ uses: next })}
+          />
+        )}
+        {!uses && (
+          <button
+            onClick={() => onChange({ uses: { current: 1, max: 1, period: 'Long' } })}
+            className="text-[10px] uppercase tracking-wider text-slate-500 hover:text-slate-200 px-1.5 py-0.5 rounded hover:bg-slate-800"
+            title="Add a limited-use counter"
+          >
+            Track uses
+          </button>
+        )}
+        <button
+          onClick={onRemove}
+          className="p-1 text-slate-600 hover:text-rose-400"
+          title="Remove feature"
+        >
+          <Trash2 size={11} />
+        </button>
+      </div>
+      {open && (
+        <div className="mt-2 pt-2 border-t border-slate-800 space-y-1.5">
+          <textarea
+            value={feature.desc ?? ''}
+            onChange={(e) => onChange({ desc: e.target.value })}
+            placeholder="Description (optional)"
+            rows={2}
+            className="w-full bg-slate-900 border border-slate-700 rounded px-2 py-1 text-xs text-slate-200 placeholder:text-slate-600 focus:outline-none focus:border-sky-700 resize-y"
+          />
+        </div>
+      )}
+    </div>
+  );
+}
+
+function UsesControl({
+  current,
+  max,
+  period,
+  onChange,
+}: {
+  current: number;
+  max: number;
+  period: NonNullable<CharacterFeature['uses']>['period'];
+  onChange: (next: NonNullable<CharacterFeature['uses']>) => void;
+}) {
+  return (
+    <div className="flex items-center gap-1 text-[11px]">
+      <button
+        onClick={() => onChange({ current: Math.max(0, current - 1), max, period })}
+        disabled={current <= 0}
+        className="w-5 h-5 rounded bg-slate-800 hover:bg-slate-700 disabled:opacity-40 text-slate-300 leading-none"
+        title="Use one"
+      >
+        −
+      </button>
+      <span className="font-mono text-slate-300 min-w-[2.5rem] text-center">
+        {current}/{max}
+      </span>
+      <button
+        onClick={() => onChange({ current: Math.min(max, current + 1), max, period })}
+        disabled={current >= max}
+        className="w-5 h-5 rounded bg-slate-800 hover:bg-slate-700 disabled:opacity-40 text-slate-300 leading-none"
+        title="Restore one"
+      >
+        +
+      </button>
+      <select
+        value={period}
+        onChange={(e) => onChange({ current, max, period: e.target.value as typeof period })}
+        className="bg-slate-900 border border-slate-700 rounded px-1 py-0.5 text-[10px] text-slate-300 focus:outline-none focus:border-sky-700"
+        title="Recovery period"
+      >
+        {USE_PERIODS.map((p) => (
+          <option key={p} value={p}>
+            /{p === 'Encounter' ? 'enc' : p === 'Day' ? 'day' : `${p} rest`}
+          </option>
+        ))}
+      </select>
+      <input
+        type="number"
+        value={max}
+        onChange={(e) => {
+          const m = Math.max(0, parseInt(e.target.value || '0', 10));
+          onChange({ current: Math.min(current, m), max: m, period });
+        }}
+        className="w-10 bg-slate-900 border border-slate-700 rounded px-1 py-0.5 text-[10px] text-slate-300 text-center focus:outline-none focus:border-sky-700"
+        title="Max uses"
+      />
+    </div>
+  );
+}
+
+function FeatureAdder({
+  onAdd,
+  onCancel,
+}: {
+  onAdd: (f: CharacterFeature) => void;
+  onCancel: () => void;
+}) {
+  const [name, setName] = useState('');
+  const [source, setSource] = useState<CharacterFeature['source']>('Class');
+  const [desc, setDesc] = useState('');
+  const submit = () => {
+    if (!name.trim()) return;
+    onAdd({
+      id: crypto.randomUUID(),
+      name: name.trim(),
+      source,
+      desc: desc.trim() || undefined,
+    });
+    setName('');
+    setDesc('');
+  };
+  return (
+    <div className="mb-3 p-3 bg-slate-950 border border-slate-800 rounded space-y-2">
+      <div className="flex gap-2">
+        <input
+          autoFocus
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          placeholder="Feature name (e.g. Arcane Recovery)"
+          className="flex-1 bg-slate-900 border border-slate-700 rounded px-2 py-1 text-sm text-slate-100 placeholder:text-slate-600 focus:outline-none focus:border-sky-700"
+        />
+        <select
+          value={source}
+          onChange={(e) => setSource(e.target.value as CharacterFeature['source'])}
+          className="bg-slate-900 border border-slate-700 rounded px-2 py-1 text-xs text-slate-200 focus:outline-none focus:border-sky-700"
+        >
+          {FEATURE_SOURCES.map((s) => (
+            <option key={s} value={s}>{s}</option>
+          ))}
+        </select>
+      </div>
+      <textarea
+        value={desc}
+        onChange={(e) => setDesc(e.target.value)}
+        rows={2}
+        placeholder="Description (optional)"
+        className="w-full bg-slate-900 border border-slate-700 rounded px-2 py-1 text-xs text-slate-300 placeholder:text-slate-600 focus:outline-none focus:border-sky-700 resize-y"
+      />
+      <div className="flex justify-end gap-1">
+        <button onClick={onCancel} className="px-2 py-1 text-xs text-slate-400 hover:text-slate-200">
+          Cancel
+        </button>
+        <button
+          onClick={submit}
+          disabled={!name.trim()}
+          className="px-3 py-1 text-xs rounded bg-sky-700 hover:bg-sky-600 disabled:opacity-40 text-white"
+        >
+          Add feature
+        </button>
+      </div>
     </div>
   );
 }
