@@ -91,3 +91,79 @@ export type RuleSection = {
   name: string;
   desc: string;
 };
+
+/** One row of a class's level-progression table. `classColumns` keeps the
+ *  class-specific columns (Rages, Sneak Attack, Spell Slots, etc.) as a
+ *  preserved map so the UI can render them generically. */
+export type ClassLevelRow = {
+  level: number;
+  proficiencyBonus: number;
+  /** Feature names unlocked at this level (matches keys in `Class.features`). */
+  features: string[];
+  /** Remaining table columns from the class's level table, raw strings. */
+  classColumns: Record<string, string>;
+};
+
+export type ClassSubclass = {
+  index: string;
+  name: string;
+  className: string;
+  /** Feature unlocks at specific levels. */
+  features: { level: number; name: string; desc: string }[];
+};
+
+export type Class = {
+  index: string;
+  name: string;
+  /** D-die size (6, 8, 10, 12). */
+  hitDie: number;
+  /** Free-text "Primary Ability" line from Core Traits — e.g. "Strength" or
+   *  "Dexterity or Strength". */
+  primaryAbility: string;
+  /** Saving-throw proficiencies. */
+  saveProfs: string;
+  /** Free-text skill-choice line — e.g. "Choose 2: Animal Handling, …". */
+  skillChoices: string;
+  weaponProfs: string;
+  armorProfs: string;
+  /** Starting equipment string preserving the "Choose A or B" phrasing. */
+  startingEquipment: string;
+  /** 20 rows in level order. */
+  levelTable: ClassLevelRow[];
+  /** Feature name → markdown description body. */
+  features: Record<string, string>;
+  /** SRD 5.2 ships one subclass per class. */
+  subclasses: ClassSubclass[];
+  /** Spell list keyed by spell level (caster classes only). Each entry is a
+   *  spell index slug matching Spells dataset. */
+  spellList?: { level: number; spells: string[] }[];
+};
+
+export type Species = {
+  index: string;
+  name: string;
+  creatureType: string;
+  size: string;
+  speed: string;
+  /** Trait paragraphs (italic-prefixed in source). */
+  traits: { name: string; desc: string }[];
+};
+
+export type Background = {
+  index: string;
+  name: string;
+  abilityScores: string[];
+  feat: string;
+  skillProfs: string[];
+  toolProf: string;
+  equipment: string;
+};
+
+export type Feat = {
+  index: string;
+  name: string;
+  category: 'Origin' | 'General' | 'Fighting Style' | 'Epic Boon';
+  prerequisite?: string;
+  desc: string;
+  repeatable?: boolean;
+};

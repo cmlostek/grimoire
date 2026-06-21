@@ -7,7 +7,21 @@ import spells2024Json from './5e-SRD-Spells-2024.json';
 import equipment2024Json from './5e-SRD-Equipment-2024.json';
 import magicItems2024Json from './5e-SRD-Magic-Items-2024.json';
 import ruleSections2024Json from './5e-SRD-Rule-Sections-2024.json';
-import type { Spell, EquipmentItem, MagicItem, Monster, RuleSection } from './types';
+import classes2024Json from './5e-SRD-Classes-2024.json';
+import species2024Json from './5e-SRD-Species-2024.json';
+import backgrounds2024Json from './5e-SRD-Backgrounds-2024.json';
+import feats2024Json from './5e-SRD-Feats-2024.json';
+import type {
+  Spell,
+  EquipmentItem,
+  MagicItem,
+  Monster,
+  RuleSection,
+  Class,
+  Species,
+  Background,
+  Feat,
+} from './types';
 
 export type SrdEdition = '2014' | '2024';
 type WithEdition<T> = T & { edition: SrdEdition };
@@ -66,6 +80,15 @@ export function ruleSectionsFor(edition: SrdEdition | 'both') {
   if (edition === '2024') return RULE_SECTIONS_2024;
   return RULE_SECTIONS;
 }
+
+// ── 2024-only character-builder data ──────────────────────────────────────
+// We don't have a 2014 dataset for these yet, so they ship as 2024-only
+// (`*_2024` named, no edition selector). Phase 4 / 5 consumers should always
+// reference these directly.
+export const CLASSES_2024 = classes2024Json as unknown as Class[];
+export const SPECIES_2024 = species2024Json as unknown as Species[];
+export const BACKGROUNDS_2024 = backgrounds2024Json as unknown as Background[];
+export const FEATS_2024 = feats2024Json as unknown as Feat[];
 
 export const SPELL_SCHOOLS = Array.from(new Set(SPELLS.map((s) => s.school.name))).sort();
 export const SPELL_LEVELS = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9];

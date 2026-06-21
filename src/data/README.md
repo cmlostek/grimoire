@@ -18,10 +18,22 @@ canonical JSON port of the WotC SRD 5.1 used by the public dnd5eapi.co.
 
 ## 2024 — SRD 5.2.1
 
+Spells/items/magic items/rules (used by the catalog pages):
+
 - `5e-SRD-Spells-2024.json` (339 entries)
 - `5e-SRD-Equipment-2024.json` (167 entries)
 - `5e-SRD-Magic-Items-2024.json` (258 entries)
 - `5e-SRD-Rule-Sections-2024.json` (154 entries)
+
+Character-builder corpus (consumed by the level-up + character creation flows
+coming in phases 4–5):
+
+- `5e-SRD-Classes-2024.json` (12 classes — Barbarian, Bard, Cleric, Druid, Fighter, Monk, Paladin, Ranger, Rogue, Sorcerer, Warlock, Wizard). Each has a 20-row level table, named feature descriptions, one subclass with its own level→feature unlocks, and (for casters) a spell list keyed by spell level.
+- `5e-SRD-Species-2024.json` (9 species — Dragonborn, Dwarf, Elf, Gnome, Goliath, Halfling, Human, Orc, Tiefling).
+- `5e-SRD-Backgrounds-2024.json` (4 backgrounds — Acolyte, Criminal, Sage, Soldier).
+- `5e-SRD-Feats-2024.json` (17 feats across Origin / General / Fighting Style / Epic Boon categories).
+
+The 2024 SRD only ships one subclass per class. No 2014 equivalents exist for classes/species/feats; the character-builder data is 2024-only by design.
 
 Generated from the WotC SRD 5.2.1 markdown extract at
 [downfallx/dnd-5e-srd-markdown](https://github.com/downfallx/dnd-5e-srd-markdown).
@@ -34,6 +46,9 @@ curl -sL https://raw.githubusercontent.com/downfallx/dnd-5e-srd-markdown/master/
 curl -sL https://raw.githubusercontent.com/downfallx/dnd-5e-srd-markdown/master/magic-items.md > /tmp/magic.md
 curl -sL https://raw.githubusercontent.com/downfallx/dnd-5e-srd-markdown/master/equipment.md > /tmp/equipment.md
 curl -sL https://raw.githubusercontent.com/downfallx/dnd-5e-srd-markdown/master/rules-glossary.md > /tmp/rules.md
+curl -sL https://raw.githubusercontent.com/downfallx/dnd-5e-srd-markdown/master/classes.md > /tmp/classes.md
+curl -sL https://raw.githubusercontent.com/downfallx/dnd-5e-srd-markdown/master/character-origins.md > /tmp/origins.md
+curl -sL https://raw.githubusercontent.com/downfallx/dnd-5e-srd-markdown/master/feats.md > /tmp/feats.md
 
 # 2. Re-parse to src/data
 node scripts/parse-srd-2024.mjs
