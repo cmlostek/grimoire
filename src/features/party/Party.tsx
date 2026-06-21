@@ -5,12 +5,13 @@ import { useSession } from '../session/sessionStore';
 import { useVisibilityReload } from '../../hooks/useVisibilityReload';
 import { supabase } from '../../lib/supabase';
 import { parseDdb, parseGenericJson, isLikelyDdb, isDdbWrapper } from './ddb';
+import CharacterBuilder from '../dashboard/CharacterBuilder';
 import {
   Plus, Trash2, UserPlus, FileJson, ExternalLink, X, Shield, Heart,
-  Eye, Search, Brain, UserCheck, User as UserIcon, Save,
+  Eye, Search, Brain, UserCheck, User as UserIcon, Save, Wand2,
 } from 'lucide-react';
 
-type AddMode = null | 'manual' | 'json';
+type AddMode = null | 'manual' | 'json' | 'builder';
 
 
 const blankMember = (): Omit<PartyMember, 'id' | 'owner_user_id'> => ({
@@ -98,9 +99,15 @@ export default function Party() {
               onClick={() => {
                 if (campaignId) addPartyMember(campaignId, blankMember());
               }}
+              className="px-3 py-1.5 text-xs bg-slate-800 hover:bg-slate-700 rounded flex items-center gap-1"
+            >
+              <UserPlus size={14} /> Add blank
+            </button>
+            <button
+              onClick={() => setAddMode('builder')}
               className="px-3 py-1.5 text-xs bg-sky-700 hover:bg-sky-600 text-slate-950 font-semibold rounded flex items-center gap-1"
             >
-              <UserPlus size={14} /> Add manual
+              <Wand2 size={14} /> Build character
             </button>
           </>
         )}
@@ -141,6 +148,16 @@ export default function Party() {
           onClose={() => setAddMode(null)}
           onImport={(p) => {
             if (campaignId) addPartyMember(campaignId, p);
+            setAddMode(null);
+          }}
+        />
+      )}
+
+      {isGM && addMode === 'builder' && (
+        <CharacterBuilder
+          onClose={() => setAddMode(null)}
+          onCreate={(m) => {
+            if (campaignId) addPartyMember(campaignId, m);
             setAddMode(null);
           }}
         />
