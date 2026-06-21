@@ -21,6 +21,7 @@ import Settings from './features/settings/Settings';
 import CampaignPicker from './features/session/CampaignPicker';
 import { useSession } from './features/session/sessionStore';
 import { useCampaignSettings } from './features/notes/campaignSettingsStore';
+import { useSidebar } from './features/session/sidebarStore';
 import { useNavCustomization } from './hooks/useNavCustomization';
 import { useRecording } from './features/transcription/recordingStore';
 
@@ -78,8 +79,10 @@ function AppShell() {
   const campaignName = useSession((s) => s.campaignName);
   const joinCode = useSession((s) => s.joinCode);
   const displayName = useSession((s) => s.displayName);
-  // Sidebar collapse is now transient — start collapsed, expand on hover.
-  // (Persisted state was removed in favour of an always-narrow rail.)
+  // Sidebar collapse is transient — start collapsed, expand on hover when the
+  // user has the auto-expand preference enabled (default on; toggle lives in
+  // /settings → Display). When disabled the sidebar stays as a narrow rail.
+  const hoverExpand = useSidebar((s) => s.hoverExpand);
   const [expanded, setExpanded] = useState(false);
   const viewAsPlayer = useSession((s) => s.viewAsPlayer);
   const setViewAsPlayer = useSession((s) => s.setViewAsPlayer);
@@ -153,13 +156,17 @@ function AppShell() {
       )}
       <div className="flex-1 flex min-h-0">
       <aside
-        onMouseEnter={() => setExpanded(true)}
-        onMouseLeave={() => setExpanded(false)}
-        onFocus={() => setExpanded(true)}
-        onBlur={(e) => {
-          // Collapse only when focus leaves the sidebar entirely
-          if (!e.currentTarget.contains(e.relatedTarget as Node)) setExpanded(false);
-        }}
+        onMouseEnter={hoverExpand ? () => setExpanded(true) : undefined}
+        onMouseLeave={hoverExpand ? () => setExpanded(false) : undefined}
+        onFocus={hoverExpand ? () => setExpanded(true) : undefined}
+        onBlur={
+          hoverExpand
+            ? (e) => {
+                // Collapse only when focus leaves the sidebar entirely
+                if (!e.currentTarget.contains(e.relatedTarget as Node)) setExpanded(false);
+              }
+            : undefined
+        }
         className={`${collapsed ? 'w-14' : 'w-56'} shrink-0 border-r border-slate-800 flex flex-col transition-[width] duration-150`}
       >
         {/* ── Header ───────────────────────────────────────────────────────── */}

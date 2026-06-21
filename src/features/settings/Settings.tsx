@@ -25,6 +25,7 @@ import PageHeader from '../../components/PageHeader';
 import { useSession } from '../session/sessionStore';
 import { useCampaignSettings } from '../notes/campaignSettingsStore';
 import { useTheme } from '../session/themeStore';
+import { useSidebar } from '../session/sidebarStore';
 import { useNavCustomization } from '../../hooks/useNavCustomization';
 
 // Mirrors the nav array in App.tsx — kept here so the Customize-nav panel can
@@ -52,6 +53,8 @@ export default function Settings() {
   const leaveCurrent = useSession((s) => s.leaveCurrent);
   const signOut = useSession((s) => s.signOut);
   const { mode, toggle: toggleMode } = useTheme();
+  const hoverExpand = useSidebar((s) => s.hoverExpand);
+  const setHoverExpand = useSidebar((s) => s.setHoverExpand);
 
   const togglePage = useCampaignSettings((s) => s.togglePage);
   const toggleGmPage = useCampaignSettings((s) => s.toggleGmPage);
@@ -82,6 +85,16 @@ export default function Settings() {
             icon={mode === 'dark' ? <Sun size={14} /> : <Moon size={14} />}
             label={mode === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
             onClick={toggleMode}
+          />
+          <SwitchRow
+            label="Auto-expand sidebar"
+            hint={
+              hoverExpand
+                ? 'Sidebar grows to full width when you hover or focus it.'
+                : 'Sidebar stays as a narrow icon rail; hover over icons for labels.'
+            }
+            checked={hoverExpand}
+            onChange={setHoverExpand}
           />
         </Section>
 
@@ -147,6 +160,44 @@ function Section({ title, children }: { title: string; children: React.ReactNode
         {children}
       </div>
     </section>
+  );
+}
+
+function SwitchRow({
+  label,
+  hint,
+  checked,
+  onChange,
+}: {
+  label: string;
+  hint?: string;
+  checked: boolean;
+  onChange: (next: boolean) => void;
+}) {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={checked}
+      onClick={() => onChange(!checked)}
+      className="w-full flex items-center gap-3 px-4 py-3 text-sm text-slate-200 hover:bg-slate-800/40 border-b border-slate-800 last:border-b-0"
+    >
+      <span className="flex-1 text-left">
+        {label}
+        {hint && <span className="block text-[11px] text-slate-500 font-normal">{hint}</span>}
+      </span>
+      <span
+        className={`relative h-5 w-9 rounded-full transition-colors ${
+          checked ? 'bg-sky-600' : 'bg-slate-700'
+        }`}
+      >
+        <span
+          className={`absolute top-0.5 h-4 w-4 rounded-full bg-white transition-transform ${
+            checked ? 'translate-x-[18px]' : 'translate-x-0.5'
+          }`}
+        />
+      </span>
+    </button>
   );
 }
 
