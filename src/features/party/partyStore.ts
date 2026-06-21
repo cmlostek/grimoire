@@ -60,6 +60,21 @@ export type CharacterFeature = {
   uses?: { current: number; max: number; period: 'Short' | 'Long' | 'Day' | 'Encounter' };
 };
 
+/** Free-form flavour fields collected during character creation. None of
+ *  these affect mechanics — they live on the sheet to give the character
+ *  a face. */
+export type CharacterDetails = {
+  height?: string;
+  weight?: string;
+  age?: string;
+  gender?: string;
+  eyes?: string;
+  hair?: string;
+  skin?: string;
+  alignment?: string;
+  deity?: string;
+};
+
 export type PartyMember = {
   id: string;
   owner_user_id: string | null;
@@ -115,6 +130,8 @@ export type PartyMember = {
   classId?: string;
   /** Chosen subclass slug from the matching Class's subclasses[] entries. */
   subclassId?: string;
+  /** Free-form appearance/personality fields collected during creation. */
+  details?: CharacterDetails;
 };
 
 export const DEFAULT_GOLD: Gold = { pp: 0, gp: 0, ep: 0, sp: 0, cp: 0 };
@@ -181,6 +198,7 @@ function rowToMember(r: Row): PartyMember {
     features: d.features ?? [],
     classId: d.classId,
     subclassId: d.subclassId,
+    details: d.details,
   };
 }
 
@@ -224,7 +242,7 @@ function patchToUpdate(
     'race', 'classSummary',
     'xp', 'gold', 'deathSaves', 'skillProfs', 'saveProfs', 'inventory',
     'spellAbility', 'spellSlots', 'spells', 'customActions', 'features',
-    'classId', 'subclassId',
+    'classId', 'subclassId', 'details',
   ];
   const needsDataUpdate = dataKeys.some((k) => k in patch);
   if (needsDataUpdate) {

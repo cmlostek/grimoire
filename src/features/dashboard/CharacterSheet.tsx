@@ -6,6 +6,7 @@ import {
   DEFAULT_GOLD,
   DEFAULT_SPELL_SLOTS,
   type ActionCategory,
+  type CharacterDetails,
   type CharacterFeature,
   type CustomAction,
   type InventoryItem,
@@ -254,6 +255,10 @@ export default function CharacterSheet({
 
         <Card title="Skills" subtitle="Click pip to toggle proficiency · click modifier to roll" className="lg:col-span-2">
           <SkillsBlock draft={draft} onApply={apply} />
+        </Card>
+
+        <Card title="Description" subtitle="Appearance, alignment, deity — flavour only" className="lg:col-span-2">
+          <DetailsBlock draft={draft} onApply={apply} />
         </Card>
 
         <Card title="Languages & notes" subtitle="Free-text" className="lg:col-span-2">
@@ -1937,6 +1942,47 @@ function SpellPicker({
           )}
         </div>
       )}
+    </div>
+  );
+}
+
+// ── Description / details ─────────────────────────────────────────────────
+
+const DETAIL_FIELDS: { key: keyof CharacterDetails; label: string; placeholder: string }[] = [
+  { key: 'gender', label: 'Gender', placeholder: '—' },
+  { key: 'age', label: 'Age', placeholder: '—' },
+  { key: 'height', label: 'Height', placeholder: '—' },
+  { key: 'weight', label: 'Weight', placeholder: '—' },
+  { key: 'eyes', label: 'Eyes', placeholder: '—' },
+  { key: 'hair', label: 'Hair', placeholder: '—' },
+  { key: 'skin', label: 'Skin', placeholder: '—' },
+  { key: 'alignment', label: 'Alignment', placeholder: '—' },
+  { key: 'deity', label: 'Deity', placeholder: '—' },
+];
+
+function DetailsBlock({ draft, onApply }: { draft: PartyMember; onApply: (p: Partial<PartyMember>) => void }) {
+  const details = draft.details ?? {};
+  const update = (patch: Partial<CharacterDetails>) => {
+    const next = { ...details, ...patch };
+    // Drop empty-string values so the object stays clean.
+    for (const k of Object.keys(next) as (keyof CharacterDetails)[]) {
+      if (!next[k]) delete next[k];
+    }
+    onApply({ details: Object.keys(next).length > 0 ? next : undefined });
+  };
+  return (
+    <div className="grid grid-cols-2 md:grid-cols-3 gap-x-4 gap-y-2">
+      {DETAIL_FIELDS.map((f) => (
+        <label key={f.key} className="block">
+          <div className="text-[10px] uppercase tracking-wider text-slate-500 mb-0.5">{f.label}</div>
+          <input
+            value={details[f.key] ?? ''}
+            onChange={(e) => update({ [f.key]: e.target.value })}
+            placeholder={f.placeholder}
+            className="w-full bg-slate-950 border border-slate-800 rounded px-2 py-1 text-sm text-slate-200 placeholder:text-slate-700 focus:outline-none focus:border-sky-700"
+          />
+        </label>
+      ))}
     </div>
   );
 }

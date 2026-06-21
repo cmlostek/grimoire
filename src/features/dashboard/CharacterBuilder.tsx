@@ -7,10 +7,13 @@ import {
   SPECIES_2024,
   BACKGROUNDS_2024,
   SPELLS_2024,
+  EQUIPMENT_2024,
 } from '../../data/srd';
 import type { Class, Species, Background } from '../../data/types';
 import {
+  type CharacterDetails,
   type CharacterFeature,
+  type Gold,
   type InventoryItem,
   type KnownSpell,
   type PartyMember,
@@ -98,9 +101,69 @@ function splitEquipmentOptions(s: string): { a: string; b: string } | null {
   return { a: m[1].trim().replace(/[.,;]+$/, ''), b: m[2].trim().replace(/[.,;]+$/, '') };
 }
 
+/** Index for matching parsed item names back to a SRD equipment slug.
+ *  Built lazily on first call. */
+let equipmentByLowerName: Map<string, string> | null = null;
+function eqLookup(name: string): { sourceKind: 'srd-item' | 'custom'; sourceId?: string } {
+  if (!equipmentByLowerName) {
+    equipmentByLowerName = new Map();
+    for (const e of EQUIPMENT_2024) {
+      equipmentByLowerName.set(e.name.toLowerCase(), e.index);
+      // De-pluralize for matches like "Handaxes" → "Handaxe"
+      if (e.name.endsWith('s')) {
+        equipmentByLowerName.set((e.name.slice(0, -1)).toLowerCase(), e.index);
+      }
+    }
+  }
+  const key = name.toLowerCase().replace(/\s*\([^)]*\)\s*$/, '').trim();
+  const singular = key.endsWith('s') ? key.slice(0, -1) : key;
+  const hit = equipmentByLowerName.get(key) ?? equipmentByLowerName.get(singular);
+  return hit ? { sourceKind: 'srd-item', sourceId: hit } : { sourceKind: 'custom' };
+}
+
+/** Parse one half of the equipment string into individual items + coin.
+ *  Splits on commas at depth zero so parenthetical clarifications stay intact.
+ *  Recognises leading quantities ("4 Handaxes", "20 Arrows") and trailing
+ *  "N GP/SP/CP/PP/EP" entries, which roll up into a Gold object instead of
+ *  becoming inventory rows. */
+function parseEquipmentList(s: string): { items: { name: string; qty: number }[]; gold: Gold } {
+  const parts: string[] = [];
+  let depth = 0;
+  let buf = '';
+  for (const ch of s) {
+    if (ch === '(') depth += 1;
+    else if (ch === ')') depth = Math.max(0, depth - 1);
+    if (ch === ',' && depth === 0) {
+      parts.push(buf.trim());
+      buf = '';
+    } else {
+      buf += ch;
+    }
+  }
+  if (buf.trim()) parts.push(buf.trim());
+
+  const items: { name: string; qty: number }[] = [];
+  const gold: Gold = { ...DEFAULT_GOLD };
+  for (let part of parts) {
+    part = part.replace(/^and\s+/i, '').trim();
+    if (!part) continue;
+    const coinM = part.match(/^(\d+)\s*(GP|SP|CP|PP|EP)\b/i);
+    if (coinM) {
+      const n = parseInt(coinM[1], 10);
+      const unit = coinM[2].toLowerCase() as keyof Gold;
+      gold[unit] = (gold[unit] ?? 0) + n;
+      continue;
+    }
+    const qtyM = part.match(/^(\d+)\s+(.+)$/);
+    if (qtyM) items.push({ qty: parseInt(qtyM[1], 10), name: qtyM[2].trim() });
+    else items.push({ qty: 1, name: part });
+  }
+  return { items, gold };
+}
+
 // ── Component ─────────────────────────────────────────────────────────────
 
-type Step = 'species' | 'class' | 'background' | 'abilities' | 'equipment' | 'spells' | 'finish';
+type Step = 'species' | 'class' | 'background' | 'abilities' | 'equipment' | 'spells' | 'details' | 'finish';
 
 type State = {
   step: Step;
@@ -116,6 +179,7 @@ type State = {
   chosenLv1: string[];
   name: string;
   player: string;
+  details: CharacterDetails;
 };
 
 const INITIAL: State = {
@@ -131,6 +195,7 @@ const INITIAL: State = {
   chosenLv1: [],
   name: '',
   player: '',
+  details: {},
 };
 
 export default function CharacterBuilder({
@@ -164,6 +229,8 @@ export default function CharacterBuilder({
 
   const startingSpellRules = s.classId ? STARTING_SPELLS[s.classId] ?? { cantrips: 0, lv1: 0, label: '' } : { cantrips: 0, lv1: 0, label: '' };
   const needsSpells = startingSpellRules.cantrips > 0 || startingSpellRules.lv1 > 0;
+  // Always include the spells step so non-casters get a clear "your class
+  // doesn't get spells" message instead of the step silently disappearing.
 
   // ── Validation ──────────────────────────────────────────────────────────
   const stepValid = (step: Step): boolean => {
@@ -199,13 +266,14 @@ export default function CharacterBuilder({
         return s.chosenCantrips.length === startingSpellRules.cantrips &&
                s.chosenLv1.length === startingSpellRules.lv1;
       }
+      case 'details': return true; // all fields optional
       case 'finish': return s.name.trim().length > 0;
     }
   };
 
-  const STEPS: Step[] = needsSpells
-    ? ['species', 'class', 'background', 'abilities', 'equipment', 'spells', 'finish']
-    : ['species', 'class', 'background', 'abilities', 'equipment', 'finish'];
+  const STEPS: Step[] = [
+    'species', 'class', 'background', 'abilities', 'equipment', 'spells', 'details', 'finish',
+  ];
 
   const stepIndex = STEPS.indexOf(s.step);
   const goNext = () => {
@@ -252,31 +320,47 @@ export default function CharacterBuilder({
       });
     }
 
-    // Inventory: store the chosen equipment string as a single custom note —
-    // detailed item-by-item parsing is out of scope. User can break it up later.
+    // Inventory + gold: parse the chosen equipment string into individual
+    // rows so weapons land as SRD entries (with weapon stats) and trailing
+    // "N GP" entries roll into the gold purse.
     const inventory: InventoryItem[] = [];
-    const eqText = (() => {
-      const opts = splitEquipmentOptions(cls.startingEquipment);
-      if (!opts) return cls.startingEquipment;
-      return s.equipmentChoice === 'A' ? opts.a : opts.b;
-    })();
-    if (eqText) {
+    const startingGold: Gold = { ...DEFAULT_GOLD };
+    const addParsed = (text: string) => {
+      if (!text) return;
+      const { items, gold } = parseEquipmentList(text);
+      for (const it of items) {
+        const lookup = eqLookup(it.name);
+        inventory.push({
+          id: crypto.randomUUID(),
+          sourceKind: lookup.sourceKind,
+          sourceId: lookup.sourceId,
+          name: it.name,
+          qty: it.qty,
+          equipped: false,
+        });
+      }
+      for (const k of ['pp', 'gp', 'ep', 'sp', 'cp'] as (keyof Gold)[]) {
+        startingGold[k] = (startingGold[k] ?? 0) + (gold[k] ?? 0);
+      }
+    };
+    const opts = splitEquipmentOptions(cls.startingEquipment);
+    if (opts) addParsed(s.equipmentChoice === 'A' ? opts.a : opts.b);
+    else if (cls.startingEquipment) {
+      // No A/B split — drop the whole thing in as a custom note we can't parse.
       inventory.push({
         id: crypto.randomUUID(),
         sourceKind: 'custom',
-        name: `Starting equipment (${s.equipmentChoice}): ${eqText}`,
+        name: `Starting equipment: ${cls.startingEquipment}`,
         qty: 1,
         equipped: false,
       });
     }
     if (bg.equipment) {
-      inventory.push({
-        id: crypto.randomUUID(),
-        sourceKind: 'custom',
-        name: `Background equipment: ${bg.equipment.replace(/_/g, '')}`,
-        qty: 1,
-        equipped: false,
-      });
+      // Background equipment uses the same "(A) ... ; or (B) ..." pattern, so try the same split.
+      const bgOpts = splitEquipmentOptions(bg.equipment);
+      // Default to option A for the background; backgrounds are uniform enough
+      // that this matches what most players pick.
+      addParsed(bgOpts?.a ?? bg.equipment);
     }
 
     // Known spells (only if caster).
@@ -333,7 +417,7 @@ export default function CharacterBuilder({
       languages: 'Common',
       source: 'manual',
       xp: 0,
-      gold: { ...DEFAULT_GOLD },
+      gold: startingGold,
       deathSaves: { ...DEFAULT_DEATH_SAVES },
       skillProfs,
       saveProfs,
@@ -343,6 +427,7 @@ export default function CharacterBuilder({
       spells,
       customActions: [],
       features,
+      details: Object.keys(s.details).length > 0 ? s.details : undefined,
     };
 
     onCreate(member);
@@ -416,12 +501,19 @@ export default function CharacterBuilder({
             <SpellsStep
               cls={cls}
               rules={startingSpellRules}
+              needsSpells={needsSpells}
               cantripPool={spellPool.cantrips}
               lv1Pool={spellPool.lv1}
               chosenCantrips={s.chosenCantrips}
               chosenLv1={s.chosenLv1}
               onCantrip={(ids) => update({ chosenCantrips: ids })}
               onLv1={(ids) => update({ chosenLv1: ids })}
+            />
+          )}
+          {s.step === 'details' && (
+            <DetailsStep
+              details={s.details}
+              onChange={(patch) => update({ details: { ...s.details, ...patch } })}
             />
           )}
           {s.step === 'finish' && (
@@ -857,6 +949,7 @@ function EquipmentStep({ cls, choice, onChoice, bg }: { cls: Class; choice: 'A' 
 function SpellsStep({
   cls,
   rules,
+  needsSpells,
   cantripPool,
   lv1Pool,
   chosenCantrips,
@@ -866,6 +959,7 @@ function SpellsStep({
 }: {
   cls: Class;
   rules: { cantrips: number; lv1: number; label: string };
+  needsSpells: boolean;
   cantripPool: string[];
   lv1Pool: string[];
   chosenCantrips: string[];
@@ -877,6 +971,27 @@ function SpellsStep({
     if (set.includes(id)) onSet(set.filter((x) => x !== id));
     else if (set.length < max) onSet([...set, id]);
   };
+
+  if (!needsSpells) {
+    // Friendly placeholder so non-caster players don't wonder why the spells
+    // step is empty. Most martial classes (Fighter, Monk, Rogue) never cast;
+    // Paladin and Ranger gain spellcasting at level 2, not level 1.
+    const lateCaster = cls.index === 'paladin' || cls.index === 'ranger';
+    return (
+      <div className="text-center py-12 text-slate-400 max-w-md mx-auto space-y-2">
+        <Sparkles size={32} className="text-slate-700 mx-auto" />
+        <div className="text-sm">
+          {cls.name}s don't pick spells at level 1.
+        </div>
+        <div className="text-xs text-slate-500 leading-relaxed">
+          {lateCaster
+            ? `${cls.name}s gain Spellcasting at level 2. You'll pick your starting spells then via the level-up flow.`
+            : `${cls.name} is a non-magical class — your power comes from training, not spells. You'll still see custom spells / scrolls / wands in your inventory if you find or buy them.`}
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-5">
       <div className="text-sm text-slate-400">
@@ -898,6 +1013,47 @@ function SpellsStep({
           onToggle={(id) => toggle(chosenLv1, onLv1, rules.lv1, id)}
         />
       )}
+    </div>
+  );
+}
+
+const DETAIL_FIELDS: { key: keyof CharacterDetails; label: string; placeholder: string }[] = [
+  { key: 'gender', label: 'Gender', placeholder: 'Female, male, non-binary, …' },
+  { key: 'age', label: 'Age', placeholder: '24' },
+  { key: 'height', label: 'Height', placeholder: '5 4"' },
+  { key: 'weight', label: 'Weight', placeholder: '140 lb' },
+  { key: 'eyes', label: 'Eyes', placeholder: 'Hazel' },
+  { key: 'hair', label: 'Hair', placeholder: 'Auburn, braided' },
+  { key: 'skin', label: 'Skin', placeholder: 'Pale, freckled' },
+  { key: 'alignment', label: 'Alignment', placeholder: 'Chaotic Good' },
+  { key: 'deity', label: 'Deity', placeholder: 'Eilistraee' },
+];
+
+function DetailsStep({
+  details,
+  onChange,
+}: {
+  details: CharacterDetails;
+  onChange: (patch: Partial<CharacterDetails>) => void;
+}) {
+  return (
+    <div className="space-y-3">
+      <div className="text-sm text-slate-400">
+        Optional flavour — give your character a face. None of this affects mechanics; you can leave any field blank.
+      </div>
+      <div className="grid grid-cols-3 gap-3">
+        {DETAIL_FIELDS.map((f) => (
+          <label key={f.key} className="block">
+            <div className="text-xs text-slate-500 mb-1">{f.label}</div>
+            <input
+              value={details[f.key] ?? ''}
+              onChange={(e) => onChange({ [f.key]: e.target.value || undefined })}
+              placeholder={f.placeholder}
+              className="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1.5 text-sm text-slate-100 placeholder:text-slate-600 focus:outline-none focus:border-sky-700"
+            />
+          </label>
+        ))}
+      </div>
     </div>
   );
 }
