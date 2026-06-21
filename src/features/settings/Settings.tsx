@@ -20,11 +20,14 @@ import {
   FlaskConical,
   Mic,
   BookOpen,
+  Download,
 } from 'lucide-react';
+import { downloadCampaignExport } from './exportCampaign';
 import PageHeader from '../../components/PageHeader';
 import { useSession } from '../session/sessionStore';
 import { useCampaignSettings } from '../notes/campaignSettingsStore';
 import { useTheme } from '../session/themeStore';
+import { useSidebar } from '../session/sidebarStore';
 import { useNavCustomization } from '../../hooks/useNavCustomization';
 
 // Mirrors the nav array in App.tsx — kept here so the Customize-nav panel can
@@ -51,7 +54,12 @@ export default function Settings() {
   const setViewAsPlayer = useSession((s) => s.setViewAsPlayer);
   const leaveCurrent = useSession((s) => s.leaveCurrent);
   const signOut = useSession((s) => s.signOut);
+  const campaignId = useSession((s) => s.campaignId);
+  const campaignName = useSession((s) => s.campaignName);
+  const [exporting, setExporting] = useState(false);
   const { mode, toggle: toggleMode } = useTheme();
+  const hoverExpand = useSidebar((s) => s.hoverExpand);
+  const setHoverExpand = useSidebar((s) => s.setHoverExpand);
 
   const togglePage = useCampaignSettings((s) => s.togglePage);
   const toggleGmPage = useCampaignSettings((s) => s.toggleGmPage);
@@ -59,6 +67,8 @@ export default function Settings() {
   const showAll = useCampaignSettings((s) => s.showAll);
   const hiddenPages = useCampaignSettings((s) => s.settings.hiddenPages);
   const allowedGmPages = useCampaignSettings((s) => s.settings.allowedGmPages ?? []);
+  const hpRollingMethod = useCampaignSettings((s) => s.settings.hpRollingMethod);
+  const setHpRollingMethod = useCampaignSettings((s) => s.setHpRollingMethod);
 
   const trueIsGM = role === 'gm' || role === 'cogm';
   const isGM = trueIsGM && !viewAsPlayer;
@@ -82,6 +92,16 @@ export default function Settings() {
             icon={mode === 'dark' ? <Sun size={14} /> : <Moon size={14} />}
             label={mode === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
             onClick={toggleMode}
+          />
+          <SwitchRow
+            label="Auto-expand sidebar"
+            hint={
+              hoverExpand
+                ? 'Sidebar grows to full width when you hover or focus it.'
+                : 'Sidebar stays as a narrow icon rail; hover over icons for labels.'
+            }
+            checked={hoverExpand}
+            onChange={setHoverExpand}
           />
         </Section>
 
@@ -115,6 +135,32 @@ export default function Settings() {
           </Section>
         )}
 
+        {isGM && (
+          <Section title="House rules">
+            <div className="px-4 py-3 border-b border-slate-800 last:border-b-0">
+              <div className="text-sm text-slate-200">HP on level-up</div>
+              <div className="text-[11px] text-slate-500 font-normal mb-2">
+                How characters gain HP when leveling. Level-up modal defaults to this; players can still override per-level.
+              </div>
+              <div className="flex rounded overflow-hidden border border-slate-700 w-fit">
+                {(['avg', 'roll', 'manual'] as const).map((m) => (
+                  <button
+                    key={m}
+                    onClick={() => setHpRollingMethod(m)}
+                    className={`px-3 py-1 text-xs ${
+                      hpRollingMethod === m
+                        ? 'bg-sky-900/40 text-sky-200'
+                        : 'bg-slate-900 text-slate-400 hover:bg-slate-800'
+                    }`}
+                  >
+                    {m === 'avg' ? 'Take average' : m === 'roll' ? 'Roll the die' : 'Manual entry'}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </Section>
+        )}
+
         {trueIsGM && (
           <Section title="GM tools">
             <Row
@@ -126,6 +172,20 @@ export default function Settings() {
                   : 'Preview the campaign as a regular player.'
               }
               onClick={() => setViewAsPlayer(!viewAsPlayer)}
+            />
+            <Row
+              icon={<Download size={14} />}
+              label={exporting ? 'Building export…' : 'Export campaign'}
+              hint="Download a JSON snapshot of party, notes, NPCs, homebrew, settings, maps, and initiative. Chat history and transcripts are excluded."
+              onClick={async () => {
+                if (!campaignId || exporting) return;
+                setExporting(true);
+                try {
+                  await downloadCampaignExport(campaignId, campaignName);
+                } finally {
+                  setExporting(false);
+                }
+              }}
             />
           </Section>
         )}
@@ -147,6 +207,47 @@ function Section({ title, children }: { title: string; children: React.ReactNode
         {children}
       </div>
     </section>
+  );
+}
+
+function SwitchRow({
+  label,
+  hint,
+  checked,
+  onChange,
+}: {
+  label: string;
+  hint?: string;
+  checked: boolean;
+  onChange: (next: boolean) => void;
+}) {
+  // Track 40px wide, thumb 16px, 2px padding each side: off=left:2, on=left:22
+  // (40 - 16 - 2 = 22). Using fixed offsets so the thumb stays fully inside
+  // the pill in both states without relying on arbitrary translate values.
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={checked}
+      onClick={() => onChange(!checked)}
+      className="w-full flex items-center gap-3 px-4 py-3 text-sm text-slate-200 hover:bg-slate-800/40 border-b border-slate-800 last:border-b-0"
+    >
+      <span className="flex-1 text-left">
+        {label}
+        {hint && <span className="block text-[11px] text-slate-500 font-normal">{hint}</span>}
+      </span>
+      <span
+        className={`relative inline-block h-5 w-10 shrink-0 rounded-full transition-colors ${
+          checked ? 'bg-sky-600' : 'bg-slate-700'
+        }`}
+        aria-hidden
+      >
+        <span
+          className="absolute top-0.5 h-4 w-4 rounded-full bg-white shadow-sm transition-all"
+          style={{ left: checked ? '22px' : '2px' }}
+        />
+      </span>
+    </button>
   );
 }
 

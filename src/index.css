@@ -422,6 +422,106 @@ input[type="number"] { -moz-appearance: textfield; appearance: textfield; }
   border-top: 1px solid #1e293b;
 }
 
+/* SRD popover (spells, feats, etc.) — themed to match party-tooltip but with
+ * room for a markdown body. Used by the character builder spell picker and
+ * the level-up modal's feat picker. */
+.srd-popover {
+  background: linear-gradient(180deg, #0b1320 0%, #0a111c 100%);
+  border: 1px solid #1e2a3f;
+  border-radius: 0.6em;
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.7), 0 0 0 1px rgba(56, 189, 248, 0.06);
+  font-family: ui-sans-serif, system-ui, sans-serif;
+  pointer-events: auto;
+  overflow: hidden;
+  max-height: 480px;
+  display: flex;
+  flex-direction: column;
+}
+.srd-popover-inner {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.srd-popover-header {
+  padding: 0.7em 0.9em 0.55em;
+  background: rgba(56, 189, 248, 0.04);
+  border-bottom: 1px solid #1e2a3f;
+}
+.srd-popover-name {
+  font-family: "Iowan Old Style", Georgia, serif;
+  font-size: 1.05rem;
+  color: #bae6fd;
+  font-weight: 600;
+  line-height: 1.15;
+}
+.srd-popover-sub {
+  font-size: 0.7em;
+  color: #64748b;
+  margin-top: 0.15em;
+  font-style: italic;
+  text-transform: capitalize;
+}
+.srd-popover-stats {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.25em 0.8em;
+  padding: 0.55em 0.9em;
+  font-size: 0.72em;
+  color: #cbd5e1;
+  border-bottom: 1px solid #1e2a3f;
+  background: rgba(15, 23, 42, 0.5);
+}
+.srd-popover-stat-label {
+  color: #475569;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-size: 0.85em;
+  margin-right: 0.45em;
+}
+.srd-popover-body {
+  padding: 0.7em 0.9em 0.8em;
+  overflow-y: auto;
+  font-size: 0.78em;
+  color: #cbd5e1;
+  line-height: 1.55;
+}
+.srd-popover-body p {
+  margin: 0 0 0.65em;
+}
+.srd-popover-body p:last-child {
+  margin-bottom: 0;
+}
+.srd-popover-divider {
+  margin-top: 0.7em;
+  padding-top: 0.55em;
+  border-top: 1px solid #1e2a3f;
+}
+.srd-popover-section-label {
+  font-size: 0.78em;
+  color: #7dd3fc;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  margin-bottom: 0.35em;
+}
+/* Tables inside a popover body (rare but spell descs sometimes have them) */
+.srd-popover-body table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 0.4em 0;
+  font-size: 0.95em;
+}
+.srd-popover-body th,
+.srd-popover-body td {
+  border: 1px solid #1e2a3f;
+  padding: 0.25em 0.45em;
+  text-align: left;
+}
+.srd-popover-body th {
+  background: rgba(56, 189, 248, 0.08);
+  color: #bae6fd;
+  font-weight: 600;
+}
+
 /* Map ping pulse — animation runs ~2s, then JS removes the element. */
 @keyframes map-ping-dot {
   0%   { transform: scale(0.6); opacity: 1; }

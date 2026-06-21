@@ -44,7 +44,11 @@ type SessionState = {
   signUp: (email: string, password: string) => Promise<void>;
   signOut: () => Promise<void>;
   refreshMyCampaigns: () => Promise<void>;
-  createCampaign: (name: string, displayName: string) => Promise<void>;
+  createCampaign: (
+    name: string,
+    displayName: string,
+    opts?: { hpRollingMethod?: 'avg' | 'roll' | 'manual' },
+  ) => Promise<void>;
   joinCampaign: (code: string, displayName: string) => Promise<void>;
   switchToCampaign: (campaignId: string) => Promise<void>;
   leaveCurrent: () => void;
@@ -254,7 +258,7 @@ export const useSession = create<SessionState>((set, get) => ({
     });
   },
 
-  createCampaign: async (name, displayName) => {
+  createCampaign: async (name, displayName, opts) => {
     set({ loading: true, error: null });
     try {
       const uid = get().userId;
@@ -275,6 +279,33 @@ export const useSession = create<SessionState>((set, get) => ({
       if (mErr) throw mErr;
       localStorage.setItem(STORAGE_KEY, campaign.id);
       localStorage.setItem(NAME_KEY, displayName);
+      // Seed the campaign's settings row with the GM's chosen HP method.
+      // Falls back to DEFAULTS (avg) if the user didn't pick.
+      if (opts?.hpRollingMethod) {
+        try {
+          await supabase
+            .from('campaign_settings')
+            .upsert(
+              {
+                campaign_id: campaign.id,
+                settings: { hpRollingMethod: opts.hpRollingMethod },
+              },
+              { onConflict: 'campaign_id' },
+            );
+          // Mirror to localStorage so the setting is available before the
+          // realtime subscription catches up.
+          try {
+            localStorage.setItem(
+              `dnd-gm:campaignSettings:${campaign.id}`,
+              JSON.stringify({ hpRollingMethod: opts.hpRollingMethod }),
+            );
+          } catch {
+            /* private mode */
+          }
+        } catch {
+          /* table may not exist yet */
+        }
+      }
       set({
         campaignId: campaign.id,
         campaignName: campaign.name,

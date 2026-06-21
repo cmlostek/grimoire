@@ -264,15 +264,50 @@ function parseMagicItems(md) {
 
 // Parse HTML <table> contents into an array of rows-of-cells (strings).
 // Section header rows (single th with colspan) become { _section: '...' }.
+// Handles multi-row <thead> with colspan grouping — e.g. the class level
+// tables where a "Spell Slots per Spell Level" header spans nine sub-columns
+// (1..9). Output: flat headers like "Spell Slots per Spell Level 3".
 function parseHtmlTable(html) {
   const headMatch = html.match(/<thead>([\s\S]*?)<\/thead>/i);
   const bodyMatch = html.match(/<tbody>([\s\S]*?)<\/tbody>/i);
   if (!bodyMatch) return null;
+
   let headers = [];
   if (headMatch) {
-    const ths = [...headMatch[1].matchAll(/<th[^>]*>([\s\S]*?)<\/th>/gi)];
-    headers = ths.map((t) => stripHtml(t[1]));
+    const headRows = [...headMatch[1].matchAll(/<tr>([\s\S]*?)<\/tr>/gi)];
+    if (headRows.length <= 1) {
+      const ths = [...(headRows[0]?.[1] ?? '').matchAll(/<th[^>]*>([\s\S]*?)<\/th>/gi)];
+      headers = ths.map((t) => stripHtml(t[1]));
+    } else {
+      // Two-row header. First row carries groups (with colspan), second row
+      // carries the per-column sub-labels. Empty sub-labels fall back to the
+      // primary; spanning primaries combine with their sub-labels.
+      const primary = [...headRows[0][1].matchAll(/<th([^>]*)>([\s\S]*?)<\/th>/gi)].map((m) => ({
+        text: stripHtml(m[2]).replace(/^—+|—+$/g, '').trim(),
+        colspan: parseInt((m[1].match(/colspan\s*=\s*"(\d+)"/) || [])[1] || '1', 10),
+      }));
+      const secondary = [
+        ...headRows[1][1].matchAll(/<th[^>]*>([\s\S]*?)<\/th>/gi),
+      ].map((t) => stripHtml(t[1]));
+      const flat = [];
+      let secIdx = 0;
+      for (const p of primary) {
+        if (p.colspan === 1) {
+          const s = secondary[secIdx] ?? '';
+          flat.push(p.text || s);
+          secIdx += 1;
+        } else {
+          for (let i = 0; i < p.colspan; i += 1) {
+            const s = secondary[secIdx] ?? String(i + 1);
+            flat.push(p.text ? `${p.text} ${s}` : s);
+            secIdx += 1;
+          }
+        }
+      }
+      headers = flat;
+    }
   }
+
   const rows = [];
   const trs = [...bodyMatch[1].matchAll(/<tr>([\s\S]*?)<\/tr>/gi)];
   for (const tr of trs) {
@@ -537,6 +572,340 @@ function parseRules(md) {
   return out;
 }
 
+// ---------- Classes ----------
+
+/** Parse a key/value HTML table (two columns, no thead) into {label: value}. */
+function parseKvTable(html) {
+  const m = html.match(/<table[\s\S]*?<\/table>/i);
+  if (!m) return {};
+  const rows = [...m[0].matchAll(/<tr>([\s\S]*?)<\/tr>/gi)];
+  const out = {};
+  for (const r of rows) {
+    const cells = [...r[1].matchAll(/<t[dh][^>]*>([\s\S]*?)<\/t[dh]>/gi)].map((c) =>
+      stripHtml(c[1]),
+    );
+    if (cells.length >= 2) out[cells[0]] = cells.slice(1).join(' ');
+  }
+  return out;
+}
+
+/** Parse a class level table (thead + tbody). Returns { headers, rows[][] }. */
+function parseLevelTable(html) {
+  const tbl = parseHtmlTable(html);
+  if (!tbl) return { headers: [], rows: [] };
+  return tbl;
+}
+
+function parseClasses(md) {
+  // Each `## ClassName` block (anchor # Classes once, then per-class sections).
+  const classBlocks = md.split(/\n## /).slice(1);
+  const classes = [];
+
+  for (const block of classBlocks) {
+    const nl = block.indexOf('\n');
+    const name = block.slice(0, nl).trim();
+    // Skip non-class headers (none expected in classes.md but be defensive).
+    if (!name || /spell list|feature|table|description/i.test(name)) continue;
+    const body = block.slice(nl + 1);
+
+    // --- Core traits table (key/value) ---
+    const traitsAnchor = body.indexOf('**Core ');
+    const traits = traitsAnchor >= 0 ? parseKvTable(body.slice(traitsAnchor)) : {};
+
+    // --- Class features table (level progression) ---
+    const featuresTableAnchor = body.search(new RegExp(`\\*\\*${name} Features\\*\\*`));
+    let levelTable = [];
+    if (featuresTableAnchor >= 0) {
+      const tableHtml = body.slice(featuresTableAnchor).match(/<table[\s\S]*?<\/table>/i);
+      if (tableHtml) {
+        const { headers, rows } = parseLevelTable(tableHtml[0]);
+        const lowerHeaders = headers.map((h) => h.toLowerCase());
+        const lvIdx = lowerHeaders.findIndex((h) => /^level$/.test(h));
+        const pbIdx = lowerHeaders.findIndex((h) => /proficiency\s+bonus/.test(h));
+        const featIdx = lowerHeaders.findIndex((h) => /(class\s+)?features/.test(h));
+        for (const row of rows) {
+          if (!Array.isArray(row)) continue;
+          const lvStr = row[lvIdx] ?? '';
+          const lv = parseInt(lvStr, 10);
+          if (!Number.isFinite(lv) || lv < 1 || lv > 20) continue;
+          const featuresStr = featIdx >= 0 ? row[featIdx] ?? '' : '';
+          const features = featuresStr
+            .split(',')
+            .map((s) => s.trim())
+            .filter((s) => s && !/^—$/.test(s) && !/^subclass feature$/i.test(s));
+          const classCols = {};
+          headers.forEach((h, i) => {
+            if (i === lvIdx || i === pbIdx || i === featIdx) return;
+            const v = row[i];
+            if (v !== undefined && v !== '' && v !== '—') classCols[h] = v;
+          });
+          levelTable.push({
+            level: lv,
+            proficiencyBonus: pbIdx >= 0 ? parseInt(row[pbIdx] ?? '0', 10) : 0,
+            features,
+            classColumns: classCols,
+          });
+        }
+      }
+    }
+
+    // --- Feature descriptions (#### Name blocks under "### <Class> Class Features",
+    //     before "### <Class> Spell List" / "### <Class> Subclass") ---
+    const featuresSection = (() => {
+      const re = new RegExp(`### ${name} Class Features`);
+      const m = body.match(re);
+      if (!m) return '';
+      const start = body.indexOf(m[0]) + m[0].length;
+      // Stop at the next `###` boundary (spell list or subclass)
+      const tail = body.slice(start);
+      const endMatch = tail.match(/\n### /);
+      return endMatch ? tail.slice(0, endMatch.index) : tail;
+    })();
+
+    const features = {};
+    if (featuresSection) {
+      const chunks = featuresSection.split(/\n#### /).slice(1);
+      for (const chunk of chunks) {
+        const cnl = chunk.indexOf('\n');
+        const rawName = chunk.slice(0, cnl).trim();
+        const fbody = htmlTablesToMarkdown(chunk.slice(cnl + 1).trim());
+        if (!rawName) continue;
+        // Source prefixes feature headers with "Level N: " — strip so the keys
+        // match the references in the level table ("Rage", not "Level 1: Rage").
+        const fname = rawName.replace(/^Level\s+\d+:\s+/, '');
+        features[fname] = fbody;
+      }
+    }
+
+    // --- Spell list (caster classes only) ---
+    // Each level is a `#### Cantrips (Level 0 ...)` or `#### Level N <Class> Spells`
+    // section followed by an HTML table whose first column is the spell name
+    // (plain text, not italicized).
+    let spellList;
+    const spellListMatch = body.match(new RegExp(`### ${name} Spell List([\\s\\S]*?)(?:\n### |$)`));
+    if (spellListMatch) {
+      const sl = spellListMatch[1];
+      const sections = sl.split(/\n#### /).slice(1);
+      const buckets = [];
+      for (const section of sections) {
+        const nl2 = section.indexOf('\n');
+        const header = section.slice(0, nl2).trim();
+        let lv;
+        if (/^Cantrips/i.test(header)) {
+          lv = 0;
+        } else {
+          const lvMatch = header.match(/Level\s+(\d+)/i);
+          if (!lvMatch) continue;
+          lv = parseInt(lvMatch[1], 10);
+        }
+        const tableHtml = section.match(/<table[\s\S]*?<\/table>/i);
+        if (!tableHtml) continue;
+        const tbl = parseHtmlTable(tableHtml[0]);
+        if (!tbl) continue;
+        const names = [];
+        for (const row of tbl.rows) {
+          if (!Array.isArray(row) || row.length === 0) continue;
+          const n = row[0];
+          if (!n || /^—$/.test(n)) continue;
+          const sid = slug(n);
+          if (!names.includes(sid)) names.push(sid);
+        }
+        if (names.length > 0) buckets.push({ level: lv, spells: names });
+      }
+      if (buckets.length > 0) {
+        buckets.sort((a, b) => a.level - b.level);
+        spellList = buckets;
+      }
+    }
+
+    // --- Subclass ---
+    const subclasses = [];
+    const subAnchor = body.search(new RegExp(`### ${name} Subclass:`));
+    if (subAnchor >= 0) {
+      const subSection = body.slice(subAnchor);
+      const subHeaderMatch = subSection.match(/^### [^:]+: (.+?)\n/);
+      const subName = subHeaderMatch?.[1]?.trim();
+      if (subName) {
+        // Subclass feature blocks use `#### <FeatureName>` and a level cue in
+        // the first paragraph (italicized "_Level N <Subclass>_").
+        const subBody = subSection.replace(/^### .+?\n/, '');
+        const chunks = subBody.split(/\n#### /).slice(1);
+        const subFeatures = [];
+        for (const chunk of chunks) {
+          const cnl = chunk.indexOf('\n');
+          const rawName = chunk.slice(0, cnl).trim();
+          const fbody = chunk.slice(cnl + 1).trim();
+          // Subclass features also use "Level N: " prefix in the header.
+          const lvHeaderMatch = rawName.match(/^Level\s+(\d+):\s+(.+)$/);
+          const lvBodyMatch = fbody.match(/_Level (\d+) /);
+          const level = lvHeaderMatch
+            ? parseInt(lvHeaderMatch[1], 10)
+            : lvBodyMatch
+              ? parseInt(lvBodyMatch[1], 10)
+              : 0;
+          const fname = lvHeaderMatch ? lvHeaderMatch[2] : rawName;
+          subFeatures.push({
+            level,
+            name: fname,
+            desc: htmlTablesToMarkdown(fbody),
+          });
+        }
+        subclasses.push({
+          index: slug(subName),
+          name: subName,
+          className: name,
+          features: subFeatures,
+        });
+      }
+    }
+
+    const hitDie = (() => {
+      const v = traits['Hit Point Die'] ?? '';
+      const m = v.match(/D(\d+)/i);
+      return m ? parseInt(m[1], 10) : 0;
+    })();
+
+    classes.push({
+      index: slug(name),
+      name,
+      hitDie,
+      primaryAbility: traits['Primary Ability'] ?? '',
+      saveProfs: traits['Saving Throw Proficiencies'] ?? '',
+      skillChoices: traits['Skill Proficiencies'] ?? '',
+      weaponProfs: traits['Weapon Proficiencies'] ?? '',
+      armorProfs: traits['Armor Training'] ?? '',
+      startingEquipment: traits['Starting Equipment'] ?? '',
+      levelTable,
+      features,
+      subclasses,
+      ...(spellList ? { spellList } : {}),
+    });
+  }
+  return classes;
+}
+
+// ---------- Species / Backgrounds / Feats ----------
+
+function parseOrigins(md) {
+  const species = [];
+  const backgrounds = [];
+
+  // Backgrounds: blocks under "### Background Descriptions"
+  const bgAnchor = md.indexOf('### Background Descriptions');
+  if (bgAnchor >= 0) {
+    const tail = md.slice(bgAnchor);
+    const stop = tail.search(/\n## /);
+    const section = stop > 0 ? tail.slice(0, stop) : tail;
+    const chunks = section.split(/\n#### /).slice(1);
+    for (const chunk of chunks) {
+      const nl = chunk.indexOf('\n');
+      const name = chunk.slice(0, nl).trim();
+      const body = chunk.slice(nl + 1);
+      const lines = body.split('\n').map((l) => l.trim());
+      const fieldOf = (label) => {
+        const re = new RegExp(`^\\*\\*${label}:\\*\\*\\s*(.+)$`);
+        const hit = lines.find((l) => re.test(l));
+        return hit ? hit.replace(re, '$1').trim() : '';
+      };
+      const ability = fieldOf('Ability Scores');
+      const feat = fieldOf('Feat');
+      const skills = fieldOf('Skill Proficiencies');
+      const tool = fieldOf('Tool Proficiency');
+      const equipment = fieldOf('Equipment');
+      backgrounds.push({
+        index: slug(name),
+        name,
+        abilityScores: ability.split(/,| and /).map((s) => s.trim()).filter(Boolean),
+        feat: feat.replace(/\s*\(see "Feats"\)\.?$/i, '').trim(),
+        skillProfs: skills.split(/,| and /).map((s) => s.trim()).filter(Boolean),
+        toolProf: tool,
+        equipment,
+      });
+    }
+  }
+
+  // Species: blocks under "### Species Descriptions"
+  const spAnchor = md.indexOf('### Species Descriptions');
+  if (spAnchor >= 0) {
+    const tail = md.slice(spAnchor);
+    const stop = tail.search(/\n## /);
+    const section = stop > 0 ? tail.slice(0, stop) : tail;
+    const chunks = section.split(/\n#### /).slice(1);
+    for (const chunk of chunks) {
+      const nl = chunk.indexOf('\n');
+      const name = chunk.slice(0, nl).trim();
+      const body = chunk.slice(nl + 1);
+      const lines = body.split('\n');
+      const fieldOf = (label) => {
+        const re = new RegExp(`^\\*\\*${label}:\\*\\*\\s*(.+)$`);
+        const hit = lines.find((l) => re.test(l));
+        return hit ? hit.replace(re, '$1').trim() : '';
+      };
+      // Traits: italicized "_Name._ body" paragraphs, possibly with embedded tables.
+      const bodyWithTables = htmlTablesToMarkdown(body);
+      const paragraphs = bodyWithTables.split(/\n\n+/);
+      const traits = [];
+      for (const p of paragraphs) {
+        const m = p.match(/^_([A-Z][A-Za-z0-9' \-]+?)\._\s*([\s\S]*)$/);
+        if (m) {
+          traits.push({ name: m[1].trim(), desc: m[2].trim() });
+        }
+      }
+      species.push({
+        index: slug(name),
+        name,
+        creatureType: fieldOf('Creature Type'),
+        size: fieldOf('Size'),
+        speed: fieldOf('Speed'),
+        traits,
+      });
+    }
+  }
+
+  return { species, backgrounds };
+}
+
+function parseFeats(md) {
+  const feats = [];
+  // Sections: ### Origin Feats / General Feats / Fighting Style Feats / Epic Boon Feats
+  const sectionRe = /\n### (Origin|General|Fighting Style|Epic Boon) Feats\n/g;
+  const matches = [...md.matchAll(sectionRe)];
+  for (let i = 0; i < matches.length; i++) {
+    const m = matches[i];
+    const cat = m[1];
+    const start = m.index + m[0].length;
+    const end = i + 1 < matches.length ? matches[i + 1].index : md.length;
+    const section = md.slice(start, end);
+    const chunks = section.split(/\n#### /).slice(1);
+    for (const chunk of chunks) {
+      const nl = chunk.indexOf('\n');
+      const name = chunk.slice(0, nl).trim();
+      const body = chunk.slice(nl + 1).trim();
+      // First italic line: `_<Category> Feat[(Prerequisite: ...)]_`
+      const firstLine = body.split('\n').find((l) => l.trim().startsWith('_'));
+      let prerequisite;
+      if (firstLine) {
+        const pm = firstLine.match(/Prerequisite:\s*([^)]+)/);
+        if (pm) prerequisite = pm[1].trim();
+      }
+      // Rest after the italic header is the body.
+      const afterHeader = firstLine
+        ? body.slice(body.indexOf(firstLine) + firstLine.length).trim()
+        : body;
+      const repeatable = /_Repeatable\._/.test(afterHeader);
+      feats.push({
+        index: slug(name),
+        name,
+        category: cat,
+        ...(prerequisite ? { prerequisite } : {}),
+        desc: htmlTablesToMarkdown(afterHeader),
+        ...(repeatable ? { repeatable: true } : {}),
+      });
+    }
+  }
+  return feats;
+}
+
 // ---------- Main ----------
 
 function load(p) {
@@ -547,11 +916,17 @@ const spellsMd = load('spells.md');
 const magicMd = load('magic.md');
 const equipMd = load('equipment.md');
 const rulesMd = load('rules.md');
+const classesMd = load('classes.md');
+const originsMd = load('origins.md');
+const featsMd = load('feats.md');
 
 const spells = parseSpells(spellsMd);
 const magic = parseMagicItems(magicMd);
 const equipment = parseEquipment(equipMd);
 const rules = parseRules(rulesMd);
+const classes = parseClasses(classesMd);
+const { species, backgrounds } = parseOrigins(originsMd);
+const feats = parseFeats(featsMd);
 
 function write(file, data) {
   const out = path.join(OUT, file);
@@ -564,6 +939,10 @@ write('5e-SRD-Spells-2024.json', spells);
 write('5e-SRD-Magic-Items-2024.json', magic);
 write('5e-SRD-Equipment-2024.json', equipment);
 write('5e-SRD-Rule-Sections-2024.json', rules);
+write('5e-SRD-Classes-2024.json', classes);
+write('5e-SRD-Species-2024.json', species);
+write('5e-SRD-Backgrounds-2024.json', backgrounds);
+write('5e-SRD-Feats-2024.json', feats);
 
 // Sanity samples
 const peek = (arr, n) => arr.find((x) => x.name === n) ?? arr.find((x) => x.index === slug(n));

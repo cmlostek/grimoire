@@ -5,12 +5,13 @@ import { useSession } from '../session/sessionStore';
 import { useVisibilityReload } from '../../hooks/useVisibilityReload';
 import { supabase } from '../../lib/supabase';
 import { parseDdb, parseGenericJson, isLikelyDdb, isDdbWrapper } from './ddb';
+import CharacterBuilder from '../dashboard/CharacterBuilder';
 import {
   Plus, Trash2, UserPlus, FileJson, ExternalLink, X, Shield, Heart,
-  Eye, Search, Brain, UserCheck, User as UserIcon, Save,
+  Eye, Search, Brain, UserCheck, User as UserIcon, Save, Wand2,
 } from 'lucide-react';
 
-type AddMode = null | 'manual' | 'json';
+type AddMode = null | 'manual' | 'json' | 'builder';
 
 
 const blankMember = (): Omit<PartyMember, 'id' | 'owner_user_id'> => ({
@@ -55,6 +56,16 @@ export default function Party() {
   const claim = useParty((s) => s.claim);
   const unclaim = useParty((s) => s.unclaim);
 
+  // After the builder finishes, players auto-claim the character they just
+  // built so they immediately own it. GMs leave it unclaimed for someone to
+  // pick up — same default as the existing "Add blank" flow.
+  const onBuilderCreate = async (m: Omit<PartyMember, 'id' | 'owner_user_id'>) => {
+    if (!campaignId) return;
+    const newId = await addPartyMember(campaignId, m);
+    if (newId && !isGM) await claim(newId);
+    setAddMode(null);
+  };
+
   const [addMode, setAddMode] = useState<AddMode>(null);
   const [memberNames, setMemberNames] = useState<Record<string, string>>({});
 
@@ -98,12 +109,20 @@ export default function Party() {
               onClick={() => {
                 if (campaignId) addPartyMember(campaignId, blankMember());
               }}
-              className="px-3 py-1.5 text-xs bg-sky-700 hover:bg-sky-600 text-slate-950 font-semibold rounded flex items-center gap-1"
+              className="px-3 py-1.5 text-xs bg-slate-800 hover:bg-slate-700 rounded flex items-center gap-1"
             >
-              <UserPlus size={14} /> Add manual
+              <UserPlus size={14} /> Add blank
             </button>
           </>
         )}
+        {/* Build character — visible to GMs and players. Players auto-claim
+            the character they create; GMs leave it unclaimed for pickup. */}
+        <button
+          onClick={() => setAddMode('builder')}
+          className="px-3 py-1.5 text-xs bg-sky-700 hover:bg-sky-600 text-slate-950 font-semibold rounded flex items-center gap-1"
+        >
+          <Wand2 size={14} /> Build character
+        </button>
       </PageHeader>
 
       <div className="flex-1 min-h-0 overflow-y-auto p-6">
@@ -143,6 +162,13 @@ export default function Party() {
             if (campaignId) addPartyMember(campaignId, p);
             setAddMode(null);
           }}
+        />
+      )}
+
+      {addMode === 'builder' && (
+        <CharacterBuilder
+          onClose={() => setAddMode(null)}
+          onCreate={onBuilderCreate}
         />
       )}
     </div>
@@ -365,9 +391,9 @@ export function CharCard({
         <div className="h-2 bg-slate-800 rounded-full overflow-hidden">
           <div
             className={`h-full transition-all ${
-              hpPct > 50 ? 'bg-emerald-600' : hpPct > 25 ? 'bg-sky-500' : 'bg-rose-600'
+              hpPct > 50 ? 'bg-green-500' : hpPct > 25 ? 'bg-yellow-500' : 'bg-red-600'
             }`}
-            style={{ width: `${Math.min(100, hpPct)}%` }}
+            style={{ width: `${Math.max(0, Math.min(100, hpPct))}%` }}
           />
         </div>
       </div>

@@ -35,6 +35,46 @@ export type InventoryItem = {
   equipped: boolean;
 };
 
+/** Action-economy bucket. Drives the Actions tab grouping. */
+export type ActionCategory = 'action' | 'bonus' | 'reaction' | 'other';
+
+/** A user-defined action that's not derived from inventory or spells.
+ *  Examples: a racial 'Breath Weapon', a feat's 'War Caster' reaction,
+ *  a feature's 'Channel Divinity'. Stored per character. */
+export type CustomAction = {
+  id: string;
+  category: ActionCategory;
+  name: string;
+  desc?: string;
+};
+
+/** A class / race / feat / other feature the user tracks on the sheet.
+ *  Phase 1 is freeform — phase 4 will let class data auto-populate these
+ *  on level-up. */
+export type CharacterFeature = {
+  id: string;
+  name: string;
+  source: 'Class' | 'Race' | 'Feat' | 'Background' | 'Other';
+  desc?: string;
+  /** Optional limited-use counter (e.g. 'Arcane Recovery 1/Long Rest'). */
+  uses?: { current: number; max: number; period: 'Short' | 'Long' | 'Day' | 'Encounter' };
+};
+
+/** Free-form flavour fields collected during character creation. None of
+ *  these affect mechanics — they live on the sheet to give the character
+ *  a face. */
+export type CharacterDetails = {
+  height?: string;
+  weight?: string;
+  age?: string;
+  gender?: string;
+  eyes?: string;
+  hair?: string;
+  skin?: string;
+  alignment?: string;
+  deity?: string;
+};
+
 export type PartyMember = {
   id: string;
   owner_user_id: string | null;
@@ -80,6 +120,23 @@ export type PartyMember = {
   spellSlots?: SpellSlots;
   /** Known / prepared spells separate from physical inventory. */
   spells?: KnownSpell[];
+  /** User-added actions/bonus/reactions/other not derived from inventory or spells. */
+  customActions?: CustomAction[];
+  /** Class / race / feat / other features the user tracks. */
+  features?: CharacterFeature[];
+  /** Structured class identifier (slug of CLASSES_2024 entry). Set by the
+   *  character builder (phase 5) or the class picker in the level-up modal,
+   *  used by phase 4 to look up level-progression data. */
+  classId?: string;
+  /** Hit die size (6/8/10/12). Derived from class but stored so the sheet
+   *  works for imported characters too. Max hit dice = character level. */
+  hitDieSize?: number;
+  /** Number of hit dice the character can still spend before a long rest. */
+  hitDiceCurrent?: number;
+  /** Chosen subclass slug from the matching Class's subclasses[] entries. */
+  subclassId?: string;
+  /** Free-form appearance/personality fields collected during creation. */
+  details?: CharacterDetails;
 };
 
 export const DEFAULT_GOLD: Gold = { pp: 0, gp: 0, ep: 0, sp: 0, cp: 0 };
@@ -142,6 +199,13 @@ function rowToMember(r: Row): PartyMember {
     spellAbility: d.spellAbility ?? null,
     spellSlots: d.spellSlots ?? DEFAULT_SPELL_SLOTS.map((s) => ({ ...s })),
     spells: d.spells ?? [],
+    customActions: d.customActions ?? [],
+    features: d.features ?? [],
+    classId: d.classId,
+    subclassId: d.subclassId,
+    details: d.details,
+    hitDieSize: d.hitDieSize,
+    hitDiceCurrent: d.hitDiceCurrent,
   };
 }
 
@@ -184,7 +248,8 @@ function patchToUpdate(
     'saves', 'skills', 'languages', 'player', 'ddbUrl', 'source',
     'race', 'classSummary',
     'xp', 'gold', 'deathSaves', 'skillProfs', 'saveProfs', 'inventory',
-    'spellAbility', 'spellSlots', 'spells',
+    'spellAbility', 'spellSlots', 'spells', 'customActions', 'features',
+    'classId', 'subclassId', 'details', 'hitDieSize', 'hitDiceCurrent',
   ];
   const needsDataUpdate = dataKeys.some((k) => k in patch);
   if (needsDataUpdate) {

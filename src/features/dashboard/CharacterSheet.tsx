@@ -1,9 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Save, Printer, BedDouble, Coffee, Heart, Dices, HeartPulse, Skull, Eye, Search, Brain, Plus, X as XIcon, Swords, Shield as ShieldIcon, Sparkles, Backpack } from 'lucide-react';
+import { Save, Printer, BedDouble, Coffee, Heart, Dices, HeartPulse, Skull, Eye, Search, Brain, Plus, X as XIcon, Swords, Shield as ShieldIcon, Sparkles, Backpack, Trash2, ChevronUp } from 'lucide-react';
+import LevelUpModal, { type LevelUpResult } from './LevelUpModal';
 import {
   DEFAULT_DEATH_SAVES,
   DEFAULT_GOLD,
   DEFAULT_SPELL_SLOTS,
+  type ActionCategory,
+  type CharacterDetails,
+  type CharacterFeature,
+  type CustomAction,
   type InventoryItem,
   type KnownSpell,
   type PartyMember,
@@ -66,6 +71,7 @@ export default function CharacterSheet({
   const [draft, setDraft] = useState<PartyMember>(m);
   const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [showLevelUp, setShowLevelUp] = useState(false);
   const edition = useCampaignSettings((s) => s.settings.srdEdition);
 
   // Sync from server when not locally edited (matches CharCard's pattern).
@@ -91,12 +97,17 @@ export default function CharacterSheet({
 
   const longRest = () => {
     // Restore HP to max, clear temp HP, reset death saves, refill spell slots.
+    // Hit dice recover up to half max (rounded down, min 1) per 5e rules.
     const slots = (draft.spellSlots ?? []).map((s) => ({ ...s, current: s.max }));
+    const maxDice = draft.level;
+    const regained = Math.max(1, Math.floor(maxDice / 2));
+    const newDice = Math.min(maxDice, (draft.hitDiceCurrent ?? maxDice) + regained);
     apply({
       hp: draft.maxHp,
       tempHp: 0,
       deathSaves: { ...DEFAULT_DEATH_SAVES },
       spellSlots: slots.length > 0 ? slots : undefined,
+      hitDiceCurrent: newDice,
     });
   };
 
@@ -158,7 +169,60 @@ export default function CharacterSheet({
         onApply={apply}
         onSave={save}
         onPrint={printSheet}
+        onLevelUp={() => setShowLevelUp(true)}
       />
+
+      {showLevelUp && (
+        <LevelUpModal
+          member={draft}
+          onClose={() => setShowLevelUp(false)}
+          onConfirm={(result: LevelUpResult) => {
+            // Merge the modal output into the sheet. Newly-unlocked class
+            // features append to the existing list so previously-tracked items
+            // (manual entries, racial traits) survive. Ability bumps apply on
+            // top of current scores, capped at 20.
+            const bumps = result.abilityBumps ?? {};
+            const bumped: Partial<PartyMember> = {};
+            for (const k of ['str', 'dex', 'con', 'int', 'wis', 'cha'] as const) {
+              const delta = bumps[k];
+              if (delta) bumped[k] = Math.min(20, draft[k] + delta);
+            }
+            // Level-up grants one new hit die. If the character doesn't have
+            // a stored die size yet, derive it from the class lookup table.
+            const newMaxDice = result.level;
+            const newCurrentDice = (draft.hitDiceCurrent ?? draft.level) + 1;
+            const inferredDieSize = (() => {
+              if (draft.hitDieSize) return undefined; // already set
+              if (!result.classId && !draft.classId) return undefined;
+              const cid = result.classId ?? draft.classId!;
+              const HIT_DIE_BY_CLASS: Record<string, number> = {
+                barbarian: 12, fighter: 10, paladin: 10, ranger: 10,
+                bard: 8, cleric: 8, druid: 8, monk: 8, rogue: 8, warlock: 8,
+                sorcerer: 6, wizard: 6,
+              };
+              return HIT_DIE_BY_CLASS[cid];
+            })();
+            apply({
+              level: result.level,
+              maxHp: result.maxHp,
+              hp: result.hp,
+              // Reset XP — sheet stores xp as "since last level".
+              xp: 0,
+              spellSlots: result.spellSlots ?? draft.spellSlots,
+              features: [...(draft.features ?? []), ...result.features],
+              ...(result.spellsAdded && result.spellsAdded.length > 0
+                ? { spells: [...(draft.spells ?? []), ...result.spellsAdded] }
+                : {}),
+              ...(result.classId ? { classId: result.classId } : {}),
+              ...(result.subclassId ? { subclassId: result.subclassId } : {}),
+              hitDiceCurrent: Math.min(newMaxDice, newCurrentDice),
+              ...(inferredDieSize ? { hitDieSize: inferredDieSize } : {}),
+              ...bumped,
+            });
+            setShowLevelUp(false);
+          }}
+        />
+      )}
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mt-4">
         <Card title="Vitals">
@@ -208,8 +272,28 @@ export default function CharacterSheet({
           <SpellbookBlock draft={draft} onApply={apply} />
         </Card>
 
+        <Card
+          title="Actions"
+          subtitle="Weapons + spells, grouped by action economy · add custom entries per bucket"
+          className="lg:col-span-2"
+        >
+          <ActionsBlock draft={draft} onApply={apply} />
+        </Card>
+
+        <Card
+          title="Features & traits"
+          subtitle="Class, race, feat, and other features · track limited uses inline"
+          className="lg:col-span-2"
+        >
+          <FeaturesBlock draft={draft} onApply={apply} />
+        </Card>
+
         <Card title="Skills" subtitle="Click pip to toggle proficiency · click modifier to roll" className="lg:col-span-2">
           <SkillsBlock draft={draft} onApply={apply} />
+        </Card>
+
+        <Card title="Description" subtitle="Appearance, alignment, deity — flavour only" className="lg:col-span-2">
+          <DetailsBlock draft={draft} onApply={apply} />
         </Card>
 
         <Card title="Languages & notes" subtitle="Free-text" className="lg:col-span-2">
@@ -230,6 +314,44 @@ export default function CharacterSheet({
   );
 }
 
+// ── XP / Level ────────────────────────────────────────────────────────────
+
+/** Cumulative XP table for reference — index 1..20 maps to the total XP a
+ *  character would need under standard SRD rules to *be* that level. We don't
+ *  store XP as a cumulative value, but the deltas below are derived from it. */
+const XP_THRESHOLDS_CUMULATIVE: number[] = [
+  0, 0, 300, 900, 2700, 6500, 14000, 23000, 34000, 48000, 64000,
+  85000, 100000, 120000, 140000, 165000, 195000, 225000, 265000, 305000, 355000,
+];
+
+/** XP needed to advance *from* level N to level N+1 (the band, not the
+ *  cumulative threshold). We store xp on the sheet as "earned since last
+ *  level" so each level starts at 0 — easier to scan than cumulative numbers
+ *  in the hundred-thousands at high levels. */
+const XP_PER_LEVEL: number[] = Array.from({ length: 21 }, (_, i) =>
+  i < 1 || i >= 20 ? 0 : XP_THRESHOLDS_CUMULATIVE[i + 1] - XP_THRESHOLDS_CUMULATIVE[i],
+);
+
+/** How much XP separates the current level from the next, and how far the
+ *  character has progressed into that band. XP is now "since last level"
+ *  semantics — the value resets to 0 each time the player levels up. */
+function xpProgress(xp: number, level: number) {
+  const lv = Math.max(1, Math.min(20, level));
+  if (lv >= 20) return { atMax: true as const };
+  const needed = XP_PER_LEVEL[lv];
+  const remaining = Math.max(0, needed - xp);
+  const eligible = xp >= needed;
+  return {
+    atMax: false as const,
+    nextLevel: lv + 1,
+    needed,
+    remaining,
+    eligible,
+    /** 0..1 progress fraction inside the current XP band. */
+    pct: Math.max(0, Math.min(1, xp / Math.max(1, needed))),
+  };
+}
+
 // ── Header ──────────────────────────────────────────────────────────────
 
 function SheetHeader({
@@ -239,6 +361,7 @@ function SheetHeader({
   onApply,
   onSave,
   onPrint,
+  onLevelUp,
 }: {
   draft: PartyMember;
   dirty: boolean;
@@ -246,6 +369,7 @@ function SheetHeader({
   onApply: (p: Partial<PartyMember>) => void;
   onSave: () => void;
   onPrint: () => void;
+  onLevelUp: () => void;
 }) {
   return (
     <div className="border border-slate-800 rounded-lg p-4 bg-slate-900">
@@ -286,6 +410,11 @@ function SheetHeader({
             value={draft.xp ?? 0}
             onChange={(v) => onApply({ xp: v })}
             width="w-24"
+          />
+          <LevelUpControl
+            xp={draft.xp ?? 0}
+            level={draft.level}
+            onLevelUp={onLevelUp}
           />
           <button
             onClick={onPrint}
@@ -328,6 +457,21 @@ function VitalsBlock({
 }) {
   const rollFormula = useQuickDice((s) => s.rollFormula);
   const hpPct = draft.maxHp > 0 ? (draft.hp / draft.maxHp) * 100 : 0;
+  // SRD instant-death rule: damage taken at 0 HP that equals or exceeds your
+  // HP maximum kills you outright — i.e. current HP would be at or below
+  // -maxHp. Show a status badge so the table notices.
+  const isDead = draft.maxHp > 0 && draft.hp <= -draft.maxHp;
+  const hpBarColor = hpPct > 50 ? 'bg-green-500' : hpPct > 25 ? 'bg-yellow-500' : 'bg-red-600';
+  // Hit dice — max equals character level. Default current to max on first
+  // render so older characters without a stored value behave sanely.
+  const maxHitDice = draft.level;
+  const currentHitDice = draft.hitDiceCurrent ?? maxHitDice;
+  const hitDieSize = draft.hitDieSize ?? 8;
+  const spendHitDie = () => {
+    if (currentHitDice <= 0) return;
+    rollFormula(`1d${hitDieSize} + ${abilityMod(draft.con)}`, 'Hit Die spend');
+    onApply({ hitDiceCurrent: Math.max(0, currentHitDice - 1) });
+  };
   return (
     <div className="space-y-3">
       <div className="flex gap-2 items-center text-sm text-slate-300">
@@ -339,12 +483,50 @@ function VitalsBlock({
         <span className="text-slate-500 ml-3">+</span>
         <NumInput value={draft.tempHp} onChange={(v) => onApply({ tempHp: v })} className="w-14" />
         <span className="text-slate-500">temp</span>
+        {isDead && (
+          <span
+            className="ml-auto px-2 py-0.5 text-[10px] uppercase tracking-widest font-semibold rounded bg-rose-900/60 border border-rose-700 text-rose-100"
+            title="Damage at 0 HP reached your HP maximum — your character has died (SRD instant-death rule)."
+          >
+            Dead
+          </span>
+        )}
       </div>
       <div className="h-1.5 rounded-full bg-slate-800 overflow-hidden">
         <div
-          className="h-full bg-rose-500/70 transition-[width]"
+          className={`h-full transition-[width,background-color] ${hpBarColor}`}
           style={{ width: `${Math.max(0, Math.min(100, hpPct))}%` }}
         />
+      </div>
+
+      {/* Hit dice — spend during short rests to heal. Long rest restores half. */}
+      <div className="flex items-center gap-2 text-xs text-slate-400 bg-slate-950 border border-slate-800 rounded px-2 py-1.5">
+        <Dices size={12} className="text-amber-400" />
+        <span className="text-slate-500 uppercase tracking-wider text-[10px]">Hit Dice</span>
+        <span className="font-mono text-slate-200">
+          {currentHitDice}
+          <span className="text-slate-600">/</span>
+          {maxHitDice}
+        </span>
+        <select
+          value={hitDieSize}
+          onChange={(e) => onApply({ hitDieSize: parseInt(e.target.value, 10) })}
+          className="bg-slate-900 border border-slate-700 rounded px-1 py-0.5 text-[11px] text-slate-300 font-mono focus:outline-none focus:border-sky-700"
+          title="Hit die size — usually set by your class on creation"
+        >
+          <option value={6}>d6</option>
+          <option value={8}>d8</option>
+          <option value={10}>d10</option>
+          <option value={12}>d12</option>
+        </select>
+        <button
+          onClick={spendHitDie}
+          disabled={currentHitDice <= 0}
+          className="ml-auto px-2 py-0.5 text-[11px] rounded bg-slate-800 hover:bg-slate-700 disabled:opacity-40 disabled:cursor-not-allowed text-slate-200"
+          title={`Roll 1d${hitDieSize} + Con mod and reduce the pool by one`}
+        >
+          Spend
+        </button>
       </div>
       <div className="grid grid-cols-3 gap-2">
         {armorEquipped ? (
@@ -921,6 +1103,63 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
   );
 }
 
+/**
+ * Renders next to the XP field in the header. Three states:
+ *   1. Below threshold → muted "X to N" hint
+ *   2. At/above threshold → highlighted "Level up to N" button
+ *   3. Level 20 → "Max level"
+ * Click bumps `level` by 1. HP, slot, and feature changes stay manual — those
+ * arrive in phase 4 once class data is parsed.
+ */
+function LevelUpControl({
+  xp,
+  level,
+  onLevelUp,
+}: {
+  xp: number;
+  level: number;
+  onLevelUp: () => void;
+}) {
+  const p = xpProgress(xp, level);
+  if (p.atMax) {
+    return (
+      <div className="text-center">
+        <div className="text-[10px] uppercase tracking-wider text-slate-500 mb-1">Next</div>
+        <div className="px-3 py-1 rounded border border-slate-800 bg-slate-950 text-xs text-slate-500 italic flex items-center h-[34px]">
+          Max level
+        </div>
+      </div>
+    );
+  }
+  if (p.eligible) {
+    return (
+      <div className="text-center">
+        <div className="text-[10px] uppercase tracking-wider text-amber-400/80 mb-1">Ready!</div>
+        <button
+          onClick={onLevelUp}
+          className="px-3 py-1 rounded border border-amber-600/60 bg-amber-900/30 hover:bg-amber-800/40 text-amber-200 text-xs font-medium flex items-center gap-1.5 h-[34px]"
+          title={`You have enough XP to advance — click to bump level to ${p.nextLevel}.`}
+        >
+          <ChevronUp size={13} />
+          Level up to {p.nextLevel}
+        </button>
+      </div>
+    );
+  }
+  return (
+    <div className="text-center">
+      <div className="text-[10px] uppercase tracking-wider text-slate-500 mb-1">Next</div>
+      <div
+        className="px-3 py-1 rounded border border-slate-800 bg-slate-950 text-xs text-slate-400 flex items-center gap-2 h-[34px]"
+        title={`${p.remaining.toLocaleString()} XP until level ${p.nextLevel} (need ${p.needed.toLocaleString()} this level)`}
+      >
+        <span className="font-mono">{p.remaining.toLocaleString()}</span>
+        <span className="text-slate-600">→ {p.nextLevel}</span>
+      </div>
+    </div>
+  );
+}
+
 function LabeledNumber({
   label,
   value,
@@ -1466,6 +1705,45 @@ function SpellbookBlock({
                 );
               })}
             </div>
+            {(() => {
+              // Ritual list — shows rituals across all levels in one place
+              // so players can scan their no-slot options quickly. Each entry
+              // is also still rendered above under its level.
+              const rituals = spells.filter((sp) => {
+                if (sp.sourceKind !== 'srd-spell' || !sp.sourceId) return false;
+                return getSpellsIdx(edition)[sp.sourceId]?.ritual ?? false;
+              });
+              if (rituals.length === 0) return null;
+              return (
+                <div className="mt-5 pt-3 border-t border-slate-800">
+                  <div className="text-[10px] uppercase tracking-wider text-amber-300/80 mb-2">
+                    Ritual spells
+                  </div>
+                  <div className="text-[11px] text-slate-500 mb-2 leading-snug">
+                    Can be cast without a slot in 10 extra minutes.
+                  </div>
+                  <div className="flex flex-wrap gap-1.5">
+                    {rituals
+                      .slice()
+                      .sort((a, b) => spellLevelFor(a, edition) - spellLevelFor(b, edition) || a.name.localeCompare(b.name))
+                      .map((sp) => {
+                        const lv = spellLevelFor(sp, edition);
+                        return (
+                          <span
+                            key={sp.id}
+                            className="inline-flex items-center gap-1 px-1.5 py-0.5 text-xs rounded bg-slate-950 border border-slate-800 text-slate-200"
+                          >
+                            {sp.name}
+                            <span className="text-[10px] text-slate-500">
+                              ({lv === 0 ? 'Cantrip' : `Lv ${lv}`})
+                            </span>
+                          </span>
+                        );
+                      })}
+                  </div>
+                </div>
+              );
+            })()}
             {spells.length === 0 && (
               <div className="text-sm text-slate-500 italic py-2">No spells known yet.</div>
             )}
@@ -1576,6 +1854,22 @@ function SpellRow({
           title={srd ? 'Click to view description' : undefined}
         >
           {spell.name}
+          {srd?.ritual && (
+            <span
+              className="ml-1.5 inline-block px-1 py-0 text-[9px] uppercase tracking-wider rounded bg-amber-900/40 text-amber-300 align-middle"
+              title="Ritual — can be cast without a slot in 10 extra minutes"
+            >
+              R
+            </span>
+          )}
+          {srd?.concentration && (
+            <span
+              className="ml-1 inline-block px-1 py-0 text-[9px] uppercase tracking-wider rounded bg-sky-900/40 text-sky-300 align-middle"
+              title="Concentration"
+            >
+              C
+            </span>
+          )}
         </button>
         {/* Inline at-a-glance chips: attack mod, damage, save DC */}
         {srd?.attack_type && spellAttack != null && (
@@ -1725,6 +2019,625 @@ function SpellPicker({
           )}
         </div>
       )}
+    </div>
+  );
+}
+
+// ── Description / details ─────────────────────────────────────────────────
+
+const DETAIL_FIELDS: { key: keyof CharacterDetails; label: string; placeholder: string }[] = [
+  { key: 'gender', label: 'Gender', placeholder: '—' },
+  { key: 'age', label: 'Age', placeholder: '—' },
+  { key: 'height', label: 'Height', placeholder: '—' },
+  { key: 'weight', label: 'Weight', placeholder: '—' },
+  { key: 'eyes', label: 'Eyes', placeholder: '—' },
+  { key: 'hair', label: 'Hair', placeholder: '—' },
+  { key: 'skin', label: 'Skin', placeholder: '—' },
+  { key: 'alignment', label: 'Alignment', placeholder: '—' },
+  { key: 'deity', label: 'Deity', placeholder: '—' },
+];
+
+function DetailsBlock({ draft, onApply }: { draft: PartyMember; onApply: (p: Partial<PartyMember>) => void }) {
+  const details = draft.details ?? {};
+  const update = (patch: Partial<CharacterDetails>) => {
+    const next = { ...details, ...patch };
+    // Drop empty-string values so the object stays clean.
+    for (const k of Object.keys(next) as (keyof CharacterDetails)[]) {
+      if (!next[k]) delete next[k];
+    }
+    onApply({ details: Object.keys(next).length > 0 ? next : undefined });
+  };
+  return (
+    <div className="grid grid-cols-2 md:grid-cols-3 gap-x-4 gap-y-2">
+      {DETAIL_FIELDS.map((f) => (
+        <label key={f.key} className="block">
+          <div className="text-[10px] uppercase tracking-wider text-slate-500 mb-0.5">{f.label}</div>
+          <input
+            value={details[f.key] ?? ''}
+            onChange={(e) => update({ [f.key]: e.target.value })}
+            placeholder={f.placeholder}
+            className="w-full bg-slate-950 border border-slate-800 rounded px-2 py-1 text-sm text-slate-200 placeholder:text-slate-700 focus:outline-none focus:border-sky-700"
+          />
+        </label>
+      ))}
+    </div>
+  );
+}
+
+// ── Actions ───────────────────────────────────────────────────────────────
+
+/** Standard SRD combat actions that are always available regardless of class.
+ *  Mirrors the 2024 SRD "Actions in Combat" list — we include both editions'
+ *  vocabulary where they diverge so the row reads naturally either way. */
+const STANDARD_ACTIONS: { name: string; category: ActionCategory; desc?: string }[] = [
+  { name: 'Attack', category: 'action', desc: 'Make one attack roll with a weapon or Unarmed Strike.' },
+  { name: 'Dash', category: 'action', desc: 'Extra movement equal to your Speed.' },
+  { name: 'Disengage', category: 'action', desc: 'Your movement doesn\'t provoke Opportunity Attacks until the end of your turn.' },
+  { name: 'Dodge', category: 'action', desc: 'Until your next turn, attack rolls against you have Disadvantage and you have Advantage on Dex saves.' },
+  { name: 'Help', category: 'action', desc: 'Give an ally Advantage on their next ability check, or their next attack against a creature within 5 ft of you.' },
+  { name: 'Hide', category: 'action', desc: 'Make a Stealth check vs the highest passive Perception of any creature that can see you.' },
+  { name: 'Influence', category: 'action', desc: 'Convince a creature to do something via a Charisma check (or other ability the GM determines).' },
+  { name: 'Ready', category: 'action', desc: 'Prepare a reaction trigger and the action to take when it occurs.' },
+  { name: 'Search', category: 'action', desc: 'Look for something — Perception, Investigation, Insight, or Survival depending on what.' },
+  { name: 'Study', category: 'action', desc: 'Recall lore about a creature, object, or phenomenon — Arcana, History, Nature, or Religion.' },
+  { name: 'Utilize', category: 'action', desc: 'Activate a non-magical object (e.g. pull a lever).' },
+  { name: 'Opportunity Attack', category: 'reaction', desc: 'When a hostile creature you can see leaves your reach, use your Reaction to make one melee attack.' },
+  { name: 'Interact with an Object', category: 'other', desc: 'Once per turn, free: draw, drop, pick up, or manipulate one object.' },
+  { name: 'Grapple', category: 'other', desc: 'Special Attack: target makes a Str/Dex save vs your Athletics DC. On a fail, the target has the Grappled condition.' },
+  { name: 'Shove', category: 'other', desc: 'Special Attack: target makes a Str/Dex save vs your Athletics DC. On a fail, push 5 ft or knock Prone.' },
+];
+
+function bucketByCastingTime(time: string): ActionCategory {
+  const t = (time || '').toLowerCase();
+  if (t.startsWith('bonus action')) return 'bonus';
+  if (t.startsWith('reaction')) return 'reaction';
+  if (t.startsWith('action')) return 'action';
+  return 'other';
+}
+
+const CATEGORY_LABEL: Record<ActionCategory, string> = {
+  action: 'Actions',
+  bonus: 'Bonus actions',
+  reaction: 'Reactions',
+  other: 'Other',
+};
+
+function ActionsBlock({ draft, onApply }: { draft: PartyMember; onApply: (p: Partial<PartyMember>) => void }) {
+  const edition = useCampaignSettings((s) => s.settings.srdEdition);
+  const rollFormula = useQuickDice((s) => s.rollFormula);
+  const [adding, setAdding] = useState<ActionCategory | null>(null);
+
+  const customActions = draft.customActions ?? [];
+  const setCustomActions = (next: CustomAction[]) => onApply({ customActions: next });
+
+  // Weapons → attack rows (Actions bucket). Use existing weaponStats() to
+  // compute attack bonus + damage from the character's mods.
+  const weaponRows = useMemo(() => {
+    const inv = draft.inventory ?? [];
+    const rows: { id: string; name: string; attackBonus: number; damage: string; ability: 'str' | 'dex'; equipped: boolean }[] = [];
+    for (const item of inv) {
+      const srd = srdItemFor(item, edition);
+      if (!srd?.damage) continue;
+      const stats = weaponStats(draft, srd);
+      const dmg = stats.damageDice
+        ? `${stats.damageDice}${stats.abilityMod !== 0 ? ` ${stats.abilityMod >= 0 ? '+' : ''}${stats.abilityMod}` : ''} ${srd.damage.damage_type.name}`
+        : '';
+      rows.push({
+        id: item.id,
+        name: item.name,
+        attackBonus: stats.attackBonus,
+        damage: dmg,
+        ability: stats.ability,
+        equipped: item.equipped,
+      });
+    }
+    return rows;
+  }, [draft, edition]);
+
+  // Spell rows bucketed by casting_time. Skips entries we can't resolve to
+  // a SRD spell (homebrew spells don't have a casting_time field on the
+  // KnownSpell stub — they'd need to be looked up via the homebrew store).
+  const spellsByBucket = useMemo(() => {
+    const out: Record<ActionCategory, { id: string; name: string; level: number; ritual: boolean; concentration: boolean; castingTime: string }[]> = {
+      action: [],
+      bonus: [],
+      reaction: [],
+      other: [],
+    };
+    for (const sp of draft.spells ?? []) {
+      if (sp.sourceKind !== 'srd-spell' || !sp.sourceId) continue;
+      const srd = getSpellsIdx(edition)[sp.sourceId];
+      if (!srd) continue;
+      const bucket = bucketByCastingTime(srd.casting_time);
+      out[bucket].push({
+        id: sp.id,
+        name: sp.name,
+        level: srd.level,
+        ritual: srd.ritual,
+        concentration: srd.concentration,
+        castingTime: srd.casting_time,
+      });
+    }
+    return out;
+  }, [draft.spells, edition]);
+
+  // Two-Weapon Fighting only when wielding two equipped Light melee weapons.
+  const twoWeaponEligible = useMemo(() => {
+    const inv = draft.inventory ?? [];
+    let lightEquipped = 0;
+    for (const item of inv) {
+      if (!item.equipped) continue;
+      const srd = srdItemFor(item, edition);
+      if (!srd?.damage || srd.weapon_range === 'Ranged') continue;
+      const props = (srd.properties ?? []).map((p) => p.name.toLowerCase());
+      if (props.includes('light')) lightEquipped++;
+    }
+    return lightEquipped >= 2;
+  }, [draft.inventory, edition]);
+
+  const rollAttack = (label: string, bonus: number) => {
+    rollFormula(`1d20 + ${bonus}`, `${label} attack`);
+  };
+  const rollDamage = (label: string, formula: string) => {
+    rollFormula(formula, `${label} damage`);
+  };
+
+  const buckets: ActionCategory[] = ['action', 'bonus', 'reaction', 'other'];
+
+  const renderBucket = (cat: ActionCategory) => {
+    const standard = STANDARD_ACTIONS.filter((a) => a.category === cat);
+    const spells = spellsByBucket[cat];
+    const customs = customActions.filter((a) => a.category === cat);
+    const weapons = cat === 'action' ? weaponRows : [];
+    const twoWeapon = cat === 'bonus' && twoWeaponEligible;
+
+    const hasContent = weapons.length || spells.length || standard.length || customs.length || twoWeapon;
+    if (!hasContent && cat !== 'action') return null;
+
+    return (
+      <div key={cat} className="mt-4 first:mt-0">
+        <div className="flex items-center justify-between border-b border-slate-800 pb-1">
+          <div className="text-[11px] uppercase tracking-wider text-rose-300/80">{CATEGORY_LABEL[cat]}</div>
+          <button
+            onClick={() => setAdding(adding === cat ? null : cat)}
+            className="text-[10px] uppercase tracking-wider text-slate-500 hover:text-slate-300 flex items-center gap-1"
+            title={`Add a custom ${CATEGORY_LABEL[cat].toLowerCase().replace(/s$/, '')}`}
+          >
+            <Plus size={10} /> Custom
+          </button>
+        </div>
+
+        {adding === cat && (
+          <CustomActionAdder
+            category={cat}
+            onAdd={(entry) => {
+              setCustomActions([...customActions, entry]);
+              setAdding(null);
+            }}
+            onCancel={() => setAdding(null)}
+          />
+        )}
+
+        {weapons.length > 0 && (
+          <Subgroup title="Weapon attacks">
+            {weapons.map((w) => (
+              <ActionRow
+                key={w.id}
+                name={w.name}
+                hint={`${w.equipped ? '' : '(unequipped) '}${w.ability.toUpperCase()}-based`}
+              >
+                <button
+                  onClick={() => rollAttack(w.name, w.attackBonus)}
+                  className="px-1.5 py-0.5 text-[11px] rounded bg-slate-800 hover:bg-slate-700 text-slate-200 font-mono"
+                  title="Roll attack"
+                >
+                  {w.attackBonus >= 0 ? '+' : ''}{w.attackBonus}
+                </button>
+                {w.damage && (
+                  <button
+                    onClick={() => rollDamage(w.name, (() => {
+                      // Strip the trailing damage-type word from the display string
+                      const parts = w.damage.split(' ');
+                      return parts.slice(0, -1).join(' ');
+                    })())}
+                    className="px-1.5 py-0.5 text-[11px] rounded bg-slate-800 hover:bg-slate-700 text-slate-300 font-mono"
+                    title="Roll damage"
+                  >
+                    {w.damage}
+                  </button>
+                )}
+              </ActionRow>
+            ))}
+          </Subgroup>
+        )}
+
+        {(standard.length > 0 || twoWeapon) && (
+          <Subgroup title="Standard">
+            {twoWeapon && (
+              <ActionRow
+                name="Two-Weapon Fighting"
+                hint="Bonus Action — attack with your other Light melee weapon"
+              />
+            )}
+            {standard.map((a) => (
+              <ActionRow key={a.name} name={a.name} hint={a.desc} />
+            ))}
+          </Subgroup>
+        )}
+
+        {spells.length > 0 && (
+          <Subgroup title="Spells">
+            {spells
+              .slice()
+              .sort((a, b) => a.level - b.level || a.name.localeCompare(b.name))
+              .map((s) => (
+                <ActionRow
+                  key={s.id}
+                  name={s.name}
+                  hint={`${s.level === 0 ? 'Cantrip' : `Lv ${s.level}`}${s.concentration ? ' · C' : ''}${s.ritual ? ' · R' : ''} — ${s.castingTime}`}
+                />
+              ))}
+          </Subgroup>
+        )}
+
+        {customs.length > 0 && (
+          <Subgroup title="Custom">
+            {customs.map((a) => (
+              <ActionRow
+                key={a.id}
+                name={a.name}
+                hint={a.desc}
+                onRemove={() => setCustomActions(customActions.filter((x) => x.id !== a.id))}
+              />
+            ))}
+          </Subgroup>
+        )}
+      </div>
+    );
+  };
+
+  return <div>{buckets.map(renderBucket)}</div>;
+}
+
+function Subgroup({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <div className="mt-3">
+      <div className="text-[10px] uppercase tracking-wider text-slate-500 mb-1">{title}</div>
+      <div className="space-y-1">{children}</div>
+    </div>
+  );
+}
+
+function ActionRow({
+  name,
+  hint,
+  onRemove,
+  children,
+}: {
+  name: string;
+  hint?: string;
+  onRemove?: () => void;
+  children?: React.ReactNode;
+}) {
+  return (
+    <div className="flex items-start gap-2 border-l-2 border-slate-800 pl-2 py-1 text-sm">
+      <div className="flex-1 min-w-0">
+        <div className="text-slate-100">{name}</div>
+        {hint && <div className="text-[11px] text-slate-500 leading-snug">{hint}</div>}
+      </div>
+      {children && <div className="flex gap-1 shrink-0 mt-0.5">{children}</div>}
+      {onRemove && (
+        <button
+          onClick={onRemove}
+          className="p-1 text-slate-600 hover:text-rose-400"
+          title="Remove"
+        >
+          <Trash2 size={11} />
+        </button>
+      )}
+    </div>
+  );
+}
+
+function CustomActionAdder({
+  category,
+  onAdd,
+  onCancel,
+}: {
+  category: ActionCategory;
+  onAdd: (entry: CustomAction) => void;
+  onCancel: () => void;
+}) {
+  const [name, setName] = useState('');
+  const [desc, setDesc] = useState('');
+  const submit = () => {
+    if (!name.trim()) return;
+    onAdd({ id: crypto.randomUUID(), category, name: name.trim(), desc: desc.trim() || undefined });
+    setName('');
+    setDesc('');
+  };
+  return (
+    <div className="mt-2 mb-1 p-2 bg-slate-950 border border-slate-800 rounded space-y-1.5">
+      <input
+        autoFocus
+        value={name}
+        onChange={(e) => setName(e.target.value)}
+        onKeyDown={(e) => e.key === 'Enter' && submit()}
+        placeholder={`New ${CATEGORY_LABEL[category].toLowerCase().replace(/s$/, '')}…`}
+        className="w-full bg-slate-900 border border-slate-700 rounded px-2 py-1 text-sm text-slate-100 placeholder:text-slate-600 focus:outline-none focus:border-sky-700"
+      />
+      <input
+        value={desc}
+        onChange={(e) => setDesc(e.target.value)}
+        onKeyDown={(e) => e.key === 'Enter' && submit()}
+        placeholder="Optional description"
+        className="w-full bg-slate-900 border border-slate-700 rounded px-2 py-1 text-xs text-slate-300 placeholder:text-slate-600 focus:outline-none focus:border-sky-700"
+      />
+      <div className="flex justify-end gap-1">
+        <button onClick={onCancel} className="px-2 py-0.5 text-[11px] text-slate-400 hover:text-slate-200">
+          Cancel
+        </button>
+        <button
+          onClick={submit}
+          disabled={!name.trim()}
+          className="px-2 py-0.5 text-[11px] rounded bg-sky-700 hover:bg-sky-600 disabled:opacity-40 text-white"
+        >
+          Add
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ── Features & traits ─────────────────────────────────────────────────────
+
+const FEATURE_SOURCES: CharacterFeature['source'][] = ['Class', 'Race', 'Feat', 'Background', 'Other'];
+const USE_PERIODS: NonNullable<CharacterFeature['uses']>['period'][] = ['Short', 'Long', 'Day', 'Encounter'];
+
+function FeaturesBlock({ draft, onApply }: { draft: PartyMember; onApply: (p: Partial<PartyMember>) => void }) {
+  const features = draft.features ?? [];
+  const [adding, setAdding] = useState(false);
+
+  const update = (next: CharacterFeature[]) => onApply({ features: next });
+
+  // Group by source so Class/Race/etc. read cleanly together.
+  const grouped: Record<CharacterFeature['source'], CharacterFeature[]> = {
+    Class: [], Race: [], Feat: [], Background: [], Other: [],
+  };
+  for (const f of features) grouped[f.source].push(f);
+
+  return (
+    <div>
+      <div className="flex justify-end mb-2">
+        <button
+          onClick={() => setAdding(true)}
+          className="px-2 py-1 text-xs rounded bg-slate-800 hover:bg-slate-700 text-slate-200 flex items-center gap-1"
+        >
+          <Plus size={12} /> Add feature
+        </button>
+      </div>
+
+      {adding && (
+        <FeatureAdder
+          onAdd={(f) => {
+            update([...features, f]);
+            setAdding(false);
+          }}
+          onCancel={() => setAdding(false)}
+        />
+      )}
+
+      {features.length === 0 && !adding && (
+        <div className="text-sm text-slate-500 italic py-3">
+          No features yet. Add class features, racial traits, or feats so you can track their uses inline.
+        </div>
+      )}
+
+      {FEATURE_SOURCES.map((src) => {
+        if (grouped[src].length === 0) return null;
+        return (
+          <div key={src} className="mt-4 first:mt-0">
+            <div className="text-[11px] uppercase tracking-wider text-rose-300/80 border-b border-slate-800 pb-1 mb-2">
+              {src}
+            </div>
+            <div className="space-y-2">
+              {grouped[src].map((f) => (
+                <FeatureRow
+                  key={f.id}
+                  feature={f}
+                  onChange={(patch) =>
+                    update(features.map((x) => (x.id === f.id ? { ...x, ...patch } : x)))
+                  }
+                  onRemove={() => update(features.filter((x) => x.id !== f.id))}
+                />
+              ))}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function FeatureRow({
+  feature,
+  onChange,
+  onRemove,
+}: {
+  feature: CharacterFeature;
+  onChange: (patch: Partial<CharacterFeature>) => void;
+  onRemove: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const uses = feature.uses;
+
+  return (
+    <div className="bg-slate-950 border border-slate-800 rounded p-2">
+      <div className="flex items-center gap-2">
+        <button
+          onClick={() => setOpen((v) => !v)}
+          className="flex-1 text-left text-sm text-slate-100 hover:text-sky-200"
+        >
+          {feature.name}
+        </button>
+        {uses && (
+          <UsesControl
+            current={uses.current}
+            max={uses.max}
+            period={uses.period}
+            onChange={(next) => onChange({ uses: next })}
+          />
+        )}
+        {!uses && (
+          <button
+            onClick={() => onChange({ uses: { current: 1, max: 1, period: 'Long' } })}
+            className="text-[10px] uppercase tracking-wider text-slate-500 hover:text-slate-200 px-1.5 py-0.5 rounded hover:bg-slate-800"
+            title="Add a limited-use counter"
+          >
+            Track uses
+          </button>
+        )}
+        <button
+          onClick={onRemove}
+          className="p-1 text-slate-600 hover:text-rose-400"
+          title="Remove feature"
+        >
+          <Trash2 size={11} />
+        </button>
+      </div>
+      {open && (
+        <div className="mt-2 pt-2 border-t border-slate-800 space-y-1.5">
+          <textarea
+            value={feature.desc ?? ''}
+            onChange={(e) => onChange({ desc: e.target.value })}
+            placeholder="Description (optional)"
+            rows={2}
+            className="w-full bg-slate-900 border border-slate-700 rounded px-2 py-1 text-xs text-slate-200 placeholder:text-slate-600 focus:outline-none focus:border-sky-700 resize-y"
+          />
+        </div>
+      )}
+    </div>
+  );
+}
+
+function UsesControl({
+  current,
+  max,
+  period,
+  onChange,
+}: {
+  current: number;
+  max: number;
+  period: NonNullable<CharacterFeature['uses']>['period'];
+  onChange: (next: NonNullable<CharacterFeature['uses']>) => void;
+}) {
+  return (
+    <div className="flex items-center gap-1 text-[11px]">
+      <button
+        onClick={() => onChange({ current: Math.max(0, current - 1), max, period })}
+        disabled={current <= 0}
+        className="w-5 h-5 rounded bg-slate-800 hover:bg-slate-700 disabled:opacity-40 text-slate-300 leading-none"
+        title="Use one"
+      >
+        −
+      </button>
+      <span className="font-mono text-slate-300 min-w-[2.5rem] text-center">
+        {current}/{max}
+      </span>
+      <button
+        onClick={() => onChange({ current: Math.min(max, current + 1), max, period })}
+        disabled={current >= max}
+        className="w-5 h-5 rounded bg-slate-800 hover:bg-slate-700 disabled:opacity-40 text-slate-300 leading-none"
+        title="Restore one"
+      >
+        +
+      </button>
+      <select
+        value={period}
+        onChange={(e) => onChange({ current, max, period: e.target.value as typeof period })}
+        className="bg-slate-900 border border-slate-700 rounded px-1 py-0.5 text-[10px] text-slate-300 focus:outline-none focus:border-sky-700"
+        title="Recovery period"
+      >
+        {USE_PERIODS.map((p) => (
+          <option key={p} value={p}>
+            /{p === 'Encounter' ? 'enc' : p === 'Day' ? 'day' : `${p} rest`}
+          </option>
+        ))}
+      </select>
+      <input
+        type="number"
+        value={max}
+        onChange={(e) => {
+          const m = Math.max(0, parseInt(e.target.value || '0', 10));
+          onChange({ current: Math.min(current, m), max: m, period });
+        }}
+        className="w-10 bg-slate-900 border border-slate-700 rounded px-1 py-0.5 text-[10px] text-slate-300 text-center focus:outline-none focus:border-sky-700"
+        title="Max uses"
+      />
+    </div>
+  );
+}
+
+function FeatureAdder({
+  onAdd,
+  onCancel,
+}: {
+  onAdd: (f: CharacterFeature) => void;
+  onCancel: () => void;
+}) {
+  const [name, setName] = useState('');
+  const [source, setSource] = useState<CharacterFeature['source']>('Class');
+  const [desc, setDesc] = useState('');
+  const submit = () => {
+    if (!name.trim()) return;
+    onAdd({
+      id: crypto.randomUUID(),
+      name: name.trim(),
+      source,
+      desc: desc.trim() || undefined,
+    });
+    setName('');
+    setDesc('');
+  };
+  return (
+    <div className="mb-3 p-3 bg-slate-950 border border-slate-800 rounded space-y-2">
+      <div className="flex gap-2">
+        <input
+          autoFocus
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          placeholder="Feature name (e.g. Arcane Recovery)"
+          className="flex-1 bg-slate-900 border border-slate-700 rounded px-2 py-1 text-sm text-slate-100 placeholder:text-slate-600 focus:outline-none focus:border-sky-700"
+        />
+        <select
+          value={source}
+          onChange={(e) => setSource(e.target.value as CharacterFeature['source'])}
+          className="bg-slate-900 border border-slate-700 rounded px-2 py-1 text-xs text-slate-200 focus:outline-none focus:border-sky-700"
+        >
+          {FEATURE_SOURCES.map((s) => (
+            <option key={s} value={s}>{s}</option>
+          ))}
+        </select>
+      </div>
+      <textarea
+        value={desc}
+        onChange={(e) => setDesc(e.target.value)}
+        rows={2}
+        placeholder="Description (optional)"
+        className="w-full bg-slate-900 border border-slate-700 rounded px-2 py-1 text-xs text-slate-300 placeholder:text-slate-600 focus:outline-none focus:border-sky-700 resize-y"
+      />
+      <div className="flex justify-end gap-1">
+        <button onClick={onCancel} className="px-2 py-1 text-xs text-slate-400 hover:text-slate-200">
+          Cancel
+        </button>
+        <button
+          onClick={submit}
+          disabled={!name.trim()}
+          className="px-3 py-1 text-xs rounded bg-sky-700 hover:bg-sky-600 disabled:opacity-40 text-white"
+        >
+          Add feature
+        </button>
+      </div>
     </div>
   );
 }
