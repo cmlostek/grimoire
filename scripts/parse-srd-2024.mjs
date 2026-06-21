@@ -264,15 +264,50 @@ function parseMagicItems(md) {
 
 // Parse HTML <table> contents into an array of rows-of-cells (strings).
 // Section header rows (single th with colspan) become { _section: '...' }.
+// Handles multi-row <thead> with colspan grouping — e.g. the class level
+// tables where a "Spell Slots per Spell Level" header spans nine sub-columns
+// (1..9). Output: flat headers like "Spell Slots per Spell Level 3".
 function parseHtmlTable(html) {
   const headMatch = html.match(/<thead>([\s\S]*?)<\/thead>/i);
   const bodyMatch = html.match(/<tbody>([\s\S]*?)<\/tbody>/i);
   if (!bodyMatch) return null;
+
   let headers = [];
   if (headMatch) {
-    const ths = [...headMatch[1].matchAll(/<th[^>]*>([\s\S]*?)<\/th>/gi)];
-    headers = ths.map((t) => stripHtml(t[1]));
+    const headRows = [...headMatch[1].matchAll(/<tr>([\s\S]*?)<\/tr>/gi)];
+    if (headRows.length <= 1) {
+      const ths = [...(headRows[0]?.[1] ?? '').matchAll(/<th[^>]*>([\s\S]*?)<\/th>/gi)];
+      headers = ths.map((t) => stripHtml(t[1]));
+    } else {
+      // Two-row header. First row carries groups (with colspan), second row
+      // carries the per-column sub-labels. Empty sub-labels fall back to the
+      // primary; spanning primaries combine with their sub-labels.
+      const primary = [...headRows[0][1].matchAll(/<th([^>]*)>([\s\S]*?)<\/th>/gi)].map((m) => ({
+        text: stripHtml(m[2]).replace(/^—+|—+$/g, '').trim(),
+        colspan: parseInt((m[1].match(/colspan\s*=\s*"(\d+)"/) || [])[1] || '1', 10),
+      }));
+      const secondary = [
+        ...headRows[1][1].matchAll(/<th[^>]*>([\s\S]*?)<\/th>/gi),
+      ].map((t) => stripHtml(t[1]));
+      const flat = [];
+      let secIdx = 0;
+      for (const p of primary) {
+        if (p.colspan === 1) {
+          const s = secondary[secIdx] ?? '';
+          flat.push(p.text || s);
+          secIdx += 1;
+        } else {
+          for (let i = 0; i < p.colspan; i += 1) {
+            const s = secondary[secIdx] ?? String(i + 1);
+            flat.push(p.text ? `${p.text} ${s}` : s);
+            secIdx += 1;
+          }
+        }
+      }
+      headers = flat;
+    }
   }
+
   const rows = [];
   const trs = [...bodyMatch[1].matchAll(/<tr>([\s\S]*?)<\/tr>/gi)];
   for (const tr of trs) {

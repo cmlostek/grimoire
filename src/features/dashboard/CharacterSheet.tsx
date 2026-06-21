@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Save, Printer, BedDouble, Coffee, Heart, Dices, HeartPulse, Skull, Eye, Search, Brain, Plus, X as XIcon, Swords, Shield as ShieldIcon, Sparkles, Backpack, Trash2, ChevronUp } from 'lucide-react';
+import LevelUpModal, { type LevelUpResult } from './LevelUpModal';
 import {
   DEFAULT_DEATH_SAVES,
   DEFAULT_GOLD,
@@ -69,6 +70,7 @@ export default function CharacterSheet({
   const [draft, setDraft] = useState<PartyMember>(m);
   const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [showLevelUp, setShowLevelUp] = useState(false);
   const edition = useCampaignSettings((s) => s.settings.srdEdition);
 
   // Sync from server when not locally edited (matches CharCard's pattern).
@@ -161,7 +163,30 @@ export default function CharacterSheet({
         onApply={apply}
         onSave={save}
         onPrint={printSheet}
+        onLevelUp={() => setShowLevelUp(true)}
       />
+
+      {showLevelUp && (
+        <LevelUpModal
+          member={draft}
+          onClose={() => setShowLevelUp(false)}
+          onConfirm={(result: LevelUpResult) => {
+            // Merge the modal output into the sheet. Newly-unlocked class
+            // features append to the existing list so previously-tracked items
+            // (manual entries, racial traits) survive.
+            apply({
+              level: result.level,
+              maxHp: result.maxHp,
+              hp: result.hp,
+              spellSlots: result.spellSlots ?? draft.spellSlots,
+              features: [...(draft.features ?? []), ...result.features],
+              ...(result.classId ? { classId: result.classId } : {}),
+              ...(result.subclassId ? { subclassId: result.subclassId } : {}),
+            });
+            setShowLevelUp(false);
+          }}
+        />
+      )}
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mt-4">
         <Card title="Vitals">
@@ -307,6 +332,7 @@ function SheetHeader({
   onApply,
   onSave,
   onPrint,
+  onLevelUp,
 }: {
   draft: PartyMember;
   dirty: boolean;
@@ -314,6 +340,7 @@ function SheetHeader({
   onApply: (p: Partial<PartyMember>) => void;
   onSave: () => void;
   onPrint: () => void;
+  onLevelUp: () => void;
 }) {
   return (
     <div className="border border-slate-800 rounded-lg p-4 bg-slate-900">
@@ -358,7 +385,7 @@ function SheetHeader({
           <LevelUpControl
             xp={draft.xp ?? 0}
             level={draft.level}
-            onLevelUp={() => onApply({ level: draft.level + 1 })}
+            onLevelUp={onLevelUp}
           />
           <button
             onClick={onPrint}
