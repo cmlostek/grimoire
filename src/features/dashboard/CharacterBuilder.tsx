@@ -43,6 +43,18 @@ const POINT_BUDGET = 27;
 
 // Starting spell counts per class — derived from the level-1 row's columns in
 // the 2024 SRD. Hardcoded for clarity since each class names them differently.
+/** Parse a class skill-choices line like "Choose 2: Animal Handling, Athletics, …, or Survival". */
+function parseSkillChoices(s: string): { count: number; options: string[] } | null {
+  if (!s) return null;
+  const m = s.match(/Choose\s+(\d+)\s*:?\s*(.+?)$/i);
+  if (!m) return null;
+  const count = parseInt(m[1], 10);
+  // Normalise "X, Y, or Z" / "X and Y" into a comma-separated list.
+  const rest = m[2].replace(/,?\s+or\s+/gi, ', ').replace(/\s+and\s+/gi, ', ');
+  const options = rest.split(/,\s*/).map((x) => x.trim().replace(/\.$/, '')).filter(Boolean);
+  return { count, options };
+}
+
 const STARTING_SPELLS: Record<string, { cantrips: number; lv1: number; label: string }> = {
   bard:     { cantrips: 2, lv1: 4, label: 'spells known' },
   cleric:   { cantrips: 3, lv1: 4, label: 'spells prepared' },
@@ -174,6 +186,8 @@ type State = {
   scores: Record<AbilityKey, number>;
   /** Background +2/+1 distribution. Maps ability key → bonus (0, 1, or 2). */
   bgBonuses: Record<AbilityKey, number>;
+  /** Skill prof slugs the player picked from the class's skill-choice list. */
+  classSkills: string[];
   equipmentChoice: 'A' | 'B';
   chosenCantrips: string[];
   chosenLv1: string[];
@@ -190,6 +204,7 @@ const INITIAL: State = {
   abilityMethod: 'standard',
   scores: { str: 8, dex: 8, con: 8, int: 8, wis: 8, cha: 8 },
   bgBonuses: { str: 0, dex: 0, con: 0, int: 0, wis: 0, cha: 0 },
+  classSkills: [],
   equipmentChoice: 'A',
   chosenCantrips: [],
   chosenLv1: [],
@@ -232,11 +247,21 @@ export default function CharacterBuilder({
   // Always include the spells step so non-casters get a clear "your class
   // doesn't get spells" message instead of the step silently disappearing.
 
+  const classSkillRule = useMemo(() => (cls ? parseSkillChoices(cls.skillChoices) : null), [cls]);
+
+  // Reset class-skill picks whenever the class changes so the validation
+  // doesn't carry stale slugs from a different class's list.
+  // (Hooks rules — keep this in a useEffect-style callback inside update.)
+
   // ── Validation ──────────────────────────────────────────────────────────
   const stepValid = (step: Step): boolean => {
     switch (step) {
       case 'species': return !!s.speciesId;
-      case 'class': return !!s.classId;
+      case 'class': {
+        if (!s.classId) return false;
+        if (classSkillRule && s.classSkills.length !== classSkillRule.count) return false;
+        return true;
+      }
       case 'background': {
         if (!s.backgroundId || !bg) return false;
         // Bonuses must sum to 3 (+2 +1 or +1 +1 +1).
@@ -377,11 +402,15 @@ export default function CharacterBuilder({
       });
     }
 
-    // Skill proficiencies: just from background for simplicity (class skill
-    // choices will need a richer picker in a follow-up).
-    const skillProfs = bg.skillProfs
-      .map((s) => s.toLowerCase().replace(/\s+/g, '-'))
-      .filter(Boolean);
+    // Skill proficiencies: union of background skills + class skill picks.
+    const skillProfs = Array.from(
+      new Set(
+        [
+          ...bg.skillProfs.map((sk) => sk.toLowerCase().replace(/\s+/g, '-')),
+          ...s.classSkills,
+        ].filter(Boolean),
+      ),
+    );
 
     // Save proficiencies: parse class saveProfs ("Strength and Constitution").
     const saveProfs: string[] = [];
@@ -470,7 +499,12 @@ export default function CharacterBuilder({
             <SpeciesStep value={s.speciesId} onChange={(id) => update({ speciesId: id })} />
           )}
           {s.step === 'class' && (
-            <ClassStep value={s.classId} onChange={(id) => update({ classId: id })} />
+            <ClassStep
+              value={s.classId}
+              onChange={(id) => update({ classId: id, classSkills: [] })}
+              classSkills={s.classSkills}
+              onSkillsChange={(next) => update({ classSkills: next })}
+            />
           )}
           {s.step === 'background' && (
             <BackgroundStep
@@ -611,12 +645,33 @@ function SpeciesStep({ value, onChange }: { value: string | null; onChange: (id:
   );
 }
 
-function ClassStep({ value, onChange }: { value: string | null; onChange: (id: string) => void }) {
+function ClassStep({
+  value,
+  onChange,
+  classSkills,
+  onSkillsChange,
+}: {
+  value: string | null;
+  onChange: (id: string) => void;
+  classSkills: string[];
+  onSkillsChange: (next: string[]) => void;
+}) {
   const picked = value ? CLASSES_2024.find((c) => c.index === value) ?? null : null;
   const lv1Features = picked?.levelTable.find((r) => r.level === 1)?.features ?? [];
+  const skillRule = picked ? parseSkillChoices(picked.skillChoices) : null;
+
+  const toggleSkill = (slug: string) => {
+    if (!skillRule) return;
+    if (classSkills.includes(slug)) {
+      onSkillsChange(classSkills.filter((x) => x !== slug));
+    } else if (classSkills.length < skillRule.count) {
+      onSkillsChange([...classSkills, slug]);
+    }
+  };
+
   return (
     <div className="grid grid-cols-[200px_1fr] gap-4">
-      <div className="space-y-1 overflow-y-auto max-h-[400px]">
+      <div className="space-y-1 overflow-y-auto max-h-[440px]">
         {CLASSES_2024.map((c) => (
           <button
             key={c.index}
@@ -632,7 +687,7 @@ function ClassStep({ value, onChange }: { value: string | null; onChange: (id: s
           </button>
         ))}
       </div>
-      <div className="bg-slate-950 border border-slate-800 rounded p-4 overflow-y-auto max-h-[400px]">
+      <div className="bg-slate-950 border border-slate-800 rounded p-4 overflow-y-auto max-h-[440px]">
         {picked ? (
           <>
             <h3 className="font-serif text-lg text-sky-200 mb-2">{picked.name}</h3>
@@ -642,6 +697,39 @@ function ClassStep({ value, onChange }: { value: string | null; onChange: (id: s
               <Stat label="Saves" value={picked.saveProfs} />
               <Stat label="Skills" value={picked.skillChoices} />
             </div>
+
+            {skillRule && (
+              <div className="mb-4">
+                <div className="text-[11px] uppercase tracking-wider text-slate-500 mb-2">
+                  Pick skills ({classSkills.length}/{skillRule.count})
+                </div>
+                <div className="grid grid-cols-2 gap-1.5">
+                  {skillRule.options.map((opt) => {
+                    const slug = opt.toLowerCase().replace(/\s+/g, '-');
+                    const checked = classSkills.includes(slug);
+                    const disabled = !checked && classSkills.length >= skillRule.count;
+                    return (
+                      <button
+                        key={slug}
+                        onClick={() => toggleSkill(slug)}
+                        disabled={disabled}
+                        className={`text-left px-2 py-1 text-xs rounded border ${
+                          checked
+                            ? 'border-sky-500 bg-sky-900/30 text-sky-100'
+                            : disabled
+                              ? 'border-slate-800 bg-slate-950 text-slate-600 cursor-not-allowed'
+                              : 'border-slate-800 bg-slate-950 text-slate-300 hover:bg-slate-800'
+                        }`}
+                      >
+                        <span className={`inline-block w-3 h-3 rounded-sm border mr-1.5 align-middle ${checked ? 'border-sky-400 bg-sky-500' : 'border-slate-600'}`} />
+                        {opt}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
             <div className="text-[11px] uppercase tracking-wider text-slate-500 mb-1">Level 1 features</div>
             <div className="space-y-2 text-xs">
               {lv1Features.map((f) => (

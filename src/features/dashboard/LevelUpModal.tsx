@@ -32,7 +32,37 @@ type AsiPlan = {
   /** Ability bumps (+1 or +2 on entries). Keys sum to 2 with values in {1, 2}. */
   bumps: Partial<Record<AbilityKey, number>>;
   featIndex?: string;
+  /** Which ability the picked feat's embedded ASI targets (if any). */
+  featAsiAbility?: AbilityKey;
 };
+
+/** Parse a feat description for an embedded Ability Score Increase. Returns
+ *  the +N amount and the eligible abilities (a 6-key list when "your choice").
+ *  null when the feat doesn't grant an ASI. */
+export function parseFeatAsi(desc: string): { amount: number; choices: AbilityKey[] } | null {
+  // "Increase one ability score of your choice by N"
+  const anyM = desc.match(/Increase one ability score of your choice by (\d+)/i);
+  if (anyM) {
+    return { amount: parseInt(anyM[1], 10), choices: ABILITIES.map((a) => a.key) };
+  }
+  // "Increase your X[, Y][, or Z] score by N" — also catches "Strength or Dexterity"
+  const m = desc.match(/Increase your ([\w, ]+?)(?:\s+score)?\s+by\s+(\d+)/i);
+  if (m) {
+    // Comma splits leave "or Charisma" intact when the source uses ", or ".
+    // Strip a leading "or " after the split so the lookup matches.
+    const list = m[1]
+      .split(/,\s*|\s+or\s+/i)
+      .map((s) => s.trim().toLowerCase().replace(/^or\s+/, ''))
+      .filter(Boolean);
+    const choices: AbilityKey[] = [];
+    for (const a of list) {
+      const k = ABILITIES.find((x) => x.full.toLowerCase() === a)?.key;
+      if (k) choices.push(k);
+    }
+    if (choices.length > 0) return { amount: parseInt(m[2], 10), choices };
+  }
+  return null;
+}
 
 /** Returns true if a General feat is available to this character given their
  *  current level and ability scores. We only enforce the easy-to-check
@@ -222,10 +252,22 @@ export default function LevelUpModal({
   }, [hpMethod]);
 
   // ASI plan validity: ASI must distribute exactly 2 points (1+1 or +2), and
-  // no resulting score may exceed 20. Feat mode requires a pick.
+  // no resulting score may exceed 20. Feat mode requires a pick — plus, if
+  // the chosen feat grants an embedded ASI, the user must also pick which
+  // ability gets the bump.
   const asiValid = (() => {
     if (!hasAsi && !hasEpicBoon) return true;
-    if (asiPlan.mode === 'feat') return !!asiPlan.featIndex;
+    if (asiPlan.mode === 'feat') {
+      if (!asiPlan.featIndex) return false;
+      const feat = FEATS_2024.find((f) => f.index === asiPlan.featIndex);
+      const asi = feat ? parseFeatAsi(feat.desc) : null;
+      if (asi) {
+        if (!asiPlan.featAsiAbility) return false;
+        if (!asi.choices.includes(asiPlan.featAsiAbility)) return false;
+        if (currentScores[asiPlan.featAsiAbility] + asi.amount > 20) return false;
+      }
+      return true;
+    }
     // ASI mode
     const sum = Object.values(asiPlan.bumps).reduce<number>((a, b) => a + (b ?? 0), 0);
     if (sum !== 2) return false;
@@ -301,10 +343,14 @@ export default function LevelUpModal({
             source: 'Feat',
             desc: feat.desc,
           });
-          // Many General feats grant an inline +1 to one of two abilities via
-          // "Ability Score Increase". Not modelling that auto-application —
-          // the feat description spells it out and players can apply it
-          // manually on the sheet.
+          // Apply the feat's embedded ASI if it grants one.
+          const asi = parseFeatAsi(feat.desc);
+          if (asi && asiPlan.featAsiAbility) {
+            abilityBumps = {
+              ...(abilityBumps ?? {}),
+              [asiPlan.featAsiAbility]: (abilityBumps?.[asiPlan.featAsiAbility] ?? 0) + asi.amount,
+            };
+          }
         }
       }
     }
@@ -645,7 +691,7 @@ function AsiPicker({
           </div>
           <select
             value={plan.featIndex ?? ''}
-            onChange={(e) => onPlan({ ...plan, featIndex: e.target.value || undefined })}
+            onChange={(e) => onPlan({ ...plan, featIndex: e.target.value || undefined, featAsiAbility: undefined })}
             className="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1.5 text-sm text-slate-100 focus:outline-none focus:border-sky-700 mb-3"
           >
             <option value="">— pick a feat —</option>
@@ -659,15 +705,53 @@ function AsiPicker({
           {plan.featIndex && (() => {
             const feat = FEATS_2024.find((f) => f.index === plan.featIndex);
             if (!feat) return null;
+            const asi = parseFeatAsi(feat.desc);
             return (
-              <div className="bg-slate-950 border border-slate-800 rounded p-3">
-                <div className="font-medium text-sky-200 mb-1">{feat.name}</div>
-                {feat.prerequisite && (
-                  <div className="text-[11px] text-slate-500 mb-2">Prerequisite: {feat.prerequisite}</div>
-                )}
-                <div className="text-xs text-slate-300 leading-relaxed markdown-body">
-                  <ReactMarkdown remarkPlugins={[remarkGfm]}>{feat.desc}</ReactMarkdown>
+              <div className="bg-slate-950 border border-slate-800 rounded p-3 space-y-3">
+                <div>
+                  <div className="font-medium text-sky-200 mb-1">{feat.name}</div>
+                  {feat.prerequisite && (
+                    <div className="text-[11px] text-slate-500 mb-2">Prerequisite: {feat.prerequisite}</div>
+                  )}
+                  <div className="text-xs text-slate-300 leading-relaxed markdown-body">
+                    <ReactMarkdown remarkPlugins={[remarkGfm]}>{feat.desc}</ReactMarkdown>
+                  </div>
                 </div>
+                {asi && (
+                  <div className="border-t border-slate-800 pt-3">
+                    <div className="text-[11px] uppercase tracking-wider text-amber-300/80 mb-1.5">
+                      Feat ability bump (+{asi.amount})
+                    </div>
+                    <div className="text-[11px] text-slate-500 mb-2">
+                      This feat raises one ability score. Pick which — applies automatically when you confirm.
+                    </div>
+                    <div className="flex flex-wrap gap-1.5">
+                      {asi.choices.map((k) => {
+                        const cur = scores[k];
+                        const newScore = cur + asi.amount;
+                        const capped = newScore > 20;
+                        const picked = plan.featAsiAbility === k;
+                        return (
+                          <button
+                            key={k}
+                            onClick={() => onPlan({ ...plan, featAsiAbility: k })}
+                            disabled={capped}
+                            className={`px-2 py-1 text-xs rounded border ${
+                              picked
+                                ? 'border-sky-500 bg-sky-900/40 text-sky-100'
+                                : capped
+                                  ? 'border-slate-800 bg-slate-950 text-slate-600 cursor-not-allowed'
+                                  : 'border-slate-800 bg-slate-950 text-slate-300 hover:bg-slate-800'
+                            }`}
+                            title={capped ? 'Already at 20' : `${cur} → ${newScore}`}
+                          >
+                            {ABILITIES.find((a) => a.key === k)?.label} {cur} → {newScore}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
               </div>
             );
           })()}
