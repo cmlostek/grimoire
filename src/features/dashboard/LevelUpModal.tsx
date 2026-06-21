@@ -4,6 +4,7 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { CLASSES_2024, FEATS_2024, SPELLS_2024 } from '../../data/srd';
 import type { Class, ClassLevelRow, ClassSubclass, Feat } from '../../data/types';
+import { SpellPopoverTrigger, FeatBody } from '../../components/SrdPopover';
 import {
   type CharacterFeature,
   type KnownSpell,
@@ -828,19 +829,11 @@ function AsiPicker({
             if (!feat) return null;
             const asi = parseFeatAsi(feat.desc);
             return (
-              <div className="bg-slate-950 border border-slate-800 rounded p-3 space-y-3">
-                <div>
-                  <div className="font-medium text-sky-200 mb-1">{feat.name}</div>
-                  {feat.prerequisite && (
-                    <div className="text-[11px] text-slate-500 mb-2">Prerequisite: {feat.prerequisite}</div>
-                  )}
-                  <div className="text-xs text-slate-300 leading-relaxed markdown-body">
-                    <ReactMarkdown remarkPlugins={[remarkGfm]}>{feat.desc}</ReactMarkdown>
-                  </div>
-                </div>
+              <div className="srd-popover">
+                <FeatBody feat={feat} />
                 {asi && (
-                  <div className="border-t border-slate-800 pt-3">
-                    <div className="text-[11px] uppercase tracking-wider text-amber-300/80 mb-1.5">
+                  <div className="srd-popover-divider" style={{ padding: '0 0.9em 0.8em' }}>
+                    <div className="srd-popover-section-label" style={{ color: '#fcd34d' }}>
                       Feat ability bump (+{asi.amount})
                     </div>
                     <div className="text-[11px] text-slate-500 mb-2">
@@ -910,25 +903,25 @@ function SpellLearnBucket({
             if (!srd) return null;
             const picked = chosen.includes(id);
             return (
-              <button
-                key={id}
-                onClick={() => onToggle(id)}
-                className={`text-left px-2 py-1.5 rounded text-xs border ${
-                  picked
-                    ? 'border-sky-500 bg-sky-900/30 text-sky-100'
-                    : 'border-slate-800 bg-slate-950 hover:bg-slate-800 text-slate-300'
-                }`}
-                title={srd.desc[0]?.slice(0, 200)}
-              >
-                <div className="flex items-center gap-1">
-                  <Sparkles size={10} className="text-violet-300 shrink-0" />
-                  <span className="truncate">{srd.name}</span>
-                </div>
-                <div className="text-[10px] text-slate-500">
-                  {srd.level === 0 ? 'Cantrip' : `Lv ${srd.level}`} · {srd.school.name}
-                  {srd.ritual ? ' · R' : ''}{srd.concentration ? ' · C' : ''}
-                </div>
-              </button>
+              <SpellPopoverTrigger key={id} spell={srd} className="block">
+                <button
+                  onClick={() => onToggle(id)}
+                  className={`w-full text-left px-2 py-1.5 rounded text-xs border ${
+                    picked
+                      ? 'border-sky-500 bg-sky-900/30 text-sky-100'
+                      : 'border-slate-800 bg-slate-950 hover:bg-slate-800 text-slate-300'
+                  }`}
+                >
+                  <div className="flex items-center gap-1">
+                    <Sparkles size={10} className="text-violet-300 shrink-0" />
+                    <span className="truncate">{srd.name}</span>
+                  </div>
+                  <div className="text-[10px] text-slate-500">
+                    {srd.level === 0 ? 'Cantrip' : `Lv ${srd.level}`} · {srd.school.name}
+                    {srd.ritual ? ' · R' : ''}{srd.concentration ? ' · C' : ''}
+                  </div>
+                </button>
+              </SpellPopoverTrigger>
             );
           })}
         </div>

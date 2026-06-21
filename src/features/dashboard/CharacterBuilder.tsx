@@ -9,6 +9,7 @@ import {
   SPELLS_2024,
   EQUIPMENT_2024,
 } from '../../data/srd';
+import { SpellPopoverTrigger } from '../../components/SrdPopover';
 import type { Class, Species, Background } from '../../data/types';
 import {
   type CharacterDetails,
@@ -1158,22 +1159,22 @@ function SpellBucket({ title, pool, chosen, onToggle }: { title: string; pool: s
           if (!srd) return null;
           const isPicked = chosen.includes(id);
           return (
-            <button
-              key={id}
-              onClick={() => onToggle(id)}
-              className={`text-left px-2 py-1.5 rounded text-xs border ${
-                isPicked
-                  ? 'border-sky-500 bg-sky-900/30 text-sky-100'
-                  : 'border-slate-800 bg-slate-950 hover:bg-slate-800 text-slate-300'
-              }`}
-              title={srd.desc[0]?.slice(0, 200)}
-            >
-              <div className="flex items-center gap-1">
-                <Sparkles size={10} className="text-violet-300" />
-                <span className="truncate">{srd.name}</span>
-              </div>
-              <div className="text-[10px] text-slate-500">{srd.school.name}{srd.ritual ? ' · R' : ''}{srd.concentration ? ' · C' : ''}</div>
-            </button>
+            <SpellPopoverTrigger key={id} spell={srd} className="block">
+              <button
+                onClick={() => onToggle(id)}
+                className={`w-full text-left px-2 py-1.5 rounded text-xs border ${
+                  isPicked
+                    ? 'border-sky-500 bg-sky-900/30 text-sky-100'
+                    : 'border-slate-800 bg-slate-950 hover:bg-slate-800 text-slate-300'
+                }`}
+              >
+                <div className="flex items-center gap-1">
+                  <Sparkles size={10} className="text-violet-300" />
+                  <span className="truncate">{srd.name}</span>
+                </div>
+                <div className="text-[10px] text-slate-500">{srd.school.name}{srd.ritual ? ' · R' : ''}{srd.concentration ? ' · C' : ''}</div>
+              </button>
+            </SpellPopoverTrigger>
           );
         })}
       </div>
