@@ -202,6 +202,9 @@ function SwitchRow({
   checked: boolean;
   onChange: (next: boolean) => void;
 }) {
+  // Track 40px wide, thumb 16px, 2px padding each side: off=left:2, on=left:22
+  // (40 - 16 - 2 = 22). Using fixed offsets so the thumb stays fully inside
+  // the pill in both states without relying on arbitrary translate values.
   return (
     <button
       type="button"
@@ -215,14 +218,14 @@ function SwitchRow({
         {hint && <span className="block text-[11px] text-slate-500 font-normal">{hint}</span>}
       </span>
       <span
-        className={`relative h-5 w-9 rounded-full transition-colors ${
+        className={`relative inline-block h-5 w-10 shrink-0 rounded-full transition-colors ${
           checked ? 'bg-sky-600' : 'bg-slate-700'
         }`}
+        aria-hidden
       >
         <span
-          className={`absolute top-0.5 h-4 w-4 rounded-full bg-white transition-transform ${
-            checked ? 'translate-x-[18px]' : 'translate-x-0.5'
-          }`}
+          className="absolute top-0.5 h-4 w-4 rounded-full bg-white shadow-sm transition-all"
+          style={{ left: checked ? '22px' : '2px' }}
         />
       </span>
     </button>
