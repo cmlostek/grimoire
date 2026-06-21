@@ -211,10 +211,12 @@ function CreateForm({ onBack }: { onBack: () => void }) {
   const create = useSession((s) => s.createCampaign);
   const [name, setName] = useState('');
   const [displayName, setDisplayName] = useState(rememberedDisplayName());
+  // Default HP-on-level-up method — can be changed later in Settings.
+  const [hpMethod, setHpMethod] = useState<'avg' | 'roll' | 'manual'>('avg');
 
   const submit = () => {
     if (!name.trim() || !displayName.trim()) return;
-    create(name.trim(), displayName.trim());
+    create(name.trim(), displayName.trim(), { hpRollingMethod: hpMethod });
   };
 
   return (
@@ -238,6 +240,30 @@ function CreateForm({ onBack }: { onBack: () => void }) {
           className="w-full bg-slate-800 border border-slate-700 rounded px-2 py-1.5 text-sm"
         />
       </label>
+      <div className="block">
+        <div className="text-xs text-slate-400 mb-1">HP on level-up</div>
+        <div className="flex rounded overflow-hidden border border-slate-700">
+          {(['avg', 'roll', 'manual'] as const).map((m) => (
+            <button
+              key={m}
+              type="button"
+              onClick={() => setHpMethod(m)}
+              className={`flex-1 px-2 py-1.5 text-xs ${
+                hpMethod === m
+                  ? 'bg-sky-900/40 text-sky-200'
+                  : 'bg-slate-800 text-slate-400 hover:bg-slate-700'
+              }`}
+            >
+              {m === 'avg' ? 'Average' : m === 'roll' ? 'Roll' : 'Manual'}
+            </button>
+          ))}
+        </div>
+        <div className="text-[10px] text-slate-600 mt-1">
+          {hpMethod === 'avg' && 'Take the fixed average (5e default). Predictable, fast.'}
+          {hpMethod === 'roll' && 'Roll the class hit die at the table. Swingy but fun.'}
+          {hpMethod === 'manual' && 'Each player enters whatever the table agreed on.'}
+        </div>
+      </div>
       <div className="flex gap-2 pt-1">
         <button onClick={onBack} className="flex-1 px-3 py-2 rounded bg-slate-800 hover:bg-slate-700 text-sm">
           Back

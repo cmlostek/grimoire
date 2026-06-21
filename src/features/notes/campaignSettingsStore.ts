@@ -28,6 +28,13 @@ import { supabase } from '../../lib/supabase';
 
 export type SrdEdition = '2014' | '2024' | 'both';
 
+/** How characters in this campaign gain HP on level-up.
+ *   - avg: take fixed average from the class hit die (5e PHB rounded up)
+ *   - roll: roll the hit die at the table; result becomes new HP
+ *   - manual: GM/player types in whatever the table agreed on
+ */
+export type HpRollingMethod = 'avg' | 'roll' | 'manual';
+
 export type CampaignSettings = {
   /** Nav path slugs hidden from non-GM players (e.g. 'spells', 'rules'). */
   hiddenPages: string[];
@@ -39,6 +46,9 @@ export type CampaignSettings = {
   folderColors: Record<string, string>;
   /** Which SRD edition(s) to show on Spells/Items/Rules. GM-controlled. */
   srdEdition: SrdEdition;
+  /** Default HP-on-level-up method for this campaign. The level-up modal
+   *  starts here but lets the player override per-level. */
+  hpRollingMethod: HpRollingMethod;
 };
 
 export const DEFAULTS: CampaignSettings = {
@@ -47,6 +57,7 @@ export const DEFAULTS: CampaignSettings = {
   hiddenFolderIds: [],
   folderColors: {},
   srdEdition: 'both',
+  hpRollingMethod: 'avg',
 };
 
 const lsKey = (cid: string) => `dnd-gm:campaignSettings:${cid}`;
@@ -89,6 +100,7 @@ type SettingsState = {
   toggleFolder: (folderId: string) => void;
   setFolderColor: (folderId: string, color: string | null) => void;
   setSrdEdition: (edition: SrdEdition) => void;
+  setHpRollingMethod: (method: HpRollingMethod) => void;
 };
 
 export const useCampaignSettings = create<SettingsState>((set, get) => ({
@@ -223,6 +235,16 @@ export const useCampaignSettings = create<SettingsState>((set, get) => ({
   setSrdEdition: (edition) => {
     const { settings, campaignId } = get();
     const next = { ...settings, srdEdition: edition };
+    set({ settings: next });
+    if (campaignId) {
+      lsSave(campaignId, next);
+      sbUpsert(campaignId, next);
+    }
+  },
+
+  setHpRollingMethod: (method) => {
+    const { settings, campaignId } = get();
+    const next = { ...settings, hpRollingMethod: method };
     set({ settings: next });
     if (campaignId) {
       lsSave(campaignId, next);

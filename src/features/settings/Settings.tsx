@@ -62,6 +62,8 @@ export default function Settings() {
   const showAll = useCampaignSettings((s) => s.showAll);
   const hiddenPages = useCampaignSettings((s) => s.settings.hiddenPages);
   const allowedGmPages = useCampaignSettings((s) => s.settings.allowedGmPages ?? []);
+  const hpRollingMethod = useCampaignSettings((s) => s.settings.hpRollingMethod);
+  const setHpRollingMethod = useCampaignSettings((s) => s.setHpRollingMethod);
 
   const trueIsGM = role === 'gm' || role === 'cogm';
   const isGM = trueIsGM && !viewAsPlayer;
@@ -125,6 +127,32 @@ export default function Settings() {
               onHideAll={() => hideAll(NAV.filter((n) => !n.gmOnly).map((n) => n.to.replace('/', '')))}
               onShowAll={showAll}
             />
+          </Section>
+        )}
+
+        {isGM && (
+          <Section title="House rules">
+            <div className="px-4 py-3 border-b border-slate-800 last:border-b-0">
+              <div className="text-sm text-slate-200">HP on level-up</div>
+              <div className="text-[11px] text-slate-500 font-normal mb-2">
+                How characters gain HP when leveling. Level-up modal defaults to this; players can still override per-level.
+              </div>
+              <div className="flex rounded overflow-hidden border border-slate-700 w-fit">
+                {(['avg', 'roll', 'manual'] as const).map((m) => (
+                  <button
+                    key={m}
+                    onClick={() => setHpRollingMethod(m)}
+                    className={`px-3 py-1 text-xs ${
+                      hpRollingMethod === m
+                        ? 'bg-sky-900/40 text-sky-200'
+                        : 'bg-slate-900 text-slate-400 hover:bg-slate-800'
+                    }`}
+                  >
+                    {m === 'avg' ? 'Take average' : m === 'roll' ? 'Roll the die' : 'Manual entry'}
+                  </button>
+                ))}
+              </div>
+            </div>
           </Section>
         )}
 

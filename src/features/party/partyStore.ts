@@ -109,6 +109,12 @@ export type PartyMember = {
   customActions?: CustomAction[];
   /** Class / race / feat / other features the user tracks. */
   features?: CharacterFeature[];
+  /** Structured class identifier (slug of CLASSES_2024 entry). Set by the
+   *  character builder (phase 5) or the class picker in the level-up modal,
+   *  used by phase 4 to look up level-progression data. */
+  classId?: string;
+  /** Chosen subclass slug from the matching Class's subclasses[] entries. */
+  subclassId?: string;
 };
 
 export const DEFAULT_GOLD: Gold = { pp: 0, gp: 0, ep: 0, sp: 0, cp: 0 };
@@ -173,6 +179,8 @@ function rowToMember(r: Row): PartyMember {
     spells: d.spells ?? [],
     customActions: d.customActions ?? [],
     features: d.features ?? [],
+    classId: d.classId,
+    subclassId: d.subclassId,
   };
 }
 
@@ -216,6 +224,7 @@ function patchToUpdate(
     'race', 'classSummary',
     'xp', 'gold', 'deathSaves', 'skillProfs', 'saveProfs', 'inventory',
     'spellAbility', 'spellSlots', 'spells', 'customActions', 'features',
+    'classId', 'subclassId',
   ];
   const needsDataUpdate = dataKeys.some((k) => k in patch);
   if (needsDataUpdate) {
