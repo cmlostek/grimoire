@@ -174,7 +174,14 @@ export default function CharacterSheet({
           onConfirm={(result: LevelUpResult) => {
             // Merge the modal output into the sheet. Newly-unlocked class
             // features append to the existing list so previously-tracked items
-            // (manual entries, racial traits) survive.
+            // (manual entries, racial traits) survive. Ability bumps apply on
+            // top of current scores, capped at 20.
+            const bumps = result.abilityBumps ?? {};
+            const bumped: Partial<PartyMember> = {};
+            for (const k of ['str', 'dex', 'con', 'int', 'wis', 'cha'] as const) {
+              const delta = bumps[k];
+              if (delta) bumped[k] = Math.min(20, draft[k] + delta);
+            }
             apply({
               level: result.level,
               maxHp: result.maxHp,
@@ -183,6 +190,7 @@ export default function CharacterSheet({
               features: [...(draft.features ?? []), ...result.features],
               ...(result.classId ? { classId: result.classId } : {}),
               ...(result.subclassId ? { subclassId: result.subclassId } : {}),
+              ...bumped,
             });
             setShowLevelUp(false);
           }}

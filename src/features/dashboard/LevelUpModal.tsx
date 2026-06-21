@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useState } from 'react';
-import { X as XIcon, Dices, Sparkles, ChevronUp } from 'lucide-react';
+import { X as XIcon, Dices, Sparkles, ChevronUp, Plus, Minus } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { CLASSES_2024 } from '../../data/srd';
-import type { Class, ClassSubclass } from '../../data/types';
+import { CLASSES_2024, FEATS_2024 } from '../../data/srd';
+import type { Class, ClassSubclass, Feat } from '../../data/types';
 import {
   type CharacterFeature,
   type PartyMember,
@@ -14,6 +14,47 @@ import {
   useCampaignSettings,
 } from '../notes/campaignSettingsStore';
 import { useQuickDice } from '../dice/quickDiceStore';
+
+type AbilityKey = 'str' | 'dex' | 'con' | 'int' | 'wis' | 'cha';
+const ABILITIES: { key: AbilityKey; label: string; full: string }[] = [
+  { key: 'str', label: 'STR', full: 'Strength' },
+  { key: 'dex', label: 'DEX', full: 'Dexterity' },
+  { key: 'con', label: 'CON', full: 'Constitution' },
+  { key: 'int', label: 'INT', full: 'Intelligence' },
+  { key: 'wis', label: 'WIS', full: 'Wisdom' },
+  { key: 'cha', label: 'CHA', full: 'Charisma' },
+];
+
+/** ASI choice mode: increase abilities, or take a feat instead. */
+type AsiMode = 'asi' | 'feat';
+type AsiPlan = {
+  mode: AsiMode;
+  /** Ability bumps (+1 or +2 on entries). Keys sum to 2 with values in {1, 2}. */
+  bumps: Partial<Record<AbilityKey, number>>;
+  featIndex?: string;
+};
+
+/** Returns true if a General feat is available to this character given their
+ *  current level and ability scores. We only enforce the easy-to-check
+ *  prerequisites (character level, ability score min); class-level prereqs
+ *  are too rare in the SRD to be worth a full parser. */
+function featAvailable(feat: Feat, level: number, scores: Record<AbilityKey, number>): boolean {
+  if (!feat.prerequisite) return true;
+  const lvMatch = feat.prerequisite.match(/Level\s+(\d+)\+/i);
+  if (lvMatch && level < parseInt(lvMatch[1], 10)) return false;
+  // Ability score min — pattern like "Strength or Dexterity 13+"
+  const abM = feat.prerequisite.match(/([A-Za-z]+(?:\s+or\s+[A-Za-z]+)?)\s+(\d+)\+?/);
+  if (abM) {
+    const req = parseInt(abM[2], 10);
+    const abilities = abM[1].split(/\s+or\s+/i);
+    const ok = abilities.some((a) => {
+      const key = ABILITIES.find((x) => x.full.toLowerCase() === a.trim().toLowerCase())?.key;
+      return key ? scores[key] >= req : false;
+    });
+    if (!ok) return false;
+  }
+  return true;
+}
 
 const abilityMod = (score: number) => Math.floor((score - 10) / 2);
 
@@ -68,6 +109,8 @@ export type LevelUpResult = {
   features: CharacterFeature[];
   classId?: string;
   subclassId?: string;
+  /** Ability-score deltas to apply (e.g. { str: 1, con: 1 } or { wis: 2 }). */
+  abilityBumps?: Partial<Record<AbilityKey, number>>;
 };
 
 export default function LevelUpModal({
@@ -145,13 +188,29 @@ export default function LevelUpModal({
   // ── Features ───────────────────────────────────────────────────────────
   const newFeatureNames = useMemo(() => {
     if (!newRow) return [];
-    // Filter out "Ability Score Improvement" because that's a player choice
-    // separate from an unlocked feature, and "<Class> Subclass" which we
-    // surface through the subclass picker instead.
+    // Filter "<Class> Subclass" because we surface it through the subclass
+    // picker instead. ASI / Epic Boon also get their own dedicated UI below.
     return newRow.features.filter(
-      (f) => !/Ability Score Improvement/i.test(f) && !/Subclass$/i.test(f),
+      (f) => !/Subclass$/i.test(f) && !/Ability Score Improvement/i.test(f) && !/Epic Boon/i.test(f),
     );
   }, [newRow]);
+
+  // ── ASI / Epic Boon picker ─────────────────────────────────────────────
+  const hasAsi = !!newRow?.features.some((f) => /Ability Score Improvement/i.test(f));
+  const hasEpicBoon = !!newRow?.features.some((f) => /Epic Boon/i.test(f));
+  const [asiPlan, setAsiPlan] = useState<AsiPlan>({ mode: 'asi', bumps: {} });
+
+  // Pre-screen General + Epic Boon feats for the picker.
+  const currentScores: Record<AbilityKey, number> = {
+    str: member.str, dex: member.dex, con: member.con,
+    int: member.int, wis: member.wis, cha: member.cha,
+  };
+  const generalFeats = useMemo(
+    () => FEATS_2024.filter((f) => f.category === 'General' && featAvailable(f, newLevel, currentScores)),
+    [newLevel, currentScores],
+  );
+  const epicBoonFeats = useMemo(() => FEATS_2024.filter((f) => f.category === 'Epic Boon'), []);
+  const featPool: Feat[] = hasEpicBoon ? epicBoonFeats : generalFeats;
 
   // ── Subclass picker ────────────────────────────────────────────────────
   const isSubclassLevel = cls && subclassLevel(cls) === newLevel && !member.subclassId;
@@ -162,11 +221,28 @@ export default function LevelUpModal({
     if (hpMethod !== 'roll') setRolledHp(null);
   }, [hpMethod]);
 
+  // ASI plan validity: ASI must distribute exactly 2 points (1+1 or +2), and
+  // no resulting score may exceed 20. Feat mode requires a pick.
+  const asiValid = (() => {
+    if (!hasAsi && !hasEpicBoon) return true;
+    if (asiPlan.mode === 'feat') return !!asiPlan.featIndex;
+    // ASI mode
+    const sum = Object.values(asiPlan.bumps).reduce<number>((a, b) => a + (b ?? 0), 0);
+    if (sum !== 2) return false;
+    for (const [k, v] of Object.entries(asiPlan.bumps) as [AbilityKey, number][]) {
+      const key = k as AbilityKey;
+      if (v !== 1 && v !== 2) return false;
+      if (currentScores[key] + v > 20) return false;
+    }
+    return true;
+  })();
+
   const canConfirm =
     !!cls &&
     hpGain !== null &&
     hpGain >= 0 &&
-    (!isSubclassLevel || !!pickedSubclassId);
+    (!isSubclassLevel || !!pickedSubclassId) &&
+    asiValid;
 
   const handleConfirm = () => {
     if (!canConfirm || !cls) return;
@@ -199,6 +275,40 @@ export default function LevelUpModal({
           current: Math.min(max, (member.spellSlots?.[i]?.current ?? 0) + Math.max(0, max - (member.spellSlots?.[i]?.max ?? 0))),
         }))
       : undefined;
+    // ASI / Epic Boon outcome.
+    let abilityBumps: Partial<Record<AbilityKey, number>> | undefined;
+    if (hasAsi || hasEpicBoon) {
+      if (asiPlan.mode === 'asi') {
+        abilityBumps = asiPlan.bumps;
+        // Surface as a feature row so the player has a record of what they
+        // picked at this level — useful when scrolling history.
+        const label = Object.entries(asiPlan.bumps)
+          .filter(([, v]) => (v ?? 0) > 0)
+          .map(([k, v]) => `+${v} ${ABILITIES.find((a) => a.key === k)?.label}`)
+          .join(', ');
+        features.push({
+          id: crypto.randomUUID(),
+          name: hasEpicBoon ? `Epic Boon: Ability Improvement (${label})` : `Ability Score Improvement (${label})`,
+          source: 'Class',
+          desc: `Gained at ${cls.name} level ${newLevel}.`,
+        });
+      } else if (asiPlan.mode === 'feat' && asiPlan.featIndex) {
+        const feat = FEATS_2024.find((f) => f.index === asiPlan.featIndex);
+        if (feat) {
+          features.push({
+            id: crypto.randomUUID(),
+            name: feat.name,
+            source: 'Feat',
+            desc: feat.desc,
+          });
+          // Many General feats grant an inline +1 to one of two abilities via
+          // "Ability Score Increase". Not modelling that auto-application —
+          // the feat description spells it out and players can apply it
+          // manually on the sheet.
+        }
+      }
+    }
+
     onConfirm({
       level: newLevel,
       maxHp: newMaxHp,
@@ -207,6 +317,7 @@ export default function LevelUpModal({
       features,
       ...(initialClass ? {} : { classId: cls.index }),
       ...(isSubclassLevel && pickedSubclassId ? { subclassId: pickedSubclassId } : {}),
+      ...(abilityBumps && Object.keys(abilityBumps).length > 0 ? { abilityBumps } : {}),
     });
   };
 
@@ -378,12 +489,17 @@ export default function LevelUpModal({
                 </Section>
               )}
 
-              {/* Always-on level-up notes */}
-              {newRow && newRow.features.some((f) => /Ability Score Improvement/i.test(f)) && (
-                <div className="text-xs text-amber-200/70 bg-amber-950/30 border border-amber-900/40 rounded p-3">
-                  This level grants an <strong>Ability Score Improvement</strong> (or you may choose a
-                  feat). Apply it in the ability scores card after closing this dialog.
-                </div>
+              {/* ASI / Epic Boon picker */}
+              {(hasAsi || hasEpicBoon) && (
+                <Section title={hasEpicBoon ? 'Epic Boon' : 'Ability Score Improvement'}>
+                  <AsiPicker
+                    isEpicBoon={hasEpicBoon}
+                    plan={asiPlan}
+                    onPlan={setAsiPlan}
+                    scores={currentScores}
+                    feats={featPool}
+                  />
+                </Section>
               )}
             </>
           )}
@@ -419,6 +535,145 @@ function Section({ title, children }: { title: string; children: React.ReactNode
       <div className="text-[11px] uppercase tracking-wider text-amber-200/70 mb-2">{title}</div>
       <div>{children}</div>
     </section>
+  );
+}
+
+function AsiPicker({
+  isEpicBoon,
+  plan,
+  onPlan,
+  scores,
+  feats,
+}: {
+  isEpicBoon: boolean;
+  plan: AsiPlan;
+  onPlan: (next: AsiPlan) => void;
+  scores: Record<AbilityKey, number>;
+  feats: Feat[];
+}) {
+  const bumpSum = Object.values(plan.bumps).reduce<number>((a, b) => a + (b ?? 0), 0);
+  const set = (k: AbilityKey, v: number) => {
+    const next = { ...plan.bumps };
+    if (v <= 0) delete next[k];
+    else next[k] = v;
+    onPlan({ ...plan, bumps: next });
+  };
+  return (
+    <div>
+      <div className="text-xs text-slate-400 mb-3 leading-relaxed">
+        {isEpicBoon ? (
+          <>
+            At level 19, your class grants an <strong>Epic Boon</strong> — either an Epic Boon feat from
+            the SRD list, or use the slot to raise two ability scores (each by +1, or one by +2).
+            Scores can't exceed 20 this way.
+          </>
+        ) : (
+          <>
+            <strong>Ability Score Improvement (ASI):</strong> raise two ability scores by +1, or one score
+            by +2 (max 20). You may instead take a General feat — pick whichever fits your build. ASIs
+            happen at levels 4, 8, 12, 16, and 19 for most classes; Fighters and Rogues get extra ones.
+          </>
+        )}
+      </div>
+
+      <div className="flex gap-1 mb-3">
+        {(['asi', 'feat'] as const).map((m) => (
+          <button
+            key={m}
+            onClick={() => onPlan({ ...plan, mode: m, bumps: m === 'asi' ? plan.bumps : {}, featIndex: m === 'feat' ? plan.featIndex : undefined })}
+            className={`flex-1 px-2 py-1 text-xs rounded border ${
+              plan.mode === m
+                ? 'bg-sky-900/40 text-sky-200 border-sky-700'
+                : 'bg-slate-950 text-slate-400 border-slate-800 hover:bg-slate-800'
+            }`}
+          >
+            {m === 'asi' ? 'Improve ability scores' : isEpicBoon ? 'Take an Epic Boon feat' : 'Take a feat instead'}
+          </button>
+        ))}
+      </div>
+
+      {plan.mode === 'asi' && (
+        <div>
+          <div className="text-xs text-slate-400 mb-2">
+            Distribute 2 points (1 + 1, or +2). Currently spent:{' '}
+            <span className={`font-mono ${bumpSum === 2 ? 'text-emerald-300' : 'text-slate-300'}`}>
+              {bumpSum}/2
+            </span>
+          </div>
+          <div className="space-y-1.5">
+            {ABILITIES.map((a) => {
+              const v = plan.bumps[a.key] ?? 0;
+              const cur = scores[a.key];
+              const newScore = cur + v;
+              const capped = newScore >= 20 && v === 0;
+              return (
+                <div key={a.key} className="flex items-center gap-2 text-sm bg-slate-950 border border-slate-800 rounded px-2 py-1.5">
+                  <div className="w-20 text-slate-300">{a.full}</div>
+                  <div className="font-mono text-slate-500 text-xs w-10 text-right">{cur}</div>
+                  <span className="text-slate-600">→</span>
+                  <div className={`font-mono text-xs w-10 ${v > 0 ? 'text-emerald-300' : 'text-slate-500'}`}>{newScore}</div>
+                  <div className="flex gap-1 ml-auto">
+                    <button
+                      onClick={() => set(a.key, 0)}
+                      className={`w-7 h-7 rounded text-[11px] ${v === 0 ? 'bg-sky-700 text-white' : 'bg-slate-900 text-slate-400 hover:bg-slate-800'}`}
+                      title="No change"
+                    >0</button>
+                    <button
+                      onClick={() => set(a.key, 1)}
+                      disabled={capped || (bumpSum === 2 && v === 0) || cur + 1 > 20}
+                      className={`w-7 h-7 rounded text-[11px] ${v === 1 ? 'bg-sky-700 text-white' : 'bg-slate-900 text-slate-400 hover:bg-slate-800 disabled:opacity-30 disabled:cursor-not-allowed'}`}
+                      title="+1"
+                    >+1</button>
+                    <button
+                      onClick={() => set(a.key, 2)}
+                      disabled={cur + 2 > 20 || (bumpSum >= 1 && v !== 2)}
+                      className={`w-7 h-7 rounded text-[11px] ${v === 2 ? 'bg-sky-700 text-white' : 'bg-slate-900 text-slate-400 hover:bg-slate-800 disabled:opacity-30 disabled:cursor-not-allowed'}`}
+                      title="+2 (single ability only)"
+                    >+2</button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {plan.mode === 'feat' && (
+        <div>
+          <div className="text-xs text-slate-400 mb-2">
+            Pick a {isEpicBoon ? 'Epic Boon' : 'General'} feat. Greyed-out feats fail their level / ability prerequisite.
+          </div>
+          <select
+            value={plan.featIndex ?? ''}
+            onChange={(e) => onPlan({ ...plan, featIndex: e.target.value || undefined })}
+            className="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1.5 text-sm text-slate-100 focus:outline-none focus:border-sky-700 mb-3"
+          >
+            <option value="">— pick a feat —</option>
+            {feats.map((f) => (
+              <option key={f.index} value={f.index}>
+                {f.name}
+                {f.prerequisite ? ` (${f.prerequisite})` : ''}
+              </option>
+            ))}
+          </select>
+          {plan.featIndex && (() => {
+            const feat = FEATS_2024.find((f) => f.index === plan.featIndex);
+            if (!feat) return null;
+            return (
+              <div className="bg-slate-950 border border-slate-800 rounded p-3">
+                <div className="font-medium text-sky-200 mb-1">{feat.name}</div>
+                {feat.prerequisite && (
+                  <div className="text-[11px] text-slate-500 mb-2">Prerequisite: {feat.prerequisite}</div>
+                )}
+                <div className="text-xs text-slate-300 leading-relaxed markdown-body">
+                  <ReactMarkdown remarkPlugins={[remarkGfm]}>{feat.desc}</ReactMarkdown>
+                </div>
+              </div>
+            );
+          })()}
+        </div>
+      )}
+    </div>
   );
 }
 
