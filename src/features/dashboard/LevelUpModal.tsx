@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useState } from 'react';
-import { X as XIcon, Dices, Sparkles, ChevronUp, Plus, Minus } from 'lucide-react';
+import { X as XIcon, Dices, Sparkles, ChevronUp } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { CLASSES_2024, FEATS_2024 } from '../../data/srd';
-import type { Class, ClassSubclass, Feat } from '../../data/types';
+import { CLASSES_2024, FEATS_2024, SPELLS_2024 } from '../../data/srd';
+import type { Class, ClassLevelRow, ClassSubclass, Feat } from '../../data/types';
 import {
   type CharacterFeature,
+  type KnownSpell,
   type PartyMember,
   type SpellSlots,
 } from '../party/partyStore';
@@ -141,7 +142,28 @@ export type LevelUpResult = {
   subclassId?: string;
   /** Ability-score deltas to apply (e.g. { str: 1, con: 1 } or { wis: 2 }). */
   abilityBumps?: Partial<Record<AbilityKey, number>>;
+  /** Newly-learned spells to append to the character's spell list. */
+  spellsAdded?: KnownSpell[];
 };
+
+/** Highest spell-slot level available given a class level row. Returns 0 for
+ *  non-casters (no slot columns at all). */
+function maxSpellLevel(row: ClassLevelRow): number {
+  for (let i = 9; i >= 1; i -= 1) {
+    const v = parseInt(row.classColumns[`Spell Slots per Spell Level ${i}`] ?? '0', 10);
+    if (v > 0) return i;
+  }
+  return 0;
+}
+
+/** Numeric value of a class-table column, defaulting to 0 when missing. */
+function colNum(row: ClassLevelRow | null | undefined, col: string): number {
+  if (!row) return 0;
+  const v = row.classColumns[col];
+  if (!v) return 0;
+  const m = v.match(/-?\d+/);
+  return m ? parseInt(m[0], 10) : 0;
+}
 
 export default function LevelUpModal({
   member,
@@ -246,6 +268,45 @@ export default function LevelUpModal({
   const isSubclassLevel = cls && subclassLevel(cls) === newLevel && !member.subclassId;
   const [pickedSubclassId, setPickedSubclassId] = useState<string | null>(null);
 
+  // ── Spell learning ─────────────────────────────────────────────────────
+  // Detect cantrip / prepared-spell count changes between the previous and
+  // new level table rows. Wizards additionally gain +2 spellbook spells
+  // every level (not visible in the class table — handled out-of-band).
+  const cantripDelta = Math.max(0, colNum(newRow, 'Cantrips') - colNum(prevRow, 'Cantrips'));
+  const preparedDelta = Math.max(0, colNum(newRow, 'Prepared Spells') - colNum(prevRow, 'Prepared Spells'));
+  const wizardSpellbookDelta = cls?.index === 'wizard' ? 2 : 0;
+  const maxLv = newRow ? maxSpellLevel(newRow) : 0;
+  const totalSpellPicks = cantripDelta + preparedDelta + wizardSpellbookDelta;
+
+  // Spell pools — filtered by max castable level + de-duped against what the
+  // character already knows so the picker doesn't offer duplicates.
+  const knownIndexes = useMemo(
+    () => new Set((member.spells ?? []).filter((sp) => sp.sourceKind === 'srd-spell' && sp.sourceId).map((sp) => sp.sourceId as string)),
+    [member.spells],
+  );
+  const spellPool = useMemo(() => {
+    if (!cls?.spellList) return { cantrips: [] as string[], leveled: [] as string[] };
+    const cantripSrcs = cls.spellList.find((b) => b.level === 0)?.spells ?? [];
+    const leveledSrcs: string[] = [];
+    for (const bucket of cls.spellList) {
+      if (bucket.level === 0) continue;
+      if (bucket.level > maxLv) continue;
+      for (const sid of bucket.spells) leveledSrcs.push(sid);
+    }
+    return {
+      cantrips: cantripSrcs.filter((sid) => !knownIndexes.has(sid)),
+      leveled: leveledSrcs.filter((sid) => !knownIndexes.has(sid)),
+    };
+  }, [cls, maxLv, knownIndexes]);
+
+  const [pickedCantrips, setPickedCantrips] = useState<string[]>([]);
+  const [pickedPrepared, setPickedPrepared] = useState<string[]>([]);
+  const [pickedSpellbook, setPickedSpellbook] = useState<string[]>([]);
+  const togglePick = (list: string[], setList: (v: string[]) => void, max: number, id: string) => {
+    if (list.includes(id)) setList(list.filter((x) => x !== id));
+    else if (list.length < max) setList([...list, id]);
+  };
+
   // ── Reset rolled HP when method changes ────────────────────────────────
   useEffect(() => {
     if (hpMethod !== 'roll') setRolledHp(null);
@@ -279,12 +340,18 @@ export default function LevelUpModal({
     return true;
   })();
 
+  const spellsValid =
+    pickedCantrips.length === cantripDelta &&
+    pickedPrepared.length === preparedDelta &&
+    pickedSpellbook.length === wizardSpellbookDelta;
+
   const canConfirm =
     !!cls &&
     hpGain !== null &&
     hpGain >= 0 &&
     (!isSubclassLevel || !!pickedSubclassId) &&
-    asiValid;
+    asiValid &&
+    spellsValid;
 
   const handleConfirm = () => {
     if (!canConfirm || !cls) return;
@@ -355,6 +422,25 @@ export default function LevelUpModal({
       }
     }
 
+    // Compose the newly-learned spell list. Cantrips + prepared spells land
+    // as prepared:true (immediately castable). Wizard spellbook adds land as
+    // prepared:false (in the book, not on today's list).
+    const spellsAdded: KnownSpell[] = [];
+    const pushSpell = (sid: string, prepared: boolean) => {
+      const srd = SPELLS_2024.find((sp) => sp.index === sid);
+      if (!srd) return;
+      spellsAdded.push({
+        id: crypto.randomUUID(),
+        sourceKind: 'srd-spell',
+        sourceId: sid,
+        name: srd.name,
+        prepared,
+      });
+    };
+    for (const sid of pickedCantrips) pushSpell(sid, true);
+    for (const sid of pickedPrepared) pushSpell(sid, true);
+    for (const sid of pickedSpellbook) pushSpell(sid, false);
+
     onConfirm({
       level: newLevel,
       maxHp: newMaxHp,
@@ -364,6 +450,7 @@ export default function LevelUpModal({
       ...(initialClass ? {} : { classId: cls.index }),
       ...(isSubclassLevel && pickedSubclassId ? { subclassId: pickedSubclassId } : {}),
       ...(abilityBumps && Object.keys(abilityBumps).length > 0 ? { abilityBumps } : {}),
+      ...(spellsAdded.length > 0 ? { spellsAdded } : {}),
     });
   };
 
@@ -532,6 +619,40 @@ export default function LevelUpModal({
                       </div>
                     ))}
                   </div>
+                </Section>
+              )}
+
+              {/* Spell learning: cantrips, prepared, plus Wizard spellbook */}
+              {totalSpellPicks > 0 && (
+                <Section title="Learn new spells">
+                  <div className="text-xs text-slate-400 mb-3 leading-relaxed">
+                    Your {cls.name} gains more castable magic at this level. Pick the new spells now — they go straight onto your sheet.
+                  </div>
+                  {cantripDelta > 0 && (
+                    <SpellLearnBucket
+                      title={`New cantrips (${pickedCantrips.length}/${cantripDelta})`}
+                      pool={spellPool.cantrips}
+                      chosen={pickedCantrips}
+                      onToggle={(id) => togglePick(pickedCantrips, setPickedCantrips, cantripDelta, id)}
+                    />
+                  )}
+                  {preparedDelta > 0 && (
+                    <SpellLearnBucket
+                      title={`New prepared spells (${pickedPrepared.length}/${preparedDelta}) · up to Lv ${maxLv}`}
+                      pool={spellPool.leveled}
+                      chosen={pickedPrepared}
+                      onToggle={(id) => togglePick(pickedPrepared, setPickedPrepared, preparedDelta, id)}
+                    />
+                  )}
+                  {wizardSpellbookDelta > 0 && (
+                    <SpellLearnBucket
+                      title={`Add to spellbook (${pickedSpellbook.length}/${wizardSpellbookDelta}) · up to Lv ${maxLv}`}
+                      hint="Wizards add two spells to their spellbook each level. These are known but not auto-prepared — toggle them via the spellbook on your sheet."
+                      pool={spellPool.leveled.filter((sid) => !pickedPrepared.includes(sid))}
+                      chosen={pickedSpellbook}
+                      onToggle={(id) => togglePick(pickedSpellbook, setPickedSpellbook, wizardSpellbookDelta, id)}
+                    />
+                  )}
                 </Section>
               )}
 
@@ -755,6 +876,61 @@ function AsiPicker({
               </div>
             );
           })()}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function SpellLearnBucket({
+  title,
+  hint,
+  pool,
+  chosen,
+  onToggle,
+}: {
+  title: string;
+  hint?: string;
+  pool: string[];
+  chosen: string[];
+  onToggle: (id: string) => void;
+}) {
+  return (
+    <div className="mt-3 first:mt-0">
+      <div className="text-[11px] uppercase tracking-wider text-slate-500 mb-1">{title}</div>
+      {hint && <div className="text-[11px] text-slate-500 mb-2 leading-snug">{hint}</div>}
+      {pool.length === 0 ? (
+        <div className="text-xs text-slate-600 italic py-2">
+          No new spells available from your class spell list — you may already know them all at this level.
+        </div>
+      ) : (
+        <div className="grid grid-cols-3 gap-1.5 max-h-[220px] overflow-y-auto">
+          {pool.map((id) => {
+            const srd = SPELLS_2024.find((sp) => sp.index === id);
+            if (!srd) return null;
+            const picked = chosen.includes(id);
+            return (
+              <button
+                key={id}
+                onClick={() => onToggle(id)}
+                className={`text-left px-2 py-1.5 rounded text-xs border ${
+                  picked
+                    ? 'border-sky-500 bg-sky-900/30 text-sky-100'
+                    : 'border-slate-800 bg-slate-950 hover:bg-slate-800 text-slate-300'
+                }`}
+                title={srd.desc[0]?.slice(0, 200)}
+              >
+                <div className="flex items-center gap-1">
+                  <Sparkles size={10} className="text-violet-300 shrink-0" />
+                  <span className="truncate">{srd.name}</span>
+                </div>
+                <div className="text-[10px] text-slate-500">
+                  {srd.level === 0 ? 'Cantrip' : `Lv ${srd.level}`} · {srd.school.name}
+                  {srd.ritual ? ' · R' : ''}{srd.concentration ? ' · C' : ''}
+                </div>
+              </button>
+            );
+          })}
         </div>
       )}
     </div>

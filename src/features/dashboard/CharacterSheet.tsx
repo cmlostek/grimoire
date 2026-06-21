@@ -188,6 +188,9 @@ export default function CharacterSheet({
               hp: result.hp,
               spellSlots: result.spellSlots ?? draft.spellSlots,
               features: [...(draft.features ?? []), ...result.features],
+              ...(result.spellsAdded && result.spellsAdded.length > 0
+                ? { spells: [...(draft.spells ?? []), ...result.spellsAdded] }
+                : {}),
               ...(result.classId ? { classId: result.classId } : {}),
               ...(result.subclassId ? { subclassId: result.subclassId } : {}),
               ...bumped,
