@@ -20,7 +20,9 @@ import {
   FlaskConical,
   Mic,
   BookOpen,
+  Download,
 } from 'lucide-react';
+import { downloadCampaignExport } from './exportCampaign';
 import PageHeader from '../../components/PageHeader';
 import { useSession } from '../session/sessionStore';
 import { useCampaignSettings } from '../notes/campaignSettingsStore';
@@ -52,6 +54,9 @@ export default function Settings() {
   const setViewAsPlayer = useSession((s) => s.setViewAsPlayer);
   const leaveCurrent = useSession((s) => s.leaveCurrent);
   const signOut = useSession((s) => s.signOut);
+  const campaignId = useSession((s) => s.campaignId);
+  const campaignName = useSession((s) => s.campaignName);
+  const [exporting, setExporting] = useState(false);
   const { mode, toggle: toggleMode } = useTheme();
   const hoverExpand = useSidebar((s) => s.hoverExpand);
   const setHoverExpand = useSidebar((s) => s.setHoverExpand);
@@ -167,6 +172,20 @@ export default function Settings() {
                   : 'Preview the campaign as a regular player.'
               }
               onClick={() => setViewAsPlayer(!viewAsPlayer)}
+            />
+            <Row
+              icon={<Download size={14} />}
+              label={exporting ? 'Building export…' : 'Export campaign'}
+              hint="Download a JSON snapshot of party, notes, NPCs, homebrew, settings, maps, and initiative. Chat history and transcripts are excluded."
+              onClick={async () => {
+                if (!campaignId || exporting) return;
+                setExporting(true);
+                try {
+                  await downloadCampaignExport(campaignId, campaignName);
+                } finally {
+                  setExporting(false);
+                }
+              }}
             />
           </Section>
         )}
