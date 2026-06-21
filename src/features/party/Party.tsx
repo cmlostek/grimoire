@@ -56,6 +56,16 @@ export default function Party() {
   const claim = useParty((s) => s.claim);
   const unclaim = useParty((s) => s.unclaim);
 
+  // After the builder finishes, players auto-claim the character they just
+  // built so they immediately own it. GMs leave it unclaimed for someone to
+  // pick up — same default as the existing "Add blank" flow.
+  const onBuilderCreate = async (m: Omit<PartyMember, 'id' | 'owner_user_id'>) => {
+    if (!campaignId) return;
+    const newId = await addPartyMember(campaignId, m);
+    if (newId && !isGM) await claim(newId);
+    setAddMode(null);
+  };
+
   const [addMode, setAddMode] = useState<AddMode>(null);
   const [memberNames, setMemberNames] = useState<Record<string, string>>({});
 
@@ -103,14 +113,16 @@ export default function Party() {
             >
               <UserPlus size={14} /> Add blank
             </button>
-            <button
-              onClick={() => setAddMode('builder')}
-              className="px-3 py-1.5 text-xs bg-sky-700 hover:bg-sky-600 text-slate-950 font-semibold rounded flex items-center gap-1"
-            >
-              <Wand2 size={14} /> Build character
-            </button>
           </>
         )}
+        {/* Build character — visible to GMs and players. Players auto-claim
+            the character they create; GMs leave it unclaimed for pickup. */}
+        <button
+          onClick={() => setAddMode('builder')}
+          className="px-3 py-1.5 text-xs bg-sky-700 hover:bg-sky-600 text-slate-950 font-semibold rounded flex items-center gap-1"
+        >
+          <Wand2 size={14} /> Build character
+        </button>
       </PageHeader>
 
       <div className="flex-1 min-h-0 overflow-y-auto p-6">
@@ -153,13 +165,10 @@ export default function Party() {
         />
       )}
 
-      {isGM && addMode === 'builder' && (
+      {addMode === 'builder' && (
         <CharacterBuilder
           onClose={() => setAddMode(null)}
-          onCreate={(m) => {
-            if (campaignId) addPartyMember(campaignId, m);
-            setAddMode(null);
-          }}
+          onCreate={onBuilderCreate}
         />
       )}
     </div>

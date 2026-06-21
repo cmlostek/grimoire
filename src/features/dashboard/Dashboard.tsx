@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Pencil, Check, X, UserPlus, MessageCircle, Camera, Trash2, User as UserIcon, Dice6, Shield, UserMinus, LogOut, ScrollText, Users as UsersIcon, ChevronLeft } from 'lucide-react';
+import { Pencil, Check, X, UserPlus, MessageCircle, Camera, Trash2, User as UserIcon, Dice6, Shield, UserMinus, LogOut, ScrollText, Users as UsersIcon, ChevronLeft, Wand2 } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { useSession } from '../session/sessionStore';
 import { useParty } from '../party/partyStore';
@@ -11,6 +11,7 @@ import { useProfiles, avatarPublicUrl } from '../profiles/profilesStore';
 import { supabase } from '../../lib/supabase';
 import DiceRoller from '../dice/DiceRoller';
 import CharacterSheet from './CharacterSheet';
+import CharacterBuilder from './CharacterBuilder';
 
 type DashboardTab = 'profile' | 'character' | 'dice' | 'manage';
 
@@ -47,6 +48,8 @@ export default function Dashboard() {
   const removeMember = useParty((s) => s.removePartyMember);
   const claimMember = useParty((s) => s.claim);
   const unclaimMember = useParty((s) => s.unclaim);
+  const addMember = useParty((s) => s.addPartyMember);
+  const [showBuilder, setShowBuilder] = useState(false);
 
   // Dashboard is often the first page visited, so the Party feature may not
   // have loaded yet. Loading here is cheap (idempotent server fetch).
@@ -69,6 +72,30 @@ export default function Dashboard() {
   useEffect(() => {
     if (tab === 'manage' && !isGM) setTab('profile');
   }, [tab, isGM]);
+
+  // On the very first dashboard load for a player who's joined a campaign and
+  // has no claimed character yet, auto-open the builder so onboarding is
+  // obvious. We only fire once per (user, campaign) — the localStorage flag
+  // keeps subsequent visits quiet.
+  useEffect(() => {
+    if (!partyLoaded || !campaignId || !userId) return;
+    if (isGM) return;
+    if (myCharacter) return;
+    const flagKey = `grimoire:welcomed:${campaignId}:${userId}`;
+    if (localStorage.getItem(flagKey)) return;
+    setShowBuilder(true);
+    localStorage.setItem(flagKey, '1');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [partyLoaded, campaignId, userId, isGM]);
+
+  const handleBuilderCreate = async (m: Parameters<typeof addMember>[1]) => {
+    if (!campaignId) return;
+    const newId = await addMember(campaignId, m);
+    // Player-created characters auto-claim; GMs leave them unclaimed in case
+    // someone else is supposed to own the row.
+    if (newId && !isGM) await claimMember(newId);
+    setShowBuilder(false);
+  };
 
   return (
     <div className="h-full overflow-hidden flex flex-col lg:flex-row">
@@ -121,7 +148,12 @@ export default function Dashboard() {
                     onUnclaim={() => unclaimMember(myCharacter.id)}
                   />
                 ) : (
-                  <NoCharacterCTA party={party} role={role} onClaim={claimMember} />
+                  <NoCharacterCTA
+                    party={party}
+                    role={role}
+                    onClaim={claimMember}
+                    onBuild={() => setShowBuilder(true)}
+                  />
                 )}
               </Section>
 
@@ -154,7 +186,12 @@ export default function Dashboard() {
               />
             ) : (
               <div className="px-6 py-6">
-                <NoCharacterCTA party={party} role={role} onClaim={claimMember} />
+                <NoCharacterCTA
+                  party={party}
+                  role={role}
+                  onClaim={claimMember}
+                  onBuild={() => setShowBuilder(true)}
+                />
               </div>
             )
           )}
@@ -176,6 +213,13 @@ export default function Dashboard() {
       <div className="lg:w-96 shrink-0 h-[28rem] lg:h-auto border-t lg:border-t-0 lg:border-l border-slate-800 p-3">
         <ChatPanel variant="embedded" />
       </div>
+
+      {showBuilder && (
+        <CharacterBuilder
+          onClose={() => setShowBuilder(false)}
+          onCreate={handleBuilderCreate}
+        />
+      )}
     </div>
   );
 }
@@ -896,21 +940,29 @@ function NoCharacterCTA({
   party,
   role,
   onClaim,
+  onBuild,
 }: {
   party: import('../party/partyStore').PartyMember[];
   role: 'gm' | 'cogm' | 'player' | null;
   onClaim: (id: string) => Promise<void>;
+  onBuild: () => void;
 }) {
   const unclaimed = party.filter((p) => p.owner_user_id === null);
 
   return (
     <div className="bg-slate-900 border border-slate-800 rounded-lg p-4 space-y-3">
       <div className="text-sm text-slate-300">
-        You haven't claimed a character in this campaign yet.
+        You don't have a character in this campaign yet.
       </div>
+      <button
+        onClick={onBuild}
+        className="w-full flex items-center justify-center gap-2 px-3 py-2.5 rounded bg-sky-700 hover:bg-sky-600 text-slate-950 text-sm font-semibold"
+      >
+        <Wand2 size={14} /> Build a character
+      </button>
       {unclaimed.length > 0 && (
         <div className="space-y-1.5">
-          <div className="text-[10px] uppercase tracking-wider text-slate-500">Unclaimed characters</div>
+          <div className="text-[10px] uppercase tracking-wider text-slate-500">…or claim an existing one</div>
           <div className="space-y-1">
             {unclaimed.map((p) => (
               <button
