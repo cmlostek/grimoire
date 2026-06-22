@@ -133,6 +133,12 @@ export type PartyMember = {
   hitDieSize?: number;
   /** Number of hit dice the character can still spend before a long rest. */
   hitDiceCurrent?: number;
+  /** Active condition slugs (matches CONDITIONS index from src/data/conditions.ts).
+   *  Exhaustion is excluded from this list — it has its own counter below. */
+  conditions?: string[];
+  /** 2024 SRD exhaustion level (0..6). -2 to all D20 tests and -5ft speed per
+   *  level; death at 6. Long rest reduces by 1. */
+  exhaustion?: number;
   /** Chosen subclass slug from the matching Class's subclasses[] entries. */
   subclassId?: string;
   /** Free-form appearance/personality fields collected during creation. */
@@ -206,6 +212,8 @@ function rowToMember(r: Row): PartyMember {
     details: d.details,
     hitDieSize: d.hitDieSize,
     hitDiceCurrent: d.hitDiceCurrent,
+    conditions: d.conditions ?? [],
+    exhaustion: d.exhaustion ?? 0,
   };
 }
 
@@ -250,6 +258,7 @@ function patchToUpdate(
     'xp', 'gold', 'deathSaves', 'skillProfs', 'saveProfs', 'inventory',
     'spellAbility', 'spellSlots', 'spells', 'customActions', 'features',
     'classId', 'subclassId', 'details', 'hitDieSize', 'hitDiceCurrent',
+    'conditions', 'exhaustion',
   ];
   const needsDataUpdate = dataKeys.some((k) => k in patch);
   if (needsDataUpdate) {

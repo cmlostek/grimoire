@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Save, Printer, BedDouble, Coffee, Heart, Dices, HeartPulse, Skull, Eye, Search, Brain, Plus, X as XIcon, Swords, Shield as ShieldIcon, Sparkles, Backpack, Trash2, ChevronUp } from 'lucide-react';
+import { Save, Printer, BedDouble, Coffee, Heart, Dices, HeartPulse, Skull, Eye, Search, Brain, Plus, X as XIcon, Swords, Shield as ShieldIcon, Sparkles, Backpack, Trash2, ChevronUp, AlertTriangle } from 'lucide-react';
 import LevelUpModal, { type LevelUpResult } from './LevelUpModal';
+import { CONDITIONS } from '../../data/conditions';
 import {
   DEFAULT_DEATH_SAVES,
   DEFAULT_GOLD,
@@ -118,6 +119,7 @@ export default function CharacterSheet({
   const longRest = () => {
     // Restore HP to max, clear temp HP, reset death saves, refill spell slots.
     // Hit dice recover up to half max (rounded down, min 1) per 5e rules.
+    // Exhaustion drops by 1 per the 2024 condition definition.
     const slots = (draft.spellSlots ?? []).map((s) => ({ ...s, current: s.max }));
     const maxDice = draft.level;
     const regained = Math.max(1, Math.floor(maxDice / 2));
@@ -128,6 +130,7 @@ export default function CharacterSheet({
       deathSaves: { ...DEFAULT_DEATH_SAVES },
       spellSlots: slots.length > 0 ? slots : undefined,
       hitDiceCurrent: newDice,
+      exhaustion: Math.max(0, (draft.exhaustion ?? 0) - 1),
     });
   };
 
@@ -290,6 +293,14 @@ export default function CharacterSheet({
           className="lg:col-span-2"
         >
           <SpellbookBlock draft={draft} onApply={apply} />
+        </Card>
+
+        <Card
+          title="Conditions & exhaustion"
+          subtitle="Active effects, tracked across the sheet and combat surfaces"
+          className="lg:col-span-2"
+        >
+          <ConditionsBlock draft={draft} onApply={apply} />
         </Card>
 
         <Card
@@ -2091,6 +2102,104 @@ function DetailsBlock({ draft, onApply }: { draft: PartyMember; onApply: (p: Par
           />
         </label>
       ))}
+    </div>
+  );
+}
+
+// ── Conditions & exhaustion ───────────────────────────────────────────────
+
+/** SRD 5.1 conditions list minus Exhaustion (which has its own counter). */
+const SHEET_CONDITIONS = CONDITIONS.filter((c) => c.index !== 'exhaustion');
+
+function ConditionsBlock({ draft, onApply }: { draft: PartyMember; onApply: (p: Partial<PartyMember>) => void }) {
+  const active = new Set(draft.conditions ?? []);
+  const exh = draft.exhaustion ?? 0;
+  const dead = exh >= 6;
+
+  const toggleCondition = (slug: string) => {
+    const next = new Set(active);
+    if (next.has(slug)) next.delete(slug);
+    else next.add(slug);
+    onApply({ conditions: Array.from(next) });
+  };
+
+  const setExhaustion = (n: number) => {
+    const clamped = Math.max(0, Math.min(6, n));
+    onApply({ exhaustion: clamped });
+  };
+
+  return (
+    <div className="grid grid-cols-1 lg:grid-cols-[1fr_220px] gap-4">
+      {/* Conditions list */}
+      <div>
+        <div className="text-[11px] uppercase tracking-wider text-slate-500 mb-2">Conditions</div>
+        <div className="flex flex-wrap gap-1.5">
+          {SHEET_CONDITIONS.map((c) => {
+            const on = active.has(c.index);
+            return (
+              <button
+                key={c.index}
+                onClick={() => toggleCondition(c.index)}
+                title={c.desc.split('\n')[0]}
+                className={`px-2 py-1 text-[11px] rounded border transition-colors ${
+                  on
+                    ? 'border-rose-600 bg-rose-900/40 text-rose-100'
+                    : 'border-slate-800 bg-slate-950 text-slate-400 hover:bg-slate-800 hover:text-slate-200'
+                }`}
+              >
+                {c.name}
+              </button>
+            );
+          })}
+        </div>
+        {active.size === 0 && (
+          <div className="text-[11px] text-slate-600 italic mt-2">
+            No active conditions. Click a chip to apply.
+          </div>
+        )}
+      </div>
+
+      {/* Exhaustion tracker (right column) */}
+      <div className="border-t lg:border-t-0 lg:border-l border-slate-800 lg:pl-4 pt-3 lg:pt-0">
+        <div className="flex items-center justify-between mb-2">
+          <div className="text-[11px] uppercase tracking-wider text-amber-300/80">Exhaustion</div>
+          <div className="text-[10px] text-slate-500 font-mono">{exh}/6</div>
+        </div>
+        <div className="flex gap-1 mb-3">
+          {[1, 2, 3, 4, 5, 6].map((n) => (
+            <button
+              key={n}
+              onClick={() => setExhaustion(exh === n ? n - 1 : n)}
+              className={`flex-1 h-5 rounded-sm border transition-colors ${
+                exh >= n
+                  ? n === 6
+                    ? 'bg-rose-700 border-rose-500'
+                    : 'bg-amber-700 border-amber-500'
+                  : 'bg-slate-900 border-slate-700 hover:bg-slate-800'
+              }`}
+              title={`Set exhaustion level ${n}`}
+            />
+          ))}
+        </div>
+        {exh > 0 && (
+          <div className="text-[11px] leading-relaxed text-slate-400 space-y-1 bg-slate-950 border border-slate-800 rounded p-2">
+            <div className="flex items-center gap-1 text-amber-300/90">
+              <AlertTriangle size={11} />
+              <span>−{exh * 2} on D20 tests · −{exh * 5} ft Speed</span>
+            </div>
+            {dead && (
+              <div className="text-rose-300 font-semibold">
+                Dead — exhaustion at 6.
+              </div>
+            )}
+          </div>
+        )}
+        {exh === 0 && (
+          <div className="text-[11px] text-slate-600 italic">
+            Click a pip to apply exhaustion levels. Long rest reduces by 1.
+          </div>
+        )}
+      </div>
     </div>
   );
 }
