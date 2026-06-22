@@ -356,6 +356,7 @@ export default function MapBoard() {
   const party = useParty((s) => s.party);
   const loadParty = useParty((s) => s.loadForCampaign);
   const subscribeParty = useParty((s) => s.subscribe);
+  const updatePartyMember = useParty((s) => s.updatePartyMember);
   useEffect(() => {
     if (!campaignId) return;
     loadParty(campaignId);
@@ -1386,7 +1387,17 @@ export default function MapBoard() {
                     {(isGM || t.owner_user_id === userId) && (
                       <TokenConditionsRow
                         conditions={t.conditions ?? []}
-                        onChange={(next) => void updateToken(t.id, { conditions: next })}
+                        onChange={(next) => {
+                          void updateToken(t.id, { conditions: next });
+                          // When the token is owned by a player who has a PC
+                          // in this campaign, mirror conditions to the sheet
+                          // so the player sees the same state on Vitals and
+                          // the Party badge strip without manual re-entry.
+                          const pc = t.owner_user_id
+                            ? party.find((p) => p.owner_user_id === t.owner_user_id)
+                            : null;
+                          if (pc) void updatePartyMember(pc.id, { conditions: next });
+                        }}
                       />
                     )}
                   </div>
