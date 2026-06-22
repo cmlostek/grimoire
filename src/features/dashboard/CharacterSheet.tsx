@@ -19,7 +19,7 @@ import {
 } from '../party/partyStore';
 import { useQuickDice } from '../dice/quickDiceStore';
 import { useCatalog, searchCatalog, type CatalogEntry } from '../chat/catalog';
-import { EQUIPMENT, MAGIC_ITEMS, SPELLS, equipmentFor, spellsFor } from '../../data/srd';
+import { EQUIPMENT, MAGIC_ITEMS, SPELLS, SPECIES_2024, equipmentFor, spellsFor } from '../../data/srd';
 import type { SrdEdition } from '../notes/campaignSettingsStore';
 import { useCampaignSettings } from '../notes/campaignSettingsStore';
 import type { EquipmentItem, Spell } from '../../data/types';
@@ -490,6 +490,38 @@ export function isCharacterDead(m: PartyMember): boolean {
   return false;
 }
 
+/** 2024 SRD exhaustion penalty: −2 to every D20 test per level. Applied at
+ *  display and roll time to skills, saves, attacks, and initiative. */
+export function exhaustionD20Penalty(m: PartyMember): number {
+  return (m.exhaustion ?? 0) * -2;
+}
+
+/** Base movement speed in feet, derived from species when possible.
+ *  Falls back to parsing the free-text speed field, then to 30. */
+function parseSpeedFeet(s: string): number {
+  const m = (s ?? '').match(/(\d+)/);
+  return m ? parseInt(m[1], 10) : 30;
+}
+function speciesBaseSpeed(race: string): number | null {
+  if (!race) return null;
+  const hit = SPECIES_2024.find((sp) => sp.name.toLowerCase() === race.trim().toLowerCase());
+  return hit ? parseSpeedFeet(hit.speed) : null;
+}
+
+/** Effective speed for the round: base − 5 ft per exhaustion level, floored at 0. */
+export function effectiveSpeed(m: PartyMember): { base: number; penalty: number; effective: number; sourceLabel: string } {
+  const fromSpecies = speciesBaseSpeed(m.race);
+  const base = fromSpecies ?? parseSpeedFeet(m.speed ?? '30');
+  const penalty = (m.exhaustion ?? 0) * 5;
+  const effective = Math.max(0, base - penalty);
+  return {
+    base,
+    penalty,
+    effective,
+    sourceLabel: fromSpecies != null ? `${m.race} base` : 'manual',
+  };
+}
+
 // ── Vitals ──────────────────────────────────────────────────────────────
 
 function VitalsBlock({
@@ -606,11 +638,22 @@ function VitalsBlock({
         />
         <div>
           <div className="text-[10px] uppercase tracking-wider text-slate-500 mb-1">Speed</div>
-          <input
-            value={draft.speed}
-            onChange={(e) => onApply({ speed: e.target.value })}
-            className="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1 text-sm text-slate-100 focus:outline-none focus:border-sky-700"
-          />
+          {(() => {
+            const sp = effectiveSpeed(draft);
+            return (
+              <div
+                className="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1 text-sm text-slate-100 text-center"
+                title={`${sp.base} ft ${sp.sourceLabel}${sp.penalty ? ` − ${sp.penalty} ft exhaustion` : ''}`}
+              >
+                <span className={sp.penalty ? 'text-amber-300 font-mono' : 'font-mono'}>{sp.effective} ft</span>
+                {sp.penalty > 0 && (
+                  <span className="block text-[10px] text-slate-500">
+                    base {sp.base} · −{sp.penalty}
+                  </span>
+                )}
+              </div>
+            );
+          })()}
         </div>
       </div>
 
@@ -948,11 +991,13 @@ function SkillsBlock({
     onApply({ skillProfs: [...set] });
   };
 
+  // 2024 exhaustion penalty: every D20 test is reduced by 2 per level.
+  const exhPenalty = exhaustionD20Penalty(draft);
   return (
     <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6">
       {SKILLS.map(({ key, label, ability }) => {
         const prof = profs.includes(key);
-        const mod = abilityMod(draft[ability]) + (prof ? pb : 0);
+        const mod = abilityMod(draft[ability]) + (prof ? pb : 0) + exhPenalty;
         return (
           <ProfRow
             key={key}
@@ -987,11 +1032,12 @@ function SavesBlock({
     onApply({ saveProfs: [...set] });
   };
 
+  const exhPenalty = exhaustionD20Penalty(draft);
   return (
     <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6">
       {(['str', 'dex', 'con', 'int', 'wis', 'cha'] as Ability[]).map((a) => {
         const prof = profs.includes(a);
-        const mod = abilityMod(draft[a]) + (prof ? pb : 0);
+        const mod = abilityMod(draft[a]) + (prof ? pb : 0) + exhPenalty;
         return (
           <ProfRow
             key={a}
@@ -1321,7 +1367,8 @@ function weaponStats(member: PartyMember, weapon: EquipmentItem) {
   const pb = profBonus(member.level);
   return {
     ability,
-    attackBonus: mod + pb,
+    // Exhaustion subtracts from the attack roll (an attack is a D20 test).
+    attackBonus: mod + pb + exhaustionD20Penalty(member),
     abilityMod: mod,
     damageDice: weapon.damage?.damage_dice ?? '',
     damageType: weapon.damage?.damage_type?.name ?? '',
