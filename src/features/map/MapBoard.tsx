@@ -382,18 +382,28 @@ export default function MapBoard() {
 
   type CreatureRow = {
     key: string;
-    source: 'npc' | 'statblock';
+    source: 'pc' | 'npc' | 'statblock';
     name: string;
     emoji: string;
     hp: number;
     maxHp: number;
   };
-  // Combined, sorted creature list. Every NPC is shown (even ones without
-  // HP set yet — the GM can edit on the token after placing); stat blocks
-  // come from the local /statblocks page and use their `hp` as both
-  // current and max. Sort alphabetically so it's predictable.
+  // Combined, sorted creature list. Party PCs come first so the GM can drop
+  // their tokens without re-typing names; NPCs and stat blocks follow. NPCs
+  // without HP set yet still appear — the GM can edit on the token after
+  // placing. Stat blocks use their `hp` as both current and max.
   const creatureRoster: CreatureRow[] = useMemo(() => {
     const rows: CreatureRow[] = [];
+    for (const p of party) {
+      rows.push({
+        key: `pc:${p.id}`,
+        source: 'pc',
+        name: p.name,
+        emoji: '🧝',
+        hp: p.hp,
+        maxHp: p.maxHp,
+      });
+    }
     for (const n of npcs) {
       const sb = n.statBlock ?? {};
       const maxHp = sb.hpMax ?? sb.hpCurrent ?? 0;
@@ -420,8 +430,12 @@ export default function MapBoard() {
         maxHp: hp,
       });
     }
-    return rows.sort((a, b) => a.name.localeCompare(b.name));
-  }, [npcs, statBlocks, campaignId]);
+    // Stable order: PCs first (preserve party order), then NPCs and stat
+    // blocks sorted alphabetically together.
+    const partyRows = rows.filter((r) => r.source === 'pc');
+    const rest = rows.filter((r) => r.source !== 'pc').sort((a, b) => a.name.localeCompare(b.name));
+    return [...partyRows, ...rest];
+  }, [party, npcs, statBlocks, campaignId]);
 
   useVisibilityReload(() => {
     if (campaignId) loadForCampaign(campaignId);
@@ -1284,9 +1298,9 @@ export default function MapBoard() {
                         <span className="flex-1 truncate">{row.name}</span>
                         <span
                           className="text-[9px] uppercase tracking-wider text-slate-600 shrink-0"
-                          title={row.source === 'npc' ? 'From NPCs' : 'From Stat Blocks'}
+                          title={row.source === 'pc' ? 'From Party' : row.source === 'npc' ? 'From NPCs' : 'From Stat Blocks'}
                         >
-                          {row.source === 'npc' ? 'npc' : 'sb'}
+                          {row.source === 'pc' ? 'pc' : row.source === 'npc' ? 'npc' : 'sb'}
                         </span>
                         <span className="text-[10px] text-slate-500 font-mono shrink-0 w-12 text-right">
                           {row.maxHp > 0 ? `${row.hp}/${row.maxHp}` : '—'}

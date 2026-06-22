@@ -1466,7 +1466,10 @@ function InventoryRow({
     if (item.sourceKind !== 'srd-item' || !item.sourceId) return null;
     return MAGIC_ITEMS.find((m) => m.index === item.sourceId) ?? null;
   }, [item.sourceKind, item.sourceId]);
-  const hasDescription = (srdItem?.desc?.length ?? 0) > 0 || (srdMagic?.desc?.length ?? 0) > 0 || (srdSpell?.desc?.length ?? 0) > 0;
+  // Any kind of SRD backing — desc paragraphs, weapon damage line, armor
+  // class line, cost/weight stats — means the row has *something* worth
+  // expanding to. Plain custom items without an SRD link stay collapsed.
+  const hasDetails = !!srdItem || !!srdMagic || !!srdSpell;
   const [showDesc, setShowDesc] = useState(false);
 
   let KindIcon = Backpack;
@@ -1487,10 +1490,10 @@ function InventoryRow({
 
       <div className="min-w-0 flex-1">
         <button
-          onClick={() => hasDescription && setShowDesc((v) => !v)}
-          disabled={!hasDescription}
-          className={`block w-full text-left text-sm text-slate-100 truncate ${hasDescription ? 'hover:text-sky-200 cursor-pointer' : 'cursor-text'}`}
-          title={hasDescription ? 'Click to view details' : undefined}
+          onClick={() => hasDetails && setShowDesc((v) => !v)}
+          disabled={!hasDetails}
+          className={`block w-full text-left text-sm text-slate-100 truncate ${hasDetails ? 'hover:text-sky-200 cursor-pointer' : 'cursor-text'}`}
+          title={hasDetails ? 'Click to view details' : undefined}
         >
           {item.name}
         </button>
@@ -1560,9 +1563,10 @@ function InventoryRow({
       </div>
     </div>
 
-    {/* Expandable SRD description — weapons, armor, gear, magic items, spells.
-        Always rendered in the printed PDF so the loadout is self-documenting. */}
-    {showDesc && hasDescription && (
+    {/* Expandable SRD details — always shows something for any SRD-backed
+        row. Basic items (Longsword, Plate, Backpack) get a stats line even
+        when there's no desc[]; magic items + spells render their full text. */}
+    {showDesc && hasDetails && (
       <div className="border-t border-slate-800 px-3 py-2 text-xs text-slate-300 leading-relaxed bg-slate-900/40 markdown-body">
         {srdSpell && (
           <div className="text-[10px] text-slate-500 mb-1 italic">
@@ -1576,11 +1580,60 @@ function InventoryRow({
             {srdMagic.equipment_category.name} · {srdMagic.rarity.name}
           </div>
         )}
+        {srdItem && !srdMagic && !srdSpell && (
+          <>
+            <div className="text-[10px] text-slate-500 mb-1 italic">
+              {srdItem.equipment_category.name}
+              {srdItem.weapon_category && ` · ${srdItem.weapon_category} ${srdItem.weapon_range ?? ''}`}
+              {srdItem.armor_category && ` · ${srdItem.armor_category} armor`}
+            </div>
+            <div className="grid grid-cols-2 gap-x-3 gap-y-0.5 text-[11px] mb-1.5">
+              {srdItem.cost && (
+                <div><span className="text-slate-600">Cost:</span> {srdItem.cost.quantity} {srdItem.cost.unit}</div>
+              )}
+              {srdItem.weight !== undefined && (
+                <div><span className="text-slate-600">Weight:</span> {srdItem.weight} lb</div>
+              )}
+              {srdItem.damage && (
+                <div className="col-span-2">
+                  <span className="text-slate-600">Damage:</span> {srdItem.damage.damage_dice} {srdItem.damage.damage_type.name.toLowerCase()}
+                  {srdItem.two_handed_damage && ` · 2h ${srdItem.two_handed_damage.damage_dice}`}
+                </div>
+              )}
+              {srdItem.armor_class && (
+                <div className="col-span-2">
+                  <span className="text-slate-600">AC:</span> {srdItem.armor_class.base}
+                  {srdItem.armor_class.dex_bonus && ' + Dex'}
+                  {srdItem.armor_class.max_bonus && ` (max +${srdItem.armor_class.max_bonus})`}
+                </div>
+              )}
+              {srdItem.range && (srdItem.range.normal || srdItem.range.long) && (
+                <div><span className="text-slate-600">Range:</span> {srdItem.range.normal}/{srdItem.range.long} ft</div>
+              )}
+              {srdItem.str_minimum && srdItem.str_minimum > 0 && (
+                <div><span className="text-slate-600">Str min:</span> {srdItem.str_minimum}</div>
+              )}
+              {srdItem.stealth_disadvantage && (
+                <div className="col-span-2 text-amber-300/80">Stealth: disadvantage</div>
+              )}
+            </div>
+            {srdItem.properties && srdItem.properties.length > 0 && (
+              <div className="text-[11px] text-slate-500 mb-1.5">
+                <span className="text-slate-600">Properties:</span>{' '}
+                {srdItem.properties.map((p) => p.name).join(', ')}
+              </div>
+            )}
+          </>
+        )}
         {srdSpell?.desc?.map((p, i) => <p key={`s${i}`} className="mb-1.5">{p}</p>)}
         {srdMagic?.desc?.map((p, i) => (
           <ReactMarkdown key={`m${i}`} remarkPlugins={[remarkGfm]}>{p}</ReactMarkdown>
         ))}
         {!srdSpell && !srdMagic && srdItem?.desc?.map((p, i) => <p key={`i${i}`} className="mb-1.5">{p}</p>)}
+        {/* When there's no narrative desc, signpost where it would normally appear */}
+        {!srdSpell && !srdMagic && (!srdItem?.desc || srdItem.desc.length === 0) && (
+          <div className="text-[10px] text-slate-600 italic">No additional description in the SRD.</div>
+        )}
       </div>
     )}
     </div>
