@@ -98,8 +98,9 @@ function num(v: string | undefined): number | null {
 }
 
 /** Extract the per-level spell-slot vector (length 10, index 0 unused) from a
- *  class-table row's columns. Matches our generic "Spell Slots per Spell Level N"
- *  column key from the parser. Returns null when the row has no slot columns. */
+ *  class-table row's columns. Returns null when the row has no slot columns.
+ *  Handles full-caster ("Spell Slots per Spell Level N") and Warlock-style
+ *  ("Spell Slots" count + "Slot Level") shapes. */
 function slotsFromRow(cols: Record<string, string>): number[] | null {
   let touched = false;
   const out = Array.from({ length: 10 }, () => 0);
@@ -107,6 +108,15 @@ function slotsFromRow(cols: Record<string, string>): number[] | null {
     const v = num(cols[`Spell Slots per Spell Level ${i}`]);
     if (v !== null) {
       out[i] = v;
+      touched = true;
+    }
+  }
+  if (!touched) {
+    // Warlock pact magic: all slots are at the listed slot level.
+    const count = num(cols['Spell Slots']);
+    const lv = num(cols['Slot Level']);
+    if (count !== null && lv !== null && lv >= 1 && lv <= 9) {
+      out[lv] = count;
       touched = true;
     }
   }
@@ -148,12 +158,19 @@ export type LevelUpResult = {
 };
 
 /** Highest spell-slot level available given a class level row. Returns 0 for
- *  non-casters (no slot columns at all). */
+ *  non-casters. Handles two SRD column shapes:
+ *    - Full casters: nine "Spell Slots per Spell Level N" columns; max level
+ *      is the highest N with a non-zero count.
+ *    - Warlock (Pact Magic): a single "Spell Slots" count column plus a
+ *      separate "Slot Level" column that already names the max level.
+ */
 function maxSpellLevel(row: ClassLevelRow): number {
   for (let i = 9; i >= 1; i -= 1) {
     const v = parseInt(row.classColumns[`Spell Slots per Spell Level ${i}`] ?? '0', 10);
     if (v > 0) return i;
   }
+  const pactSlotLevel = parseInt(row.classColumns['Slot Level'] ?? '0', 10);
+  if (pactSlotLevel > 0) return pactSlotLevel;
   return 0;
 }
 
@@ -273,11 +290,10 @@ export default function LevelUpModal({
   // Detect cantrip / prepared-spell count changes between the previous and
   // new level table rows. Wizards additionally gain +2 spellbook spells
   // every level (not visible in the class table — handled out-of-band).
-  const cantripDelta = Math.max(0, colNum(newRow, 'Cantrips') - colNum(prevRow, 'Cantrips'));
-  const preparedDelta = Math.max(0, colNum(newRow, 'Prepared Spells') - colNum(prevRow, 'Prepared Spells'));
-  const wizardSpellbookDelta = cls?.index === 'wizard' ? 2 : 0;
+  const cantripDeltaRaw = Math.max(0, colNum(newRow, 'Cantrips') - colNum(prevRow, 'Cantrips'));
+  const preparedDeltaRaw = Math.max(0, colNum(newRow, 'Prepared Spells') - colNum(prevRow, 'Prepared Spells'));
+  const wizardSpellbookDeltaRaw = cls?.index === 'wizard' ? 2 : 0;
   const maxLv = newRow ? maxSpellLevel(newRow) : 0;
-  const totalSpellPicks = cantripDelta + preparedDelta + wizardSpellbookDelta;
 
   // Spell pools — filtered by max castable level + de-duped against what the
   // character already knows so the picker doesn't offer duplicates.
@@ -299,6 +315,15 @@ export default function LevelUpModal({
       leveled: leveledSrcs.filter((sid) => !knownIndexes.has(sid)),
     };
   }, [cls, maxLv, knownIndexes]);
+
+  // Cap each picker to whatever's actually pickable — if the pool is empty
+  // (e.g. you already know every level-1 spell on the list), the picker shows
+  // the empty-state message and validation auto-passes instead of trapping the
+  // player on a button they can never press.
+  const cantripDelta = Math.min(cantripDeltaRaw, spellPool.cantrips.length);
+  const preparedDelta = Math.min(preparedDeltaRaw, spellPool.leveled.length);
+  const wizardSpellbookDelta = Math.min(wizardSpellbookDeltaRaw, spellPool.leveled.length);
+  const totalSpellPicks = cantripDelta + preparedDelta + wizardSpellbookDelta;
 
   const [pickedCantrips, setPickedCantrips] = useState<string[]>([]);
   const [pickedPrepared, setPickedPrepared] = useState<string[]>([]);
