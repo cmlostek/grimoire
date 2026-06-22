@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Save, Printer, BedDouble, Coffee, Heart, Dices, HeartPulse, Skull, Eye, Search, Brain, Plus, X as XIcon, Swords, Shield as ShieldIcon, Sparkles, Backpack, Trash2, ChevronUp, AlertTriangle } from 'lucide-react';
+import { Save, Printer, BedDouble, Coffee, Heart, Dices, HeartPulse, Skull, Eye, Search, Brain, Plus, X as XIcon, Swords, Shield as ShieldIcon, Sparkles, Backpack, Trash2, ChevronUp, AlertTriangle, Pencil } from 'lucide-react';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import LevelUpModal, { type LevelUpResult } from './LevelUpModal';
 import { CONDITIONS } from '../../data/conditions';
 import {
@@ -480,6 +482,14 @@ function SheetHeader({
   );
 }
 
+/** Unified dead check used by Vitals + DeathSavesBlock. */
+export function isCharacterDead(m: PartyMember): boolean {
+  if (m.maxHp > 0 && m.hp <= -m.maxHp) return true;
+  if ((m.exhaustion ?? 0) >= 6) return true;
+  if ((m.deathSaves?.failures ?? 0) >= 3) return true;
+  return false;
+}
+
 // ── Vitals ──────────────────────────────────────────────────────────────
 
 function VitalsBlock({
@@ -499,10 +509,10 @@ function VitalsBlock({
 }) {
   const rollFormula = useQuickDice((s) => s.rollFormula);
   const hpPct = draft.maxHp > 0 ? (draft.hp / draft.maxHp) * 100 : 0;
-  // SRD instant-death rule: damage taken at 0 HP that equals or exceeds your
-  // HP maximum kills you outright — i.e. current HP would be at or below
-  // -maxHp. Show a status badge so the table notices.
-  const isDead = draft.maxHp > 0 && draft.hp <= -draft.maxHp;
+  // SRD instant-death rule + 3 failed death saves + exhaustion 6 all kill.
+  // The DeathSavesBlock auto-flags failures>=3 too; Vitals just surfaces the
+  // unified badge so any of the three paths reads at a glance.
+  const isDead = isCharacterDead(draft);
   const hpBarColor = hpPct > 50 ? 'bg-green-500' : hpPct > 25 ? 'bg-yellow-500' : 'bg-red-600';
   // Hit dice — max equals character level. Default current to max on first
   // render so older characters without a stored value behave sanely.
@@ -698,7 +708,7 @@ function DeathSavesBlock({
         filled={ds.failures}
         onClickPip={(i) => togglePip('failures', i)}
       />
-          <div className="flex-4 flex flex-col items-center justify-center gap-2 mt-2 py-2 rounded" style={{ background: t.bg }}>
+          <div className="flex-1 min-h-[110px] flex flex-col items-center justify-center gap-2 mt-2 py-2 rounded" style={{ background: t.bg }}>
         <status.Icon
           size={56}
           strokeWidth={1.5}
@@ -1125,13 +1135,16 @@ function Card({
   children: React.ReactNode;
   className?: string;
 }) {
+  // h-full + flex-col so a card that lives next to a taller sibling in the
+  // grid stretches its body to fill the row height — Death saves no longer
+  // leaves whitespace next to Vitals.
   return (
-    <section className={`bg-slate-900 border border-slate-800 rounded-lg p-4 ${className}`}>
-      <div className="flex items-baseline justify-between mb-3">
+    <section className={`bg-slate-900 border border-slate-800 rounded-lg p-4 h-full flex flex-col ${className}`}>
+      <div className="flex items-baseline justify-between mb-3 shrink-0">
         <h2 className="text-[10px] uppercase tracking-wider text-slate-400 font-semibold">{title}</h2>
         {subtitle && <span className="text-[10px] text-slate-600">{subtitle}</span>}
       </div>
-      {children}
+      <div className="flex-1 min-h-0">{children}</div>
     </section>
   );
 }
@@ -2125,7 +2138,13 @@ function ConditionsBlock({ draft, onApply }: { draft: PartyMember; onApply: (p: 
 
   const setExhaustion = (n: number) => {
     const clamped = Math.max(0, Math.min(6, n));
-    onApply({ exhaustion: clamped });
+    // Exhaustion 6 in 2024 = instant death. Drop HP to 0 too so the rest of
+    // the sheet (HP bar, Dead badge in Vitals) reads consistently.
+    if (clamped >= 6) {
+      onApply({ exhaustion: 6, hp: 0 });
+    } else {
+      onApply({ exhaustion: clamped });
+    }
   };
 
   return (
@@ -2608,18 +2627,16 @@ function FeatureRow({
   onChange: (patch: Partial<CharacterFeature>) => void;
   onRemove: () => void;
 }) {
-  const [open, setOpen] = useState(false);
+  const [editing, setEditing] = useState(false);
   const uses = feature.uses;
 
   return (
-    <div className="bg-slate-950 border border-slate-800 rounded p-2">
-      <div className="flex items-center gap-2">
-        <button
-          onClick={() => setOpen((v) => !v)}
-          className="flex-1 text-left text-sm text-slate-100 hover:text-sky-200"
-        >
-          {feature.name}
-        </button>
+    <div className="srd-popover" style={{ maxHeight: 'none' }}>
+      <div className="srd-popover-header flex items-center gap-2">
+        <div className="flex-1 min-w-0">
+          <div className="srd-popover-name truncate">{feature.name}</div>
+          <div className="srd-popover-sub">{feature.source}</div>
+        </div>
         {uses && (
           <UsesControl
             current={uses.current}
@@ -2631,29 +2648,48 @@ function FeatureRow({
         {!uses && (
           <button
             onClick={() => onChange({ uses: { current: 1, max: 1, period: 'Long' } })}
-            className="text-[10px] uppercase tracking-wider text-slate-500 hover:text-slate-200 px-1.5 py-0.5 rounded hover:bg-slate-800"
+            className="text-[10px] uppercase tracking-wider text-slate-500 hover:text-slate-200 px-1.5 py-0.5 rounded hover:bg-slate-800 shrink-0"
             title="Add a limited-use counter"
           >
             Track uses
           </button>
         )}
         <button
+          onClick={() => setEditing((v) => !v)}
+          className="p-1 text-slate-500 hover:text-sky-300 shrink-0"
+          title={editing ? 'Done editing' : 'Edit description'}
+        >
+          <Pencil size={11} />
+        </button>
+        <button
           onClick={onRemove}
-          className="p-1 text-slate-600 hover:text-rose-400"
+          className="p-1 text-slate-600 hover:text-rose-400 shrink-0"
           title="Remove feature"
         >
           <Trash2 size={11} />
         </button>
       </div>
-      {open && (
-        <div className="mt-2 pt-2 border-t border-slate-800 space-y-1.5">
+      {editing ? (
+        <div className="srd-popover-body" style={{ overflowY: 'visible' }}>
           <textarea
             value={feature.desc ?? ''}
             onChange={(e) => onChange({ desc: e.target.value })}
-            placeholder="Description (optional)"
-            rows={2}
+            placeholder="Description (markdown supported)…"
+            rows={3}
             className="w-full bg-slate-900 border border-slate-700 rounded px-2 py-1 text-xs text-slate-200 placeholder:text-slate-600 focus:outline-none focus:border-sky-700 resize-y"
           />
+        </div>
+      ) : feature.desc ? (
+        <div className="srd-popover-body markdown-body" style={{ overflowY: 'visible' }}>
+          <ReactMarkdown remarkPlugins={[remarkGfm]}>{feature.desc}</ReactMarkdown>
+        </div>
+      ) : (
+        <div
+          className="srd-popover-body italic text-slate-600 cursor-pointer"
+          style={{ overflowY: 'visible' }}
+          onClick={() => setEditing(true)}
+        >
+          No description yet — click the pencil to add one.
         </div>
       )}
     </div>
