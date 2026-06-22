@@ -1,5 +1,10 @@
 import { useRef, useState, useEffect, useCallback, useMemo } from 'react';
 import { useMap, MAX_DAMAGE_LOG, type DamageLogEntry, type MapShape, type MapToken } from './mapStore';
+import { CONDITIONS } from '../../data/conditions';
+
+/** Conditions allowed on map tokens — full SRD list minus Exhaustion, which
+ *  needs a numeric tracker that doesn't fit the toggle UI. */
+const TOKEN_CONDITIONS = CONDITIONS.filter((c) => c.index !== 'exhaustion');
 import { useInitiativeStore } from '../initiative/initiativeStore';
 import { useNpcStore } from '../npcs/npcStore';
 import { useParty } from '../party/partyStore';
@@ -70,6 +75,72 @@ function appendDamageLog(
     { ts: new Date().toISOString(), delta, hp, by },
   ];
   return next.length > MAX_DAMAGE_LOG ? next.slice(-MAX_DAMAGE_LOG) : next;
+}
+
+/** Token conditions chip strip + add-menu. Lives in the token list panel.
+ *  Picks fold into MapToken.conditions and render as overlay chips on the
+ *  token glyph in the SVG layer below. */
+function TokenConditionsRow({
+  conditions,
+  onChange,
+}: {
+  conditions: string[];
+  onChange: (next: string[]) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const remove = (slug: string) => onChange(conditions.filter((x) => x !== slug));
+  const add = (slug: string) => {
+    if (!conditions.includes(slug)) onChange([...conditions, slug]);
+    setOpen(false);
+  };
+  const remaining = TOKEN_CONDITIONS.filter((c) => !conditions.includes(c.index));
+  return (
+    <div className="flex flex-wrap items-center gap-1 relative">
+      {conditions.map((slug) => {
+        const c = CONDITIONS.find((x) => x.index === slug);
+        return (
+          <span
+            key={slug}
+            className="inline-flex items-center gap-1 px-1.5 py-0.5 text-[9px] uppercase tracking-wider rounded border border-rose-700 bg-rose-900/30 text-rose-200"
+            title={c?.desc?.split('\n')[0]}
+          >
+            {c?.name ?? slug}
+            <button
+              onClick={() => remove(slug)}
+              className="text-rose-300 hover:text-rose-100"
+              title="Remove condition"
+            >
+              ×
+            </button>
+          </span>
+        );
+      })}
+      {remaining.length > 0 && (
+        <>
+          <button
+            onClick={() => setOpen((v) => !v)}
+            className="px-1.5 py-0.5 text-[9px] uppercase tracking-wider rounded border border-slate-700 bg-slate-950 text-slate-400 hover:bg-slate-800 hover:text-slate-200"
+            title="Apply a condition"
+          >
+            + Cond
+          </button>
+          {open && (
+            <div className="absolute z-30 top-full left-0 mt-1 bg-slate-950 border border-slate-700 rounded shadow-lg p-1 max-h-48 overflow-y-auto min-w-[140px]">
+              {remaining.map((c) => (
+                <button
+                  key={c.index}
+                  onClick={() => add(c.index)}
+                  className="w-full text-left px-2 py-1 text-xs text-slate-200 hover:bg-slate-800 rounded"
+                >
+                  {c.name}
+                </button>
+              ))}
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
 }
 
 function TokenHpRow({
@@ -1312,6 +1383,12 @@ export default function MapBoard() {
                         ))}
                       </select>
                     )}
+                    {(isGM || t.owner_user_id === userId) && (
+                      <TokenConditionsRow
+                        conditions={t.conditions ?? []}
+                        onChange={(next) => void updateToken(t.id, { conditions: next })}
+                      />
+                    )}
                   </div>
                 );
               })}
@@ -1653,9 +1730,51 @@ export default function MapBoard() {
                         </g>
                       );
                     })()}
-                    {/* Tooltip exposing current HP on hover (works even for non-editors) */}
-                    {(t.maxHp ?? 0) > 0 && (
-                      <title>{`${t.name} — HP ${t.hp ?? 0}/${t.maxHp ?? 0}`}</title>
+                    {/* Condition icons — arranged in an arc above the token.
+                        Each chip carries the condition name as a <title> so a
+                        hover surfaces the rule. */}
+                    {(t.conditions ?? []).length > 0 && (() => {
+                      const chips = t.conditions ?? [];
+                      const chipR = Math.max(3, r * 0.18);
+                      const spacing = chipR * 2.4;
+                      const totalW = (chips.length - 1) * spacing;
+                      const startX = t.x - totalW / 2;
+                      const arcY = t.y - r - chipR * 1.4;
+                      return (
+                        <g pointerEvents="none">
+                          {chips.map((slug, i) => {
+                            const c = CONDITIONS.find((x) => x.index === slug);
+                            const cx = startX + i * spacing;
+                            const initial = (c?.name ?? slug).charAt(0).toUpperCase();
+                            return (
+                              <g key={slug}>
+                                <circle cx={cx} cy={arcY} r={chipR} fill="#7f1d1d" stroke="#fda4af" strokeWidth={Math.max(0.5, 1 / zoom)} />
+                                <text
+                                  x={cx} y={arcY}
+                                  textAnchor="middle"
+                                  dominantBaseline="central"
+                                  fontSize={chipR * 1.2}
+                                  fill="#fef2f2"
+                                  fontWeight="600"
+                                >
+                                  {initial}
+                                </text>
+                                <title>{c?.name ?? slug}</title>
+                              </g>
+                            );
+                          })}
+                        </g>
+                      );
+                    })()}
+                    {/* Tooltip exposing current HP + conditions on hover (works even for non-editors) */}
+                    {((t.maxHp ?? 0) > 0 || (t.conditions ?? []).length > 0) && (
+                      <title>
+                        {`${t.name}`}
+                        {(t.maxHp ?? 0) > 0 ? ` — HP ${t.hp ?? 0}/${t.maxHp ?? 0}` : ''}
+                        {(t.conditions ?? []).length > 0
+                          ? ` — ${(t.conditions ?? []).map((s) => CONDITIONS.find((c) => c.index === s)?.name ?? s).join(', ')}`
+                          : ''}
+                      </title>
                     )}
                   </g>
                 );

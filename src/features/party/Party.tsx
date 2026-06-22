@@ -6,6 +6,7 @@ import { useVisibilityReload } from '../../hooks/useVisibilityReload';
 import { supabase } from '../../lib/supabase';
 import { parseDdb, parseGenericJson, isLikelyDdb, isDdbWrapper } from './ddb';
 import CharacterBuilder from '../dashboard/CharacterBuilder';
+import { CONDITIONS } from '../../data/conditions';
 import {
   Plus, Trash2, UserPlus, FileJson, ExternalLink, X, Shield, Heart,
   Eye, Search, Brain, UserCheck, User as UserIcon, Save, Wand2,
@@ -404,6 +405,11 @@ export function CharCard({
         <Passive icon={<Brain size={11} />} label="Insight" value={draft.passiveInsight} onChange={(v) => apply({ passiveInsight: v })} readOnly={!editable} />
       </div>
 
+      <ConditionBadges
+        conditions={draft.conditions ?? []}
+        exhaustion={draft.exhaustion ?? 0}
+      />
+
       {/* Party rows intentionally stay an at-a-glance summary — name, class,
           race, HP, AC, Init, level, and the three passive senses. Anything
           else (abilities, saves, skills, inventory, spells) lives on the
@@ -412,6 +418,41 @@ export function CharCard({
       <div className="text-[10px] text-slate-600">
         Full sheet on Dashboard › Character.
       </div>
+    </div>
+  );
+}
+
+/** Compact condition + exhaustion badge strip used on Party CharCards and
+ *  anywhere else conditions need to read at a glance. */
+export function ConditionBadges({ conditions, exhaustion }: { conditions: string[]; exhaustion: number }) {
+  if (conditions.length === 0 && exhaustion === 0) return null;
+  return (
+    <div className="flex flex-wrap gap-1">
+      {exhaustion > 0 && (
+        <span
+          className={`px-1.5 py-0.5 text-[10px] uppercase tracking-wider rounded border ${
+            exhaustion >= 6
+              ? 'border-rose-500 bg-rose-900/40 text-rose-100'
+              : 'border-amber-600 bg-amber-900/30 text-amber-200'
+          }`}
+          title={`Exhaustion ${exhaustion}: −${exhaustion * 2} on D20 tests · −${exhaustion * 5} ft Speed${exhaustion >= 6 ? ' · dead' : ''}`}
+        >
+          Exh {exhaustion}
+        </span>
+      )}
+      {conditions.map((slug) => {
+        const c = CONDITIONS.find((x) => x.index === slug);
+        const name = c?.name ?? slug;
+        return (
+          <span
+            key={slug}
+            className="px-1.5 py-0.5 text-[10px] uppercase tracking-wider rounded border border-rose-700 bg-rose-900/30 text-rose-200"
+            title={c?.desc?.split('\n')[0]}
+          >
+            {name}
+          </span>
+        );
+      })}
     </div>
   );
 }

@@ -30,6 +30,9 @@ export type MapToken = {
   hp?: number;
   maxHp?: number;
   damageLog?: DamageLogEntry[];
+  /** Active condition slugs (e.g. 'poisoned', 'prone'). Matches CONDITIONS
+   *  index from src/data/conditions.ts. Drawn as overlay chips on the token. */
+  conditions?: string[];
 };
 
 export type MapShape =
@@ -58,6 +61,7 @@ type TokenData = {
   hp?: number;
   maxHp?: number;
   damageLog?: DamageLogEntry[];
+  conditions?: string[];
 };
 
 type TokenRow = {
@@ -108,15 +112,17 @@ function rowToToken(r: TokenRow): MapToken {
     hp: r.data?.hp,
     maxHp: r.data?.maxHp,
     damageLog: r.data?.damageLog,
+    conditions: r.data?.conditions ?? [],
   };
 }
 
-function tokenDataPayload(t: Pick<MapToken, 'emoji' | 'hp' | 'maxHp' | 'damageLog'>): TokenData {
+function tokenDataPayload(t: Pick<MapToken, 'emoji' | 'hp' | 'maxHp' | 'damageLog' | 'conditions'>): TokenData {
   const d: TokenData = {};
   if (t.emoji) d.emoji = t.emoji;
   if (t.hp != null) d.hp = t.hp;
   if (t.maxHp != null) d.maxHp = t.maxHp;
   if (t.damageLog && t.damageLog.length > 0) d.damageLog = t.damageLog;
+  if (t.conditions && t.conditions.length > 0) d.conditions = t.conditions;
   return d;
 }
 
