@@ -72,12 +72,32 @@ export default function CharacterSheet({
   const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
   const [showLevelUp, setShowLevelUp] = useState(false);
+  // First render exits the XP-threshold effect below so we don't auto-open
+  // the modal just because the character was already at-threshold when the
+  // sheet opened. Subsequent edits do trigger the prompt.
+  const xpEffectMounted = useRef(false);
   const edition = useCampaignSettings((s) => s.settings.srdEdition);
 
   // Sync from server when not locally edited (matches CharCard's pattern).
   useEffect(() => {
     if (!dirty) setDraft(m);
   }, [m]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Auto-open the level-up modal when the player edits their XP across the
+  // current level's threshold. Mounting with already-eligible XP doesn't
+  // trigger — only changes the player makes during this session do, so the
+  // modal doesn't surprise-pop the moment the sheet opens.
+  useEffect(() => {
+    if (!xpEffectMounted.current) {
+      xpEffectMounted.current = true;
+      return;
+    }
+    const p = xpProgress(draft.xp ?? 0, draft.level);
+    if (!p.atMax && p.eligible && !showLevelUp) {
+      setShowLevelUp(true);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [draft.xp, draft.level]);
 
   const apply = (p: Partial<PartyMember>) => {
     setDraft((d) => ({ ...d, ...p }));
@@ -402,7 +422,18 @@ function SheetHeader({
           <LabeledNumber
             label="LVL"
             value={draft.level}
-            onChange={(v) => onApply({ level: v })}
+            onChange={(v) => {
+              // Bumping LVL directly funnels into the level-up modal so the
+              // player still gets HP / features / slots / ASI prompts; only
+              // *decreasing* a level applies straight through (homebrew, mis-
+              // typed correction). The modal targets draft.level + 1, so a
+              // multi-level skip needs to confirm multiple times.
+              if (v > draft.level) {
+                onLevelUp();
+              } else if (v < draft.level) {
+                onApply({ level: v });
+              }
+            }}
             width="w-16"
           />
           <LabeledNumber
