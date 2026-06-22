@@ -1372,9 +1372,10 @@ function InventoryBlock({
       ) : (
         <div className="space-y-1.5">
           {inventory.map((item) => (
-            // Non-equipped rows are dropped from the printed sheet — keeps the
-            // PDF tight by only showing what's currently in hand/worn.
-            <div key={item.id} className={item.equipped ? '' : 'print:hidden'}>
+            // Every inventory row now ships with the printed sheet — the PDF
+            // is the player's reference, so a complete loadout (including
+            // unequipped reserves, packs, and consumables) needs to be on it.
+            <div key={item.id}>
               <InventoryRow
                 item={item}
                 member={draft}
@@ -1412,6 +1413,14 @@ function InventoryRow({
   const isArmor = srdItem?.armor_class != null;
   const srdSpell = srdSpellFor(item, edition);
   const isSpell = !!srdSpell || item.sourceKind === 'spell' || item.sourceKind === 'srd-spell';
+  // Resolve a magic-item entry too — equipment-only lookups don't catch
+  // wondrous items, rings, etc., so the click-to-expand description still works.
+  const srdMagic = useMemo(() => {
+    if (item.sourceKind !== 'srd-item' || !item.sourceId) return null;
+    return MAGIC_ITEMS.find((m) => m.index === item.sourceId) ?? null;
+  }, [item.sourceKind, item.sourceId]);
+  const hasDescription = (srdItem?.desc?.length ?? 0) > 0 || (srdMagic?.desc?.length ?? 0) > 0 || (srdSpell?.desc?.length ?? 0) > 0;
+  const [showDesc, setShowDesc] = useState(false);
 
   let KindIcon = Backpack;
   let kindColor = '#94a3b8';
@@ -1425,15 +1434,19 @@ function InventoryRow({
     : '';
 
   return (
-    <div className="flex items-center gap-2 bg-slate-950 border border-slate-800 rounded px-2 py-1.5">
+    <div className="bg-slate-950 border border-slate-800 rounded">
+    <div className="flex items-center gap-2 px-2 py-1.5">
       <KindIcon size={14} style={{ color: kindColor }} className="shrink-0" />
 
       <div className="min-w-0 flex-1">
-        <input
-          value={item.name}
-          onChange={(e) => onChange({ name: e.target.value })}
-          className="w-full bg-transparent text-sm text-slate-100 outline-none truncate"
-        />
+        <button
+          onClick={() => hasDescription && setShowDesc((v) => !v)}
+          disabled={!hasDescription}
+          className={`block w-full text-left text-sm text-slate-100 truncate ${hasDescription ? 'hover:text-sky-200 cursor-pointer' : 'cursor-text'}`}
+          title={hasDescription ? 'Click to view details' : undefined}
+        >
+          {item.name}
+        </button>
         {stats && (
           <div className="text-[11px] text-slate-500 flex flex-wrap items-center gap-x-3">
             <button
@@ -1498,6 +1511,31 @@ function InventoryRow({
           <XIcon size={12} />
         </button>
       </div>
+    </div>
+
+    {/* Expandable SRD description — weapons, armor, gear, magic items, spells.
+        Always rendered in the printed PDF so the loadout is self-documenting. */}
+    {showDesc && hasDescription && (
+      <div className="border-t border-slate-800 px-3 py-2 text-xs text-slate-300 leading-relaxed bg-slate-900/40 markdown-body">
+        {srdSpell && (
+          <div className="text-[10px] text-slate-500 mb-1 italic">
+            {srdSpell.level === 0 ? 'Cantrip' : `Level ${srdSpell.level}`} {srdSpell.school.name.toLowerCase()}
+            {srdSpell.ritual && ' · ritual'}
+            {srdSpell.concentration && ' · concentration'}
+          </div>
+        )}
+        {srdMagic && !srdSpell && (
+          <div className="text-[10px] text-slate-500 mb-1 italic">
+            {srdMagic.equipment_category.name} · {srdMagic.rarity.name}
+          </div>
+        )}
+        {srdSpell?.desc?.map((p, i) => <p key={`s${i}`} className="mb-1.5">{p}</p>)}
+        {srdMagic?.desc?.map((p, i) => (
+          <ReactMarkdown key={`m${i}`} remarkPlugins={[remarkGfm]}>{p}</ReactMarkdown>
+        ))}
+        {!srdSpell && !srdMagic && srdItem?.desc?.map((p, i) => <p key={`i${i}`} className="mb-1.5">{p}</p>)}
+      </div>
+    )}
     </div>
   );
 }
