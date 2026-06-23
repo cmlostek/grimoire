@@ -1567,73 +1567,84 @@ function InventoryRow({
         row. Basic items (Longsword, Plate, Backpack) get a stats line even
         when there's no desc[]; magic items + spells render their full text. */}
     {showDesc && hasDetails && (
-      <div className="border-t border-slate-800 px-3 py-2 text-xs text-slate-300 leading-relaxed bg-slate-900/40 markdown-body">
-        {srdSpell && (
-          <div className="text-[10px] text-slate-500 mb-1 italic">
-            {srdSpell.level === 0 ? 'Cantrip' : `Level ${srdSpell.level}`} {srdSpell.school.name.toLowerCase()}
-            {srdSpell.ritual && ' · ritual'}
-            {srdSpell.concentration && ' · concentration'}
+      // Inline srd-popover so the inventory description matches the spell +
+      // feat boxes. Strip the popover's own border/shadow/rounded-corners
+      // since it's nested inside the row's own bordered card.
+      <div
+        className="srd-popover"
+        style={{ maxHeight: 'none', margin: 0, borderRadius: 0, borderWidth: 0, borderTopWidth: 1, borderTopColor: '#1e293b', boxShadow: 'none' }}
+      >
+        <div className="srd-popover-header">
+          <div className="srd-popover-sub">
+            {srdSpell && (
+              <>
+                {srdSpell.level === 0 ? 'Cantrip' : `Level ${srdSpell.level}`} {srdSpell.school.name.toLowerCase()}
+                {srdSpell.ritual && ' · ritual'}
+                {srdSpell.concentration && ' · concentration'}
+              </>
+            )}
+            {srdMagic && !srdSpell && (
+              <>{srdMagic.equipment_category.name} · {srdMagic.rarity.name}</>
+            )}
+            {srdItem && !srdMagic && !srdSpell && (
+              <>
+                {srdItem.equipment_category.name}
+                {srdItem.weapon_category && ` · ${srdItem.weapon_category} ${srdItem.weapon_range ?? ''}`}
+                {srdItem.armor_category && ` · ${srdItem.armor_category} armor`}
+              </>
+            )}
           </div>
-        )}
-        {srdMagic && !srdSpell && (
-          <div className="text-[10px] text-slate-500 mb-1 italic">
-            {srdMagic.equipment_category.name} · {srdMagic.rarity.name}
-          </div>
-        )}
+        </div>
         {srdItem && !srdMagic && !srdSpell && (
-          <>
-            <div className="text-[10px] text-slate-500 mb-1 italic">
-              {srdItem.equipment_category.name}
-              {srdItem.weapon_category && ` · ${srdItem.weapon_category} ${srdItem.weapon_range ?? ''}`}
-              {srdItem.armor_category && ` · ${srdItem.armor_category} armor`}
-            </div>
-            <div className="grid grid-cols-2 gap-x-3 gap-y-0.5 text-[11px] mb-1.5">
-              {srdItem.cost && (
-                <div><span className="text-slate-600">Cost:</span> {srdItem.cost.quantity} {srdItem.cost.unit}</div>
-              )}
-              {srdItem.weight !== undefined && (
-                <div><span className="text-slate-600">Weight:</span> {srdItem.weight} lb</div>
-              )}
-              {srdItem.damage && (
-                <div className="col-span-2">
-                  <span className="text-slate-600">Damage:</span> {srdItem.damage.damage_dice} {srdItem.damage.damage_type.name.toLowerCase()}
-                  {srdItem.two_handed_damage && ` · 2h ${srdItem.two_handed_damage.damage_dice}`}
-                </div>
-              )}
-              {srdItem.armor_class && (
-                <div className="col-span-2">
-                  <span className="text-slate-600">AC:</span> {srdItem.armor_class.base}
-                  {srdItem.armor_class.dex_bonus && ' + Dex'}
-                  {srdItem.armor_class.max_bonus && ` (max +${srdItem.armor_class.max_bonus})`}
-                </div>
-              )}
-              {srdItem.range && (srdItem.range.normal || srdItem.range.long) && (
-                <div><span className="text-slate-600">Range:</span> {srdItem.range.normal}/{srdItem.range.long} ft</div>
-              )}
-              {srdItem.str_minimum && srdItem.str_minimum > 0 && (
-                <div><span className="text-slate-600">Str min:</span> {srdItem.str_minimum}</div>
-              )}
-              {srdItem.stealth_disadvantage && (
-                <div className="col-span-2 text-amber-300/80">Stealth: disadvantage</div>
-              )}
-            </div>
+          <div className="srd-popover-stats">
+            {srdItem.cost && (
+              <div><span className="srd-popover-stat-label">Cost</span>{srdItem.cost.quantity} {srdItem.cost.unit}</div>
+            )}
+            {srdItem.weight !== undefined && (
+              <div><span className="srd-popover-stat-label">Weight</span>{srdItem.weight} lb</div>
+            )}
+            {srdItem.damage && (
+              <div style={{ gridColumn: '1 / -1' }}>
+                <span className="srd-popover-stat-label">Damage</span>
+                {srdItem.damage.damage_dice} {srdItem.damage.damage_type.name.toLowerCase()}
+                {srdItem.two_handed_damage && ` · 2h ${srdItem.two_handed_damage.damage_dice}`}
+              </div>
+            )}
+            {srdItem.armor_class && (
+              <div style={{ gridColumn: '1 / -1' }}>
+                <span className="srd-popover-stat-label">AC</span>
+                {srdItem.armor_class.base}
+                {srdItem.armor_class.dex_bonus && ' + Dex'}
+                {srdItem.armor_class.max_bonus && ` (max +${srdItem.armor_class.max_bonus})`}
+              </div>
+            )}
+            {srdItem.range && (srdItem.range.normal || srdItem.range.long) && (
+              <div><span className="srd-popover-stat-label">Range</span>{srdItem.range.normal}/{srdItem.range.long} ft</div>
+            )}
+            {srdItem.str_minimum && srdItem.str_minimum > 0 && (
+              <div><span className="srd-popover-stat-label">Str min</span>{srdItem.str_minimum}</div>
+            )}
             {srdItem.properties && srdItem.properties.length > 0 && (
-              <div className="text-[11px] text-slate-500 mb-1.5">
-                <span className="text-slate-600">Properties:</span>{' '}
+              <div style={{ gridColumn: '1 / -1' }}>
+                <span className="srd-popover-stat-label">Properties</span>
                 {srdItem.properties.map((p) => p.name).join(', ')}
               </div>
             )}
-          </>
+            {srdItem.stealth_disadvantage && (
+              <div style={{ gridColumn: '1 / -1', color: '#fcd34d' }}>Stealth disadvantage</div>
+            )}
+          </div>
         )}
-        {srdSpell?.desc?.map((p, i) => <p key={`s${i}`} className="mb-1.5">{p}</p>)}
-        {srdMagic?.desc?.map((p, i) => (
-          <ReactMarkdown key={`m${i}`} remarkPlugins={[remarkGfm]}>{p}</ReactMarkdown>
-        ))}
-        {!srdSpell && !srdMagic && srdItem?.desc?.map((p, i) => <p key={`i${i}`} className="mb-1.5">{p}</p>)}
-        {/* When there's no narrative desc, signpost where it would normally appear */}
-        {!srdSpell && !srdMagic && (!srdItem?.desc || srdItem.desc.length === 0) && (
-          <div className="text-[10px] text-slate-600 italic">No additional description in the SRD.</div>
-        )}
+        <div className="srd-popover-body markdown-body" style={{ overflowY: 'visible' }}>
+          {srdSpell?.desc?.map((p, i) => <p key={`s${i}`}>{p}</p>)}
+          {srdMagic?.desc?.map((p, i) => (
+            <ReactMarkdown key={`m${i}`} remarkPlugins={[remarkGfm]}>{p}</ReactMarkdown>
+          ))}
+          {!srdSpell && !srdMagic && srdItem?.desc?.map((p, i) => <p key={`i${i}`}>{p}</p>)}
+          {!srdSpell && !srdMagic && (!srdItem?.desc || srdItem.desc.length === 0) && (
+            <div className="text-[11px] text-slate-600 italic">No additional description in the SRD.</div>
+          )}
+        </div>
       </div>
     )}
     </div>
@@ -2765,16 +2776,23 @@ function FeatureRow({
   onChange: (patch: Partial<CharacterFeature>) => void;
   onRemove: () => void;
 }) {
+  // Collapsed by default — like the inventory rows + spell rows on the
+  // sheet, click the name to expand the description.
+  const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState(false);
   const uses = feature.uses;
 
   return (
     <div className="srd-popover" style={{ maxHeight: 'none' }}>
       <div className="srd-popover-header flex items-center gap-2">
-        <div className="flex-1 min-w-0">
-          <div className="srd-popover-name truncate">{feature.name}</div>
+        <button
+          onClick={() => setOpen((v) => !v)}
+          className="flex-1 min-w-0 text-left"
+          title={open ? 'Collapse' : 'Expand description'}
+        >
+          <div className="srd-popover-name truncate hover:text-sky-200">{feature.name}</div>
           <div className="srd-popover-sub">{feature.source}</div>
-        </div>
+        </button>
         {uses && (
           <UsesControl
             current={uses.current}
@@ -2793,7 +2811,7 @@ function FeatureRow({
           </button>
         )}
         <button
-          onClick={() => setEditing((v) => !v)}
+          onClick={() => { setOpen(true); setEditing((v) => !v); }}
           className="p-1 text-slate-500 hover:text-sky-300 shrink-0"
           title={editing ? 'Done editing' : 'Edit description'}
         >
@@ -2807,28 +2825,30 @@ function FeatureRow({
           <Trash2 size={11} />
         </button>
       </div>
-      {editing ? (
-        <div className="srd-popover-body" style={{ overflowY: 'visible' }}>
-          <textarea
-            value={feature.desc ?? ''}
-            onChange={(e) => onChange({ desc: e.target.value })}
-            placeholder="Description (markdown supported)…"
-            rows={3}
-            className="w-full bg-slate-900 border border-slate-700 rounded px-2 py-1 text-xs text-slate-200 placeholder:text-slate-600 focus:outline-none focus:border-sky-700 resize-y"
-          />
-        </div>
-      ) : feature.desc ? (
-        <div className="srd-popover-body markdown-body" style={{ overflowY: 'visible' }}>
-          <ReactMarkdown remarkPlugins={[remarkGfm]}>{feature.desc}</ReactMarkdown>
-        </div>
-      ) : (
-        <div
-          className="srd-popover-body italic text-slate-600 cursor-pointer"
-          style={{ overflowY: 'visible' }}
-          onClick={() => setEditing(true)}
-        >
-          No description yet — click the pencil to add one.
-        </div>
+      {open && (
+        editing ? (
+          <div className="srd-popover-body" style={{ overflowY: 'visible' }}>
+            <textarea
+              value={feature.desc ?? ''}
+              onChange={(e) => onChange({ desc: e.target.value })}
+              placeholder="Description (markdown supported)…"
+              rows={3}
+              className="w-full bg-slate-900 border border-slate-700 rounded px-2 py-1 text-xs text-slate-200 placeholder:text-slate-600 focus:outline-none focus:border-sky-700 resize-y"
+            />
+          </div>
+        ) : feature.desc ? (
+          <div className="srd-popover-body markdown-body" style={{ overflowY: 'visible' }}>
+            <ReactMarkdown remarkPlugins={[remarkGfm]}>{feature.desc}</ReactMarkdown>
+          </div>
+        ) : (
+          <div
+            className="srd-popover-body italic text-slate-600 cursor-pointer"
+            style={{ overflowY: 'visible' }}
+            onClick={() => setEditing(true)}
+          >
+            No description yet — click the pencil to add one.
+          </div>
+        )
       )}
     </div>
   );
