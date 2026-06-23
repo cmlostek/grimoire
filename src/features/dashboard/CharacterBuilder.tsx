@@ -466,8 +466,8 @@ export default function CharacterBuilder({
   };
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/60 flex items-start justify-center overflow-y-auto py-8 px-4">
-      <div className="w-full max-w-3xl bg-slate-900 border border-slate-800 rounded-lg shadow-2xl">
+    <div className="fixed inset-0 z-50 bg-black/60 flex sm:items-start sm:justify-center sm:overflow-y-auto sm:py-8 sm:px-4">
+      <div className="w-full max-w-3xl bg-slate-900 sm:border border-slate-800 sm:rounded-lg shadow-2xl flex flex-col h-full sm:h-auto sm:max-h-[calc(100vh-4rem)]">
         {/* Header */}
         <div className="flex items-center justify-between px-5 py-3 border-b border-slate-800">
           <h2 className="font-serif text-xl text-sky-200">Build a character</h2>
@@ -496,8 +496,9 @@ export default function CharacterBuilder({
           ))}
         </div>
 
-        {/* Step body */}
-        <div className="p-5 min-h-[400px]">
+        {/* Step body — scrolls inside the flex column on mobile where the
+            modal occupies the full viewport. */}
+        <div className="p-4 sm:p-5 min-h-[400px] flex-1 overflow-y-auto">
           {s.step === 'species' && (
             <SpeciesStep value={s.speciesId} onChange={(id) => update({ speciesId: id })} />
           )}

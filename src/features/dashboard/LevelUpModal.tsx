@@ -481,8 +481,8 @@ export default function LevelUpModal({
   };
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/60 flex items-start justify-center overflow-y-auto py-12 px-4">
-      <div className="w-full max-w-2xl bg-slate-900 border border-slate-800 rounded-lg shadow-2xl">
+    <div className="fixed inset-0 z-50 bg-black/60 flex sm:items-start sm:justify-center sm:overflow-y-auto sm:py-12 sm:px-4">
+      <div className="w-full max-w-2xl bg-slate-900 sm:border border-slate-800 sm:rounded-lg shadow-2xl flex flex-col h-full sm:h-auto sm:max-h-[calc(100vh-6rem)]">
         <div className="flex items-center justify-between px-5 py-3 border-b border-slate-800">
           <div className="flex items-center gap-2 text-amber-200">
             <ChevronUp size={18} />
@@ -496,7 +496,7 @@ export default function LevelUpModal({
           </button>
         </div>
 
-        <div className="p-5 space-y-6">
+        <div className="p-4 sm:p-5 space-y-6 flex-1 overflow-y-auto">
           {/* Class picker if we couldn't resolve from classId/classSummary */}
           {!cls && (
             <Section title="Class">

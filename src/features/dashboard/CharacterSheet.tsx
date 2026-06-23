@@ -176,7 +176,7 @@ export default function CharacterSheet({
   };
 
   return (
-    <div className="px-6 py-6 print-character-sheet relative">
+    <div className="px-4 py-4 sm:px-6 sm:py-6 print-character-sheet relative">
       {dirty && (
         <button
           onClick={save}
@@ -249,7 +249,7 @@ export default function CharacterSheet({
         />
       )}
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mt-4">
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 sm:gap-4 mt-4">
         <Card title="Vitals">
           <VitalsBlock
             draft={draft}
@@ -558,7 +558,7 @@ function VitalsBlock({
   };
   return (
     <div className="space-y-3">
-      <div className="flex gap-2 items-center text-sm text-slate-300">
+      <div className="flex gap-2 items-center text-sm text-slate-300 flex-wrap">
         <Heart size={14} className="text-rose-400" />
         <NumInput value={draft.hp} onChange={(v) => onApply({ hp: v })} className="w-16" />
         <span className="text-slate-500">/</span>
