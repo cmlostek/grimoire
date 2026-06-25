@@ -354,6 +354,13 @@ export const useParty = create<PartyState>((set, get) => ({
   updatePartyMember: async (id, patch) => {
     const prev = get().party.find((p) => p.id === id);
     if (!prev) return;
+    // Short-circuit no-op patches so the cross-surface HP sync chain
+    // terminates after one round of writes instead of bouncing back through
+    // the realtime echo.
+    const changed = (Object.keys(patch) as (keyof PartyMember)[]).some(
+      (k) => prev[k] !== patch[k],
+    );
+    if (!changed) return;
     const optimistic = { ...prev, ...patch };
     set((s) => ({ party: s.party.map((p) => (p.id === id ? optimistic : p)) }));
     const update = patchToUpdate(prev, patch);
@@ -371,6 +378,19 @@ export const useParty = create<PartyState>((set, get) => ({
     } else if (data) {
       const saved = rowToMember(data as Row);
       set((s) => ({ party: s.party.map((p) => (p.id === id ? saved : p)) }));
+    }
+    // Fan out HP changes to initiative + map so the sheet/party/init/map
+    // all stay in lock-step.
+    if (patch.hp !== undefined || patch.maxHp !== undefined) {
+      import('../hpLink').then((m) =>
+        m.syncPcHpAfterChange({
+          source: 'party',
+          name: prev.name,
+          ownerUserId: prev.owner_user_id,
+          hp: patch.hp,
+          maxHp: patch.maxHp,
+        }),
+      );
     }
   },
 

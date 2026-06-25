@@ -382,6 +382,11 @@ export const useMap = create<MapStore>((set, get) => ({
   updateToken: async (id, patch) => {
     const prev = get().tokens.find((x) => x.id === id);
     if (!prev) return;
+    // Skip no-op updates so cross-surface HP sync doesn't keep echoing.
+    const changed = (Object.keys(patch) as (keyof MapToken)[]).some(
+      (k) => prev[k] !== patch[k],
+    );
+    if (!changed) return;
     const next = { ...prev, ...patch };
     set((s) => ({ tokens: s.tokens.map((x) => (x.id === id ? next : x)) }));
 
@@ -403,6 +408,22 @@ export const useMap = create<MapStore>((set, get) => ({
         tokens: s.tokens.map((x) => (x.id === id ? prev : x)),
         error: error.message,
       }));
+      return;
+    }
+
+    // Fan PC HP changes out to party + initiative. We treat any token with an
+    // owner_user_id as a PC for the sync; NPC creature tokens have a null
+    // owner so they keep their independent HP.
+    if ((patch.hp !== undefined || patch.maxHp !== undefined) && prev.owner_user_id) {
+      import('../hpLink').then((m) =>
+        m.syncPcHpAfterChange({
+          source: 'map',
+          name: prev.name,
+          ownerUserId: prev.owner_user_id,
+          hp: patch.hp,
+          maxHp: patch.maxHp,
+        }),
+      );
     }
   },
 
