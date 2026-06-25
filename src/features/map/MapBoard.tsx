@@ -156,6 +156,7 @@ function TokenHpRow({
   onApply: (patch: Partial<MapToken>) => void;
 }) {
   const [logOpen, setLogOpen] = useState(false);
+  const [delta, setDelta] = useState('');
   const hp = token.hp ?? 0;
   const maxHp = token.maxHp ?? 0;
   const pct = hpPercent(hp, maxHp);
@@ -167,6 +168,14 @@ function TokenHpRow({
       hp: next,
       damageLog: appendDamageLog(token.damageLog, next - hp, next, actorId),
     });
+  };
+
+  const applyDelta = (sign: 1 | -1) => {
+    const amount = Math.abs(parseInt(delta || '0', 10));
+    if (!amount) return;
+    const next = Math.max(0, hp + sign * amount);
+    commitHp(next);
+    setDelta('');
   };
 
   const log = token.damageLog ?? [];
@@ -209,6 +218,37 @@ function TokenHpRow({
       {maxHp > 0 && (
         <div className="h-1 bg-slate-800 rounded overflow-hidden">
           <div className={`h-full ${barColor}`} style={{ width: `${pct}%` }} />
+        </div>
+      )}
+      {canEdit && (
+        <div className="flex items-center gap-1 pt-0.5">
+          <button
+            onClick={() => applyDelta(-1)}
+            disabled={!delta}
+            className="px-2 py-0.5 rounded bg-rose-950/60 border border-rose-900/60 text-rose-200 text-[10px] hover:bg-rose-900/60 disabled:opacity-40 disabled:cursor-not-allowed"
+            title="Apply as damage"
+          >
+            −
+          </button>
+          <input
+            type="number"
+            value={delta}
+            onChange={(e) => setDelta(e.target.value.replace(/[^\d]/g, ''))}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') applyDelta(-1);
+              if (e.key === '+' || (e.shiftKey && e.key === '=')) applyDelta(1);
+            }}
+            placeholder="dmg / heal"
+            className="flex-1 min-w-0 bg-slate-950 border border-slate-800 rounded px-1 py-0.5 font-mono text-[10px] text-center"
+          />
+          <button
+            onClick={() => applyDelta(1)}
+            disabled={!delta}
+            className="px-2 py-0.5 rounded bg-emerald-950/60 border border-emerald-900/60 text-emerald-200 text-[10px] hover:bg-emerald-900/60 disabled:opacity-40 disabled:cursor-not-allowed"
+            title="Apply as healing"
+          >
+            +
+          </button>
         </div>
       )}
       {logOpen && log.length > 0 && (
