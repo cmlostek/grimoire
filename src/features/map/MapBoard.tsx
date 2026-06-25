@@ -1328,7 +1328,7 @@ export default function MapBoard() {
                         onClick={() => {
                           setTokenName(row.name);
                           setTokenEmoji(row.emoji);
-                          setCreatureHp(row.maxHp || null);
+                          setCreatureHp(row.hp || null);
                           setCreatureMaxHp(row.maxHp || null);
                           setCreatureSourceName(row.name);
                         }}
