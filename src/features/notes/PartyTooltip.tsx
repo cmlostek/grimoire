@@ -2,6 +2,7 @@ import { useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import type { ReactNode } from 'react';
 import { Shield, Heart } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 import type { PartyMember } from '../party/partyStore';
 import { modifier } from '../../data/srd';
 
@@ -20,6 +21,7 @@ export function PartyRefSpan({
   const [visible, setVisible] = useState(false);
   const [style, setStyle] = useState<React.CSSProperties>({});
   const hideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const navigate = useNavigate();
 
   const scheduleHide = () => {
     hideTimer.current = setTimeout(() => setVisible(false), 150);
@@ -99,6 +101,12 @@ export function PartyRefSpan({
     <span
       ref={spanRef}
       className={className}
+      style={{ cursor: 'pointer' }}
+      title={`Open ${m.name}'s character sheet`}
+      onClick={(e) => {
+        e.stopPropagation();
+        navigate(`/party#member-${m.id}`);
+      }}
       onMouseEnter={handleMouseEnter}
       onMouseLeave={scheduleHide}
     >
