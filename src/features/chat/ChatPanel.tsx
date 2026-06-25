@@ -204,20 +204,30 @@ export default function ChatPanel({ variant = 'floating' }: { variant?: 'floatin
     const startH = size.h;
     const startX = e.clientX;
     const startY = e.clientY;
+    const startPos = posRef.current;
     const onMove = (ev: MouseEvent) => {
-      // Anchor is bottom-right; dragging up-left grows the panel.
+      // Handle sits at the panel's top-left. Dragging up-left grows it.
       const dw = startX - ev.clientX;
       const dh = startY - ev.clientY;
-      const next = {
-        w: clamp(startW + dw, MIN_POPOUT_W, window.innerWidth - 32),
-        h: clamp(startH + dh, MIN_POPOUT_H, window.innerHeight - 32),
-      };
-      setSize(next);
+      const nextW = clamp(startW + dw, MIN_POPOUT_W, window.innerWidth - 32);
+      const nextH = clamp(startH + dh, MIN_POPOUT_H, window.innerHeight - 32);
+      setSize({ w: nextW, h: nextH });
+      // When the panel is positioned by top/left, the top-left corner stays
+      // fixed by default — so growing the height extends downward and the
+      // handle feels inverted. Shift pos by the actual size delta so the
+      // top-left tracks the cursor.
+      if (startPos) {
+        setPos({
+          x: clamp(startPos.x - (nextW - startW), 8, window.innerWidth - MIN_POPOUT_W),
+          y: clamp(startPos.y - (nextH - startH), 8, window.innerHeight - MIN_POPOUT_H),
+        });
+      }
     };
     const onUp = () => {
       window.removeEventListener('mousemove', onMove);
       window.removeEventListener('mouseup', onUp);
       writePopoutSize(sizeRef.current);
+      if (startPos) writePopoutPos(posRef.current);
     };
     window.addEventListener('mousemove', onMove);
     window.addEventListener('mouseup', onUp);

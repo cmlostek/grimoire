@@ -103,7 +103,11 @@ export default function CharacterSheet({
   }, [draft.xp, draft.level]);
 
   const apply = (p: Partial<PartyMember>) => {
-    setDraft((d) => ({ ...d, ...p }));
+    setDraft((d) => {
+      const next = { ...d, ...p };
+      if (p.dex !== undefined) next.initiativeBonus = abilityMod(next.dex);
+      return next;
+    });
     setDirty(true);
   };
 
@@ -277,6 +281,10 @@ export default function CharacterSheet({
           <SavesBlock draft={draft} onApply={apply} />
         </Card>
 
+        <Card title="Skills" subtitle="Click pip to toggle proficiency · click modifier to roll" className="lg:col-span-2">
+          <SkillsBlock draft={draft} onApply={apply} />
+        </Card>
+
         <Card title="Coin purse">
           <GoldBlock draft={draft} onApply={apply} />
         </Card>
@@ -319,10 +327,6 @@ export default function CharacterSheet({
           className="lg:col-span-2"
         >
           <FeaturesBlock draft={draft} onApply={apply} />
-        </Card>
-
-        <Card title="Skills" subtitle="Click pip to toggle proficiency · click modifier to roll" className="lg:col-span-2">
-          <SkillsBlock draft={draft} onApply={apply} />
         </Card>
 
         <Card title="Description" subtitle="Appearance, alignment, deity — flavour only" className="lg:col-span-2">
@@ -629,13 +633,22 @@ function VitalsBlock({
         ) : (
           <LabeledNumber label="AC" value={draft.ac} onChange={(v) => onApply({ ac: v })} width="w-full" />
         )}
-        <LabeledNumber
-          label="INIT"
-          value={draft.initiativeBonus}
-          onChange={(v) => onApply({ initiativeBonus: v })}
-          width="w-full"
-          showSign
-        />
+        {(() => {
+          const initMod = abilityMod(draft.dex);
+          return (
+            <div className="text-center">
+              <div className="text-[10px] uppercase tracking-wider text-slate-500 mb-1" title="From DEX modifier">
+                INIT
+              </div>
+              <div
+                className="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1 text-sm font-semibold text-slate-100 text-center font-mono"
+                title="Computed from DEX mod"
+              >
+                {fmt(initMod)}
+              </div>
+            </div>
+          );
+        })()}
         <div>
           <div className="text-[10px] uppercase tracking-wider text-slate-500 mb-1">Speed</div>
           {(() => {
