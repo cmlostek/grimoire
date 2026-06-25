@@ -1,5 +1,6 @@
 import { useRef, useState, useEffect, useCallback, useMemo } from 'react';
 import { useMap, MAX_DAMAGE_LOG, type DamageLogEntry, type MapShape, type MapToken } from './mapStore';
+import { hpBarClass, hpPercent } from '../hpBar';
 import { CONDITIONS } from '../../data/conditions';
 
 /** Conditions allowed on map tokens — full SRD list minus Exhaustion, which
@@ -157,9 +158,8 @@ function TokenHpRow({
   const [logOpen, setLogOpen] = useState(false);
   const hp = token.hp ?? 0;
   const maxHp = token.maxHp ?? 0;
-  const pct = maxHp > 0 ? Math.max(0, Math.min(100, (hp / maxHp) * 100)) : 0;
-  const barColor =
-    pct > 60 ? 'bg-emerald-500' : pct > 25 ? 'bg-amber-500' : 'bg-rose-500';
+  const pct = hpPercent(hp, maxHp);
+  const barColor = hpBarClass(pct);
 
   const commitHp = (next: number) => {
     if (next === hp) return;

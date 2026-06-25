@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import PageHeader from '../../components/PageHeader';
 import { useParty, type PartyMember } from './partyStore';
+import { hpBarClass, hpPercent } from '../hpBar';
 import { useSession } from '../session/sessionStore';
 import { useVisibilityReload } from '../../hooks/useVisibilityReload';
 import { supabase } from '../../lib/supabase';
@@ -233,7 +234,7 @@ export function CharCard({
     }
   };
 
-  const hpPct = draft.maxHp > 0 ? (draft.hp / draft.maxHp) * 100 : 0;
+  const hpPct = hpPercent(draft.hp, draft.maxHp);
   const ownedByMe = m.owner_user_id === userId && userId !== null;
   const owned = m.owner_user_id !== null;
 
@@ -404,10 +405,8 @@ export function CharCard({
         </div>
         <div className="h-2 bg-slate-800 rounded-full overflow-hidden">
           <div
-            className={`h-full transition-all ${
-              hpPct > 50 ? 'bg-green-500' : hpPct > 25 ? 'bg-yellow-500' : 'bg-red-600'
-            }`}
-            style={{ width: `${Math.max(0, Math.min(100, hpPct))}%` }}
+            className={`h-full transition-all ${hpBarClass(hpPct)}`}
+            style={{ width: `${hpPct}%` }}
           />
         </div>
       </div>

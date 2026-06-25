@@ -18,6 +18,7 @@ import {
   type SpellSlots,
 } from '../party/partyStore';
 import { useQuickDice } from '../dice/quickDiceStore';
+import { hpBarClass, hpPercent } from '../hpBar';
 import { useCatalog, searchCatalog, type CatalogEntry } from '../chat/catalog';
 import { EQUIPMENT, MAGIC_ITEMS, SPELLS, SPECIES_2024, equipmentFor, spellsFor } from '../../data/srd';
 import type { SrdEdition } from '../notes/campaignSettingsStore';
@@ -571,12 +572,12 @@ function VitalsBlock({
   equippedWeapons: { item: InventoryItem; srd: EquipmentItem | null }[];
 }) {
   const rollFormula = useQuickDice((s) => s.rollFormula);
-  const hpPct = draft.maxHp > 0 ? (draft.hp / draft.maxHp) * 100 : 0;
+  const hpPct = hpPercent(draft.hp, draft.maxHp);
   // SRD instant-death rule + 3 failed death saves + exhaustion 6 all kill.
   // The DeathSavesBlock auto-flags failures>=3 too; Vitals just surfaces the
   // unified badge so any of the three paths reads at a glance.
   const isDead = isCharacterDead(draft);
-  const hpBarColor = hpPct > 50 ? 'bg-green-500' : hpPct > 25 ? 'bg-yellow-500' : 'bg-red-600';
+  const hpBarColor = hpBarClass(hpPct);
   // Hit dice — max equals character level. Default current to max on first
   // render so older characters without a stored value behave sanely.
   const maxHitDice = draft.level;
