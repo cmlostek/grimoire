@@ -75,6 +75,10 @@ export default function CharacterSheet({
   const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
   const [showLevelUp, setShowLevelUp] = useState(false);
+  // Target level for cascading multi-level jumps. When the player types LVL
+  // higher than current (or accumulates XP past multiple thresholds), the
+  // modal re-opens after each confirm until the target is reached.
+  const [levelUpTarget, setLevelUpTarget] = useState<number | null>(null);
   // First render exits the XP-threshold effect below so we don't auto-open
   // the modal just because the character was already at-threshold when the
   // sheet opened. Subsequent edits do trigger the prompt.
@@ -97,6 +101,15 @@ export default function CharacterSheet({
     }
     const p = xpProgress(draft.xp ?? 0, draft.level);
     if (!p.atMax && p.eligible && !showLevelUp) {
+      // Walk forward through XP bands so a huge XP entry cascades through
+      // every level it covers rather than capping at one.
+      let lv = draft.level;
+      let rem = draft.xp ?? 0;
+      while (lv < 20 && rem >= XP_PER_LEVEL[lv]) {
+        rem -= XP_PER_LEVEL[lv];
+        lv++;
+      }
+      setLevelUpTarget(lv);
       setShowLevelUp(true);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -198,13 +211,20 @@ export default function CharacterSheet({
         onApply={apply}
         onSave={save}
         onPrint={printSheet}
-        onLevelUp={() => setShowLevelUp(true)}
+        onLevelUp={(targetLevel) => {
+          setLevelUpTarget(targetLevel ?? null);
+          setShowLevelUp(true);
+        }}
       />
 
       {showLevelUp && (
         <LevelUpModal
+          key={draft.level}
           member={draft}
-          onClose={() => setShowLevelUp(false)}
+          onClose={() => {
+            setShowLevelUp(false);
+            setLevelUpTarget(null);
+          }}
           onConfirm={(result: LevelUpResult) => {
             // Merge the modal output into the sheet. Newly-unlocked class
             // features append to the existing list so previously-tracked items
@@ -248,7 +268,14 @@ export default function CharacterSheet({
               ...(inferredDieSize ? { hitDieSize: inferredDieSize } : {}),
               ...bumped,
             });
+            // If we were asked to cascade up to a higher target level, leave
+            // the modal mounted — the key={draft.level} above will remount it
+            // with fresh state once apply() lands. Otherwise close out.
+            if (levelUpTarget !== null && result.level < levelUpTarget) {
+              return;
+            }
             setShowLevelUp(false);
+            setLevelUpTarget(null);
           }}
         />
       )}
@@ -406,7 +433,7 @@ function SheetHeader({
   onApply: (p: Partial<PartyMember>) => void;
   onSave: () => void;
   onPrint: () => void;
-  onLevelUp: () => void;
+  onLevelUp: (targetLevel?: number) => void;
 }) {
   return (
     <div className="border border-slate-800 rounded-lg p-4 bg-slate-900">
@@ -441,12 +468,12 @@ function SheetHeader({
             value={draft.level}
             onChange={(v) => {
               // Bumping LVL directly funnels into the level-up modal so the
-              // player still gets HP / features / slots / ASI prompts; only
-              // *decreasing* a level applies straight through (homebrew, mis-
-              // typed correction). The modal targets draft.level + 1, so a
-              // multi-level skip needs to confirm multiple times.
+              // player still gets HP / features / slots / ASI prompts. Passing
+              // the typed value as the target cascades through every level up
+              // to it, re-opening the modal between each confirm. Decreasing a
+              // level applies straight through (homebrew / typo correction).
               if (v > draft.level) {
-                onLevelUp();
+                onLevelUp(Math.min(20, v));
               } else if (v < draft.level) {
                 onApply({ level: v });
               }
