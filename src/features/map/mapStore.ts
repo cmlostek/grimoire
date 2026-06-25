@@ -158,7 +158,7 @@ type MapStore = {
   clearShapes: (campaignId: string) => Promise<void>;
 
   addToken: (campaignId: string, t: Omit<MapToken, 'id'>) => Promise<string | null>;
-  updateToken: (id: string, patch: Partial<MapToken>) => Promise<void>;
+  updateToken: (id: string, patch: Partial<MapToken>, fromSync?: boolean) => Promise<void>;
   removeToken: (id: string) => Promise<void>;
 };
 
@@ -379,7 +379,7 @@ export const useMap = create<MapStore>((set, get) => ({
     return token.id;
   },
 
-  updateToken: async (id, patch) => {
+  updateToken: async (id, patch, fromSync = false) => {
     const prev = get().tokens.find((x) => x.id === id);
     if (!prev) return;
     // Skip no-op updates so cross-surface HP sync doesn't keep echoing.
@@ -413,8 +413,10 @@ export const useMap = create<MapStore>((set, get) => ({
 
     // Fan PC HP changes out to party + initiative. We treat any token with an
     // owner_user_id as a PC for the sync; NPC creature tokens have a null
-    // owner so they keep their independent HP.
-    if ((patch.hp !== undefined || patch.maxHp !== undefined) && prev.owner_user_id) {
+    // owner so they keep their independent HP. fromSync breaks re-entry so
+    // sync-induced updates don't fire another sync round and race the user's
+    // rapid keypresses on the HP input.
+    if (!fromSync && (patch.hp !== undefined || patch.maxHp !== undefined) && prev.owner_user_id) {
       import('../hpLink').then((m) =>
         m.syncPcHpAfterChange({
           source: 'map',

@@ -66,7 +66,7 @@ interface InitiativeState {
   clear(): void;
 
   add(c: Omit<InitiativeCombatant, 'id' | 'conditions' | 'turnOrder'>): Promise<void>;
-  update(id: string, patch: CombatantPatch): Promise<void>;
+  update(id: string, patch: CombatantPatch, fromSync?: boolean): Promise<void>;
   remove(id: string): Promise<void>;
   next(): void;
   reset(): Promise<void>;
@@ -146,7 +146,7 @@ export const useInitiativeStore = create<InitiativeState>((set, get) => ({
     }
   },
 
-  update: async (id, patch) => {
+  update: async (id, patch, fromSync = false) => {
     const prev = get().combatants.find((c) => c.id === id);
     if (!prev) return;
     // Skip no-op updates so cross-surface HP sync doesn't keep echoing.
@@ -164,8 +164,9 @@ export const useInitiativeStore = create<InitiativeState>((set, get) => ({
     set((s) => ({ combatants: s.combatants.map((c) => c.id === id ? { ...c, ...patch } : c) }));
     await supabase.from('initiative_entries').update(dbPatch).eq('id', id);
 
-    // Fan PC HP changes out to party + map.
-    if ((patch.hp !== undefined || patch.maxHp !== undefined) && prev.isPC) {
+    // Fan PC HP changes out to party + map. fromSync breaks re-entry so a
+    // sync-induced update doesn't trigger another sync round.
+    if (!fromSync && (patch.hp !== undefined || patch.maxHp !== undefined) && prev.isPC) {
       import('../hpLink').then((m) =>
         m.syncPcHpAfterChange({
           source: 'initiative',

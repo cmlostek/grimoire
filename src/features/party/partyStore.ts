@@ -278,7 +278,7 @@ type PartyState = {
   clear: () => void;
 
   addPartyMember: (campaignId: string, m: Omit<PartyMember, 'id' | 'owner_user_id'>) => Promise<string | null>;
-  updatePartyMember: (id: string, patch: Partial<PartyMember>) => Promise<void>;
+  updatePartyMember: (id: string, patch: Partial<PartyMember>, fromSync?: boolean) => Promise<void>;
   removePartyMember: (id: string) => Promise<void>;
   claim: (id: string) => Promise<void>;
   unclaim: (id: string) => Promise<void>;
@@ -351,7 +351,7 @@ export const useParty = create<PartyState>((set, get) => ({
     return member.id;
   },
 
-  updatePartyMember: async (id, patch) => {
+  updatePartyMember: async (id, patch, fromSync = false) => {
     const prev = get().party.find((p) => p.id === id);
     if (!prev) return;
     // Short-circuit no-op patches so the cross-surface HP sync chain
@@ -380,8 +380,10 @@ export const useParty = create<PartyState>((set, get) => ({
       set((s) => ({ party: s.party.map((p) => (p.id === id ? saved : p)) }));
     }
     // Fan out HP changes to initiative + map so the sheet/party/init/map
-    // all stay in lock-step.
-    if (patch.hp !== undefined || patch.maxHp !== undefined) {
+    // all stay in lock-step. fromSync gates the re-entry: a sync-induced
+    // update doesn't trigger another sync, otherwise rapid edits (e.g.
+    // holding the down-arrow on the map HP input) race stale sync chains.
+    if (!fromSync && (patch.hp !== undefined || patch.maxHp !== undefined)) {
       import('../hpLink').then((m) =>
         m.syncPcHpAfterChange({
           source: 'party',

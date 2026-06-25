@@ -63,7 +63,7 @@ export async function syncPcHpAfterChange(opts: {
       if (opts.hp !== undefined && member.hp !== opts.hp) patch.hp = opts.hp;
       if (opts.maxHp !== undefined && member.maxHp !== opts.maxHp) patch.maxHp = opts.maxHp;
       if (Object.keys(patch).length) {
-        useParty.getState().updatePartyMember(member.id, patch);
+        useParty.getState().updatePartyMember(member.id, patch, true);
       }
     } else if (opts.ownerUserId) {
       // Party isn't loaded — write straight to the DB so the change still
@@ -100,7 +100,7 @@ export async function syncPcHpAfterChange(opts: {
       if (opts.hp !== undefined && combatant.hp !== opts.hp) patch.hp = opts.hp;
       if (opts.maxHp !== undefined && combatant.maxHp !== opts.maxHp) patch.maxHp = opts.maxHp;
       if (Object.keys(patch).length) {
-        init.update(combatant.id, patch);
+        init.update(combatant.id, patch, true);
       }
     } else {
       // Initiative panel isn't open — write to the DB so it's right when
@@ -140,7 +140,7 @@ export async function syncPcHpAfterChange(opts: {
       if (opts.hp !== undefined && t.hp !== opts.hp) patch.hp = opts.hp;
       if (opts.maxHp !== undefined && t.maxHp !== opts.maxHp) patch.maxHp = opts.maxHp;
       if (Object.keys(patch).length) {
-        map.updateToken(t.id, patch);
+        map.updateToken(t.id, patch, true);
       }
     }
     if (!matched && (lc || opts.ownerUserId)) {
