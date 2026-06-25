@@ -49,6 +49,8 @@ export default function Dashboard() {
   const claimMember = useParty((s) => s.claim);
   const unclaimMember = useParty((s) => s.unclaim);
   const addMember = useParty((s) => s.addPartyMember);
+  const loadChat = useChat((s) => s.loadForCampaign);
+  const chatLoaded = useChat((s) => s.loaded);
   const [showBuilder, setShowBuilder] = useState(false);
 
   // Dashboard is often the first page visited, so the Party feature may not
@@ -58,6 +60,15 @@ export default function Dashboard() {
     loadParty(campaignId);
     return subscribeParty(campaignId);
   }, [campaignId, loadParty, subscribeParty]);
+
+  // Chat used to be an always-mounted side column, which kept useChat.members
+  // populated for the GM "all characters" view. Now that chat is a tab, the
+  // store doesn't load until someone opens it — load eagerly so owner labels
+  // on the GM view stay populated.
+  useEffect(() => {
+    if (!campaignId || chatLoaded) return;
+    void loadChat(campaignId);
+  }, [campaignId, chatLoaded, loadChat]);
 
   // The player can own at most one character per campaign by design.
   const myCharacter = useMemo(
