@@ -309,12 +309,12 @@ export default function CharacterSheet({
           <SavesBlock draft={draft} onApply={apply} />
         </Card>
 
-        <Card title="Skills" subtitle="Click pip to toggle proficiency · click modifier to roll" className="lg:col-span-2">
-          <SkillsBlock draft={draft} onApply={apply} />
-        </Card>
-
         <Card title="Coin purse">
           <GoldBlock draft={draft} onApply={apply} />
+        </Card>
+
+        <Card title="Skills" subtitle="Click pip to toggle proficiency · click modifier to roll" className="lg:col-span-2">
+          <SkillsBlock draft={draft} onApply={apply} />
         </Card>
 
         <Card
