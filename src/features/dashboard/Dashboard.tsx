@@ -98,7 +98,7 @@ export default function Dashboard() {
   };
 
   return (
-    <div className="h-full overflow-hidden flex flex-col lg:flex-row">
+    <div className="h-full overflow-hidden flex flex-col">
       {/* ── Main column (profile header + tabs + tab content) ──────────── */}
       <div className="flex-1 min-w-0 flex flex-col overflow-hidden">
         <div className="px-4 pt-4 pb-3 sm:px-6 sm:pt-6 flex items-center gap-3 sm:gap-4">
@@ -202,9 +202,7 @@ export default function Dashboard() {
           )}
 
           {tab === 'chat' && (
-            // Chat tab only appears on <lg — at lg+ the chat panel renders
-            // side-by-side in the right column instead.
-            <div className="h-full p-3 lg:hidden">
+            <div className="h-full p-3">
               <ChatPanel variant="embedded" />
             </div>
           )}
@@ -215,13 +213,6 @@ export default function Dashboard() {
             </div>
           )}
         </div>
-      </div>
-
-      {/* ── Embedded chat column (lg+ only) ─────────────────────────────
-          Below lg the chat lives inside the "Chat" tab so it doesn't eat
-          half the phone screen by default. */}
-      <div className="hidden lg:flex lg:w-96 shrink-0 lg:h-auto lg:border-l border-slate-800 p-3">
-        <ChatPanel variant="embedded" />
       </div>
 
       {showBuilder && (
@@ -243,13 +234,10 @@ function TabBar({
   setTab: (t: DashboardTab) => void;
   isGM: boolean;
 }) {
-  // Chat tab only renders on <lg viewports where the side-by-side chat
-  // column is hidden. Adding lgOnlyHidden so it disappears at lg+ — keeps
-  // the lg layout identical to before.
-  const tabs: { id: DashboardTab; label: string; icon: typeof UserIcon; gmOnly?: boolean; lgHidden?: boolean }[] = [
+  const tabs: { id: DashboardTab; label: string; icon: typeof UserIcon; gmOnly?: boolean }[] = [
     { id: 'profile', label: 'Profile', icon: UserIcon },
     { id: 'character', label: 'Character', icon: ScrollText },
-    { id: 'chat', label: 'Chat', icon: MessageCircle, lgHidden: true },
+    { id: 'chat', label: 'Chat', icon: MessageCircle },
     { id: 'dice', label: 'Dice', icon: Dice6 },
     { id: 'manage', label: 'Campaign Management', icon: Shield, gmOnly: true },
   ];
@@ -264,8 +252,6 @@ function TabBar({
               key={t.id}
               onClick={() => setTab(t.id)}
               className={`flex items-center gap-1.5 px-3 py-2 text-xs uppercase tracking-wider border-b-2 -mb-px transition-colors whitespace-nowrap ${
-                t.lgHidden ? 'lg:hidden' : ''
-              } ${
                 active
                   ? 'text-slate-100 border-sky-500'
                   : 'text-slate-500 border-transparent hover:text-slate-300'
