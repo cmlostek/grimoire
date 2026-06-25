@@ -30,6 +30,9 @@ export type MapToken = {
   hp?: number;
   maxHp?: number;
   damageLog?: DamageLogEntry[];
+  /** Active condition slugs (e.g. 'poisoned', 'prone'). Matches CONDITIONS
+   *  index from src/data/conditions.ts. Drawn as overlay chips on the token. */
+  conditions?: string[];
 };
 
 export type MapShape =
@@ -58,6 +61,7 @@ type TokenData = {
   hp?: number;
   maxHp?: number;
   damageLog?: DamageLogEntry[];
+  conditions?: string[];
 };
 
 type TokenRow = {
@@ -108,15 +112,17 @@ function rowToToken(r: TokenRow): MapToken {
     hp: r.data?.hp,
     maxHp: r.data?.maxHp,
     damageLog: r.data?.damageLog,
+    conditions: r.data?.conditions ?? [],
   };
 }
 
-function tokenDataPayload(t: Pick<MapToken, 'emoji' | 'hp' | 'maxHp' | 'damageLog'>): TokenData {
+function tokenDataPayload(t: Pick<MapToken, 'emoji' | 'hp' | 'maxHp' | 'damageLog' | 'conditions'>): TokenData {
   const d: TokenData = {};
   if (t.emoji) d.emoji = t.emoji;
   if (t.hp != null) d.hp = t.hp;
   if (t.maxHp != null) d.maxHp = t.maxHp;
   if (t.damageLog && t.damageLog.length > 0) d.damageLog = t.damageLog;
+  if (t.conditions && t.conditions.length > 0) d.conditions = t.conditions;
   return d;
 }
 
@@ -152,7 +158,7 @@ type MapStore = {
   clearShapes: (campaignId: string) => Promise<void>;
 
   addToken: (campaignId: string, t: Omit<MapToken, 'id'>) => Promise<string | null>;
-  updateToken: (id: string, patch: Partial<MapToken>) => Promise<void>;
+  updateToken: (id: string, patch: Partial<MapToken>, fromSync?: boolean) => Promise<void>;
   removeToken: (id: string) => Promise<void>;
 };
 
@@ -373,9 +379,14 @@ export const useMap = create<MapStore>((set, get) => ({
     return token.id;
   },
 
-  updateToken: async (id, patch) => {
+  updateToken: async (id, patch, fromSync = false) => {
     const prev = get().tokens.find((x) => x.id === id);
     if (!prev) return;
+    // Skip no-op updates so cross-surface HP sync doesn't keep echoing.
+    const changed = (Object.keys(patch) as (keyof MapToken)[]).some(
+      (k) => prev[k] !== patch[k],
+    );
+    if (!changed) return;
     const next = { ...prev, ...patch };
     set((s) => ({ tokens: s.tokens.map((x) => (x.id === id ? next : x)) }));
 
@@ -397,6 +408,24 @@ export const useMap = create<MapStore>((set, get) => ({
         tokens: s.tokens.map((x) => (x.id === id ? prev : x)),
         error: error.message,
       }));
+      return;
+    }
+
+    // Fan PC HP changes out to party + initiative. We treat any token with an
+    // owner_user_id as a PC for the sync; NPC creature tokens have a null
+    // owner so they keep their independent HP. fromSync breaks re-entry so
+    // sync-induced updates don't fire another sync round and race the user's
+    // rapid keypresses on the HP input.
+    if (!fromSync && (patch.hp !== undefined || patch.maxHp !== undefined) && prev.owner_user_id) {
+      import('../hpLink').then((m) =>
+        m.syncPcHpAfterChange({
+          source: 'map',
+          name: prev.name,
+          ownerUserId: prev.owner_user_id,
+          hp: patch.hp,
+          maxHp: patch.maxHp,
+        }),
+      );
     }
   },
 

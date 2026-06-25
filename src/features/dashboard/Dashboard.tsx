@@ -13,7 +13,7 @@ import DiceRoller from '../dice/DiceRoller';
 import CharacterSheet from './CharacterSheet';
 import CharacterBuilder from './CharacterBuilder';
 
-type DashboardTab = 'profile' | 'character' | 'dice' | 'manage';
+type DashboardTab = 'profile' | 'character' | 'chat' | 'dice' | 'manage';
 
 /**
  * Player dashboard — landing page after entering a campaign. Phase 1: display
@@ -49,6 +49,8 @@ export default function Dashboard() {
   const claimMember = useParty((s) => s.claim);
   const unclaimMember = useParty((s) => s.unclaim);
   const addMember = useParty((s) => s.addPartyMember);
+  const loadChat = useChat((s) => s.loadForCampaign);
+  const chatLoaded = useChat((s) => s.loaded);
   const [showBuilder, setShowBuilder] = useState(false);
 
   // Dashboard is often the first page visited, so the Party feature may not
@@ -58,6 +60,15 @@ export default function Dashboard() {
     loadParty(campaignId);
     return subscribeParty(campaignId);
   }, [campaignId, loadParty, subscribeParty]);
+
+  // Chat used to be an always-mounted side column, which kept useChat.members
+  // populated for the GM "all characters" view. Now that chat is a tab, the
+  // store doesn't load until someone opens it — load eagerly so owner labels
+  // on the GM view stay populated.
+  useEffect(() => {
+    if (!campaignId || chatLoaded) return;
+    void loadChat(campaignId);
+  }, [campaignId, chatLoaded, loadChat]);
 
   // The player can own at most one character per campaign by design.
   const myCharacter = useMemo(
@@ -98,10 +109,10 @@ export default function Dashboard() {
   };
 
   return (
-    <div className="h-full overflow-hidden flex flex-col lg:flex-row">
+    <div className="h-full overflow-hidden flex flex-col">
       {/* ── Main column (profile header + tabs + tab content) ──────────── */}
       <div className="flex-1 min-w-0 flex flex-col overflow-hidden">
-        <div className="px-6 pt-6 pb-3 flex items-center gap-4">
+        <div className="px-4 pt-4 pb-3 sm:px-6 sm:pt-6 flex items-center gap-3 sm:gap-4">
           <AvatarUpload
             color={myColor ?? '#94a3b8'}
             initial={(displayName ?? '?').slice(0, 1).toUpperCase()}
@@ -201,17 +212,18 @@ export default function Dashboard() {
             <DiceRoller />
           )}
 
+          {tab === 'chat' && (
+            <div className="h-full p-3">
+              <ChatPanel variant="embedded" />
+            </div>
+          )}
+
           {tab === 'manage' && isGM && (
             <div className="px-6 py-6">
               <CampaignManagementPanel selfId={userId} campaignId={campaignId ?? ''} />
             </div>
           )}
         </div>
-      </div>
-
-      {/* ── Embedded chat column / row ─────────────────────────────────── */}
-      <div className="lg:w-96 shrink-0 h-[28rem] lg:h-auto border-t lg:border-t-0 lg:border-l border-slate-800 p-3">
-        <ChatPanel variant="embedded" />
       </div>
 
       {showBuilder && (
@@ -236,11 +248,12 @@ function TabBar({
   const tabs: { id: DashboardTab; label: string; icon: typeof UserIcon; gmOnly?: boolean }[] = [
     { id: 'profile', label: 'Profile', icon: UserIcon },
     { id: 'character', label: 'Character', icon: ScrollText },
+    { id: 'chat', label: 'Chat', icon: MessageCircle },
     { id: 'dice', label: 'Dice', icon: Dice6 },
     { id: 'manage', label: 'Campaign Management', icon: Shield, gmOnly: true },
   ];
   return (
-    <div className="border-b border-slate-800 px-4 flex gap-1 overflow-x-auto">
+    <div className="border-b border-slate-800 px-2 sm:px-4 flex gap-1 overflow-x-auto scrollbar-none">
       {tabs
         .filter((t) => !t.gmOnly || isGM)
         .map((t) => {
@@ -249,7 +262,7 @@ function TabBar({
             <button
               key={t.id}
               onClick={() => setTab(t.id)}
-              className={`flex items-center gap-1.5 px-3 py-2 text-xs uppercase tracking-wider border-b-2 -mb-px transition-colors ${
+              className={`flex items-center gap-1.5 px-3 py-2 text-xs uppercase tracking-wider border-b-2 -mb-px transition-colors whitespace-nowrap ${
                 active
                   ? 'text-slate-100 border-sky-500'
                   : 'text-slate-500 border-transparent hover:text-slate-300'

@@ -4,6 +4,7 @@ import PageHeader from '../../components/PageHeader';
 import { QuickDiceButton } from '../dice/QuickDice';
 import { useSession } from '../session/sessionStore';
 import { useInitiativeStore, CONDITIONS, type Condition } from './initiativeStore';
+import { hpBarClass, hpPercent } from '../hpBar';
 import { useCampaignSettings } from '../notes/campaignSettingsStore';
 import { useParty } from '../party/partyStore';
 import { useNpcStore } from '../npcs/npcStore';
@@ -218,7 +219,7 @@ export default function Initiative() {
           {combatants.map((c, i) => {
             const isActive = i === turnIndex;
             const dead     = c.hp <= 0 && c.maxHp > 0;
-            const hpPct    = c.maxHp > 0 ? (c.hp / c.maxHp) * 100 : 0;
+            const hpPct    = hpPercent(c.hp, c.maxHp);
 
             // Players see a limited view: name + turn indicator only; NPC health/initiative hidden
             if (!isGM) {
@@ -245,7 +246,7 @@ export default function Initiative() {
                   {c.isPC && (
                     <div className="mt-2 h-1.5 bg-slate-800 rounded-full overflow-hidden">
                       <div
-                        className={`h-full ${hpPct > 50 ? 'bg-emerald-600' : hpPct > 25 ? 'bg-amber-500' : 'bg-rose-600'}`}
+                        className={`h-full ${hpBarClass(hpPct)}`}
                         style={{ width: `${hpPct}%` }}
                       />
                     </div>

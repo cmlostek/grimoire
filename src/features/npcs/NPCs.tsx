@@ -67,7 +67,7 @@ export default function NPCs() {
 
       <div className="flex-1 min-h-0 flex">
         {/* Sidebar list */}
-        <aside className="w-64 shrink-0 border-r border-slate-800 flex flex-col">
+        <aside className={`${activeNpc ? 'hidden md:flex' : 'flex'} w-full md:w-64 shrink-0 border-r border-slate-800 flex-col`}>
           <div className="p-2 border-b border-slate-800">
             <div className="relative">
               <Search size={12} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-500" />
@@ -121,7 +121,15 @@ export default function NPCs() {
         </aside>
 
         {/* Detail panel */}
-        <main className="flex-1 overflow-y-auto">
+        <main className={`${activeNpc ? 'flex' : 'hidden md:flex'} flex-col flex-1 overflow-y-auto`}>
+          {activeNpc && (
+            <button
+              onClick={() => setActive(null)}
+              className="md:hidden flex items-center gap-1 px-3 py-2 text-xs text-slate-400 hover:text-slate-200 border-b border-slate-800"
+            >
+              ← Back to list
+            </button>
+          )}
           {!activeNpc ? (
             <div className="h-full flex items-center justify-center">
               <p className="text-sm text-slate-600 italic">Select an NPC to view details.</p>

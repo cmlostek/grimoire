@@ -429,13 +429,39 @@ input[type="number"] { -moz-appearance: textfield; appearance: textfield; }
   background: linear-gradient(180deg, #0b1320 0%, #0a111c 100%);
   border: 1px solid #1e2a3f;
   border-radius: 0.6em;
-  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.7), 0 0 0 1px rgba(56, 189, 248, 0.06);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
   font-family: ui-sans-serif, system-ui, sans-serif;
   pointer-events: auto;
   overflow: hidden;
   max-height: 480px;
   display: flex;
   flex-direction: column;
+}
+html.light .srd-popover {
+  background: #ffffff;
+  border-color: #cbd5e1;
+  box-shadow: 0 2px 8px rgba(15, 23, 42, 0.12);
+}
+html.light .srd-popover-header {
+  background: rgba(14, 116, 144, 0.05);
+  border-bottom-color: #cbd5e1;
+}
+html.light .srd-popover-name { color: #0c4a6e; }
+html.light .srd-popover-sub { color: #64748b; }
+html.light .srd-popover-stats {
+  color: #334155;
+  background: #f8fafc;
+  border-bottom-color: #cbd5e1;
+}
+html.light .srd-popover-stat-label { color: #64748b; }
+html.light .srd-popover-body { color: #1e293b; }
+html.light .srd-popover-divider { border-top-color: #cbd5e1; }
+html.light .srd-popover-section-label { color: #0369a1; }
+html.light .srd-popover-body th,
+html.light .srd-popover-body td { border-color: #cbd5e1; }
+html.light .srd-popover-body th {
+  background: rgba(14, 116, 144, 0.08);
+  color: #0c4a6e;
 }
 .srd-popover-inner {
   display: flex;

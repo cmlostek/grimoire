@@ -44,7 +44,7 @@ export function userCollabColor(userId: string): { color: string; colorLight: st
 
 
 type CollabMsg =
-  | { t: 'req' }
+  | { t: 'req'; from: number }
   | { t: 'state'; u: number[] }
   | { t: 'upd'; u: number[] }
   | { t: 'aw'; u: number[] };
@@ -90,7 +90,27 @@ export class SupabaseCollabProvider {
         if (this.dead) return;
 
         if (payload.t === 'req') {
-          // A peer joined — send them our full state + current awareness.
+          // Receiving a 'req' proves a peer exists — abort our own fallback so
+          // we don't both insert the body and produce CRDT duplicates ("note
+          // copies itself" symptom). Mark synced so the timer's empty-doc
+          // check is short-circuited too.
+          if (!this.synced) {
+            this.synced = true;
+            if (this.fallbackTimer !== null) {
+              clearTimeout(this.fallbackTimer);
+              this.fallbackTimer = null;
+            }
+          }
+          // Tie-break: when both sides have an empty doc + pending fallback,
+          // the deterministic lower clientID is the only one allowed to insert
+          // the body. The higher clientID adopts whatever the lower sends via
+          // the state message below.
+          const ytext = this.doc.getText('note');
+          const haveContent = ytext.toString() !== '';
+          if (!haveContent && options.fallbackBody && this.doc.clientID < payload.from) {
+            ytext.insert(0, options.fallbackBody);
+            options.onReady?.();
+          }
           this.send({ t: 'state', u: Array.from(Y.encodeStateAsUpdate(this.doc)) });
           const ids = [...this.awareness.getStates().keys()];
           if (ids.length) {
@@ -114,8 +134,10 @@ export class SupabaseCollabProvider {
       .subscribe((status) => {
         if (status !== 'SUBSCRIBED' || this.dead) return;
 
-        // Announce ourselves and request any existing state from peers.
-        this.send({ t: 'req' });
+        // Announce ourselves and request any existing state from peers. The
+        // clientID rides along so the peer can tie-break on the rare race
+        // where we both have an empty doc + pending fallback.
+        this.send({ t: 'req', from: this.doc.clientID });
 
         // If nobody responds within PEER_TIMEOUT_MS, we're the first (or only)
         // client. Insert the fallback body text so the editor isn't blank.

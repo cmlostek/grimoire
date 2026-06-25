@@ -1,11 +1,13 @@
 import { useEffect, useState } from 'react';
 import PageHeader from '../../components/PageHeader';
 import { useParty, type PartyMember } from './partyStore';
+import { hpBarClass, hpPercent } from '../hpBar';
 import { useSession } from '../session/sessionStore';
 import { useVisibilityReload } from '../../hooks/useVisibilityReload';
 import { supabase } from '../../lib/supabase';
 import { parseDdb, parseGenericJson, isLikelyDdb, isDdbWrapper } from './ddb';
 import CharacterBuilder from '../dashboard/CharacterBuilder';
+import { CONDITIONS } from '../../data/conditions';
 import {
   Plus, Trash2, UserPlus, FileJson, ExternalLink, X, Shield, Heart,
   Eye, Search, Brain, UserCheck, User as UserIcon, Save, Wand2,
@@ -91,6 +93,16 @@ export default function Party() {
   useVisibilityReload(() => {
     if (campaignId) loadForCampaign(campaignId);
   });
+
+  // When the URL carries a #member-<id> hash (e.g. a note's @{Name} link
+  // navigated us here), scroll to that card once the party has loaded.
+  useEffect(() => {
+    if (party.length === 0) return;
+    const hash = window.location.hash;
+    if (!hash.startsWith('#member-')) return;
+    const el = document.getElementById(hash.slice(1));
+    if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }, [party]);
 
   const canEdit = (m: PartyMember) => isGM || m.owner_user_id === userId;
 
@@ -222,12 +234,15 @@ export function CharCard({
     }
   };
 
-  const hpPct = draft.maxHp > 0 ? (draft.hp / draft.maxHp) * 100 : 0;
+  const hpPct = hpPercent(draft.hp, draft.maxHp);
   const ownedByMe = m.owner_user_id === userId && userId !== null;
   const owned = m.owner_user_id !== null;
 
   return (
-    <div className={`bg-slate-900 border rounded-lg p-4 flex flex-col gap-3 transition-colors ${dirty ? 'border-amber-700/50' : 'border-slate-800'}`}>
+    <div
+      id={`member-${m.id}`}
+      className={`bg-slate-900 border rounded-lg p-4 flex flex-col gap-3 transition-colors scroll-mt-4 ${dirty ? 'border-amber-700/50' : 'border-slate-800'}`}
+    >
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0 flex-1">
           <input
@@ -390,10 +405,8 @@ export function CharCard({
         </div>
         <div className="h-2 bg-slate-800 rounded-full overflow-hidden">
           <div
-            className={`h-full transition-all ${
-              hpPct > 50 ? 'bg-green-500' : hpPct > 25 ? 'bg-yellow-500' : 'bg-red-600'
-            }`}
-            style={{ width: `${Math.max(0, Math.min(100, hpPct))}%` }}
+            className={`h-full transition-all ${hpBarClass(hpPct)}`}
+            style={{ width: `${hpPct}%` }}
           />
         </div>
       </div>
@@ -404,6 +417,11 @@ export function CharCard({
         <Passive icon={<Brain size={11} />} label="Insight" value={draft.passiveInsight} onChange={(v) => apply({ passiveInsight: v })} readOnly={!editable} />
       </div>
 
+      <ConditionBadges
+        conditions={draft.conditions ?? []}
+        exhaustion={draft.exhaustion ?? 0}
+      />
+
       {/* Party rows intentionally stay an at-a-glance summary — name, class,
           race, HP, AC, Init, level, and the three passive senses. Anything
           else (abilities, saves, skills, inventory, spells) lives on the
@@ -412,6 +430,41 @@ export function CharCard({
       <div className="text-[10px] text-slate-600">
         Full sheet on Dashboard › Character.
       </div>
+    </div>
+  );
+}
+
+/** Compact condition + exhaustion badge strip used on Party CharCards and
+ *  anywhere else conditions need to read at a glance. */
+export function ConditionBadges({ conditions, exhaustion }: { conditions: string[]; exhaustion: number }) {
+  if (conditions.length === 0 && exhaustion === 0) return null;
+  return (
+    <div className="flex flex-wrap gap-1">
+      {exhaustion > 0 && (
+        <span
+          className={`px-1.5 py-0.5 text-[10px] uppercase tracking-wider rounded border ${
+            exhaustion >= 6
+              ? 'border-rose-500 bg-rose-900/40 text-rose-100'
+              : 'border-amber-600 bg-amber-900/30 text-amber-200'
+          }`}
+          title={`Exhaustion ${exhaustion}: −${exhaustion * 2} on D20 tests · −${exhaustion * 5} ft Speed${exhaustion >= 6 ? ' · dead' : ''}`}
+        >
+          Exh {exhaustion}
+        </span>
+      )}
+      {conditions.map((slug) => {
+        const c = CONDITIONS.find((x) => x.index === slug);
+        const name = c?.name ?? slug;
+        return (
+          <span
+            key={slug}
+            className="px-1.5 py-0.5 text-[10px] uppercase tracking-wider rounded border border-rose-700 bg-rose-900/30 text-rose-200"
+            title={c?.desc?.split('\n')[0]}
+          >
+            {name}
+          </span>
+        );
+      })}
     </div>
   );
 }

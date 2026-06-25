@@ -21,6 +21,8 @@ import {
   Mic,
   BookOpen,
   Download,
+  Mail,
+  KeyRound,
 } from 'lucide-react';
 import { downloadCampaignExport } from './exportCampaign';
 import PageHeader from '../../components/PageHeader';
@@ -29,6 +31,7 @@ import { useCampaignSettings } from '../notes/campaignSettingsStore';
 import { useTheme } from '../session/themeStore';
 import { useSidebar } from '../session/sidebarStore';
 import { useNavCustomization } from '../../hooks/useNavCustomization';
+import { supabase } from '../../lib/supabase';
 
 // Mirrors the nav array in App.tsx — kept here so the Customize-nav panel can
 // list / reorder the same items the sidebar shows. Keep these in sync.
@@ -54,6 +57,7 @@ export default function Settings() {
   const setViewAsPlayer = useSession((s) => s.setViewAsPlayer);
   const leaveCurrent = useSession((s) => s.leaveCurrent);
   const signOut = useSession((s) => s.signOut);
+  const email = useSession((s) => s.email);
   const campaignId = useSession((s) => s.campaignId);
   const campaignName = useSession((s) => s.campaignName);
   const [exporting, setExporting] = useState(false);
@@ -191,6 +195,8 @@ export default function Settings() {
         )}
 
         <Section title="Account">
+          <AccountEmailRow email={email} />
+          <AccountPasswordRow email={email} />
           <Row icon={<ArrowLeftRight size={14} />} label="Switch campaign" onClick={leaveCurrent} />
           <Row icon={<LogOut size={14} />} label="Sign out" onClick={signOut} danger />
         </Section>
@@ -467,6 +473,226 @@ function PlayerVisibilityBody({
           </>
         )}
       </div>
+    </div>
+  );
+}
+
+// ── Account email / password rows ─────────────────────────────────────────
+
+type Feedback = { kind: 'ok' | 'err'; message: string } | null;
+
+function AccountEmailRow({ email }: { email: string | null }) {
+  const [editing, setEditing] = useState(false);
+  const [next, setNext] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [feedback, setFeedback] = useState<Feedback>(null);
+
+  const submit = async () => {
+    const trimmed = next.trim();
+    if (!trimmed || trimmed === email) {
+      setFeedback({ kind: 'err', message: 'Enter a different email address.' });
+      return;
+    }
+    setBusy(true);
+    setFeedback(null);
+    const { error } = await supabase.auth.updateUser({ email: trimmed });
+    setBusy(false);
+    if (error) {
+      setFeedback({ kind: 'err', message: error.message });
+    } else {
+      setFeedback({
+        kind: 'ok',
+        message: `Confirmation sent to ${trimmed}. The change applies once you click the link.`,
+      });
+      setEditing(false);
+      setNext('');
+    }
+  };
+
+  return (
+    <div className="px-4 py-3 border-b border-slate-800 text-sm text-slate-200">
+      <div className="flex items-center gap-3">
+        <Mail size={14} className="text-slate-400 shrink-0" />
+        <div className="flex-1 min-w-0">
+          <div className="text-[11px] uppercase tracking-wider text-slate-500">Email</div>
+          <div className="truncate">{email ?? '—'}</div>
+        </div>
+        {!editing && (
+          <button
+            onClick={() => {
+              setEditing(true);
+              setNext(email ?? '');
+              setFeedback(null);
+            }}
+            className="text-xs px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-300"
+          >
+            Change
+          </button>
+        )}
+      </div>
+      {editing && (
+        <div className="mt-2 flex flex-wrap items-center gap-2">
+          <input
+            type="email"
+            value={next}
+            onChange={(e) => setNext(e.target.value)}
+            placeholder="new@example.com"
+            className="flex-1 min-w-[200px] bg-slate-900 border border-slate-700 rounded px-2 py-1 text-sm"
+          />
+          <button
+            onClick={submit}
+            disabled={busy}
+            className="text-xs px-3 py-1 rounded bg-sky-700 hover:bg-sky-600 disabled:opacity-50 text-white"
+          >
+            {busy ? 'Sending…' : 'Send confirmation'}
+          </button>
+          <button
+            onClick={() => {
+              setEditing(false);
+              setNext('');
+              setFeedback(null);
+            }}
+            className="text-xs px-3 py-1 rounded text-slate-400 hover:text-slate-200"
+          >
+            Cancel
+          </button>
+        </div>
+      )}
+      {feedback && (
+        <div
+          className={`mt-2 text-[11px] ${
+            feedback.kind === 'ok' ? 'text-emerald-300' : 'text-rose-300'
+          }`}
+        >
+          {feedback.message}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function AccountPasswordRow({ email }: { email: string | null }) {
+  const [editing, setEditing] = useState(false);
+  const [pw, setPw] = useState('');
+  const [pw2, setPw2] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [feedback, setFeedback] = useState<Feedback>(null);
+  const [resetSending, setResetSending] = useState(false);
+
+  const submit = async () => {
+    if (pw.length < 6) {
+      setFeedback({ kind: 'err', message: 'Password must be at least 6 characters.' });
+      return;
+    }
+    if (pw !== pw2) {
+      setFeedback({ kind: 'err', message: 'Passwords do not match.' });
+      return;
+    }
+    setBusy(true);
+    setFeedback(null);
+    const { error } = await supabase.auth.updateUser({ password: pw });
+    setBusy(false);
+    if (error) {
+      setFeedback({ kind: 'err', message: error.message });
+    } else {
+      setFeedback({ kind: 'ok', message: 'Password updated.' });
+      setEditing(false);
+      setPw('');
+      setPw2('');
+    }
+  };
+
+  const sendReset = async () => {
+    if (!email) return;
+    setResetSending(true);
+    setFeedback(null);
+    const { error } = await supabase.auth.resetPasswordForEmail(email, {
+      redirectTo: window.location.origin,
+    });
+    setResetSending(false);
+    setFeedback(
+      error
+        ? { kind: 'err', message: error.message }
+        : { kind: 'ok', message: `Reset link sent to ${email}.` },
+    );
+  };
+
+  return (
+    <div className="px-4 py-3 border-b border-slate-800 text-sm text-slate-200">
+      <div className="flex items-center gap-3">
+        <KeyRound size={14} className="text-slate-400 shrink-0" />
+        <div className="flex-1 min-w-0">
+          <div className="text-[11px] uppercase tracking-wider text-slate-500">Password</div>
+          <div className="text-slate-400">Set a new password or have a reset link sent.</div>
+        </div>
+        {!editing && (
+          <button
+            onClick={() => {
+              setEditing(true);
+              setFeedback(null);
+            }}
+            className="text-xs px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-300"
+          >
+            Change
+          </button>
+        )}
+      </div>
+      {editing && (
+        <div className="mt-2 grid grid-cols-1 sm:grid-cols-[1fr_1fr_auto_auto] gap-2 items-center">
+          <input
+            type="password"
+            value={pw}
+            onChange={(e) => setPw(e.target.value)}
+            placeholder="New password"
+            className="bg-slate-900 border border-slate-700 rounded px-2 py-1 text-sm"
+            autoComplete="new-password"
+          />
+          <input
+            type="password"
+            value={pw2}
+            onChange={(e) => setPw2(e.target.value)}
+            placeholder="Repeat"
+            className="bg-slate-900 border border-slate-700 rounded px-2 py-1 text-sm"
+            autoComplete="new-password"
+          />
+          <button
+            onClick={submit}
+            disabled={busy}
+            className="text-xs px-3 py-1 rounded bg-sky-700 hover:bg-sky-600 disabled:opacity-50 text-white"
+          >
+            {busy ? 'Saving…' : 'Save'}
+          </button>
+          <button
+            onClick={() => {
+              setEditing(false);
+              setPw('');
+              setPw2('');
+              setFeedback(null);
+            }}
+            className="text-xs px-3 py-1 rounded text-slate-400 hover:text-slate-200"
+          >
+            Cancel
+          </button>
+        </div>
+      )}
+      <div className="mt-2">
+        <button
+          onClick={sendReset}
+          disabled={!email || resetSending}
+          className="text-[11px] text-sky-300 hover:text-sky-200 disabled:opacity-50"
+        >
+          {resetSending ? 'Sending…' : 'Forgot password? Send a reset link to my email'}
+        </button>
+      </div>
+      {feedback && (
+        <div
+          className={`mt-2 text-[11px] ${
+            feedback.kind === 'ok' ? 'text-emerald-300' : 'text-rose-300'
+          }`}
+        >
+          {feedback.message}
+        </div>
+      )}
     </div>
   );
 }

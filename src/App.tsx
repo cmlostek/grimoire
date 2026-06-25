@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { NavLink, Route, Routes, Navigate, useLocation } from 'react-router-dom';
-import { Swords, NotebookPen, Map as MapIcon, BookOpen, Sparkles, Package, ScrollText, Users, FlaskConical, Dices, Copy, Mic, Eye, Settings as SettingsIcon, BookMarked, Radio, LayoutDashboard } from 'lucide-react';
+import { Swords, NotebookPen, Map as MapIcon, BookOpen, Sparkles, Package, ScrollText, Users, FlaskConical, Dices, Copy, Mic, Eye, Settings as SettingsIcon, BookMarked, Radio, LayoutDashboard, Menu, X as XIcon } from 'lucide-react';
 import { QuickDice } from './features/dice/QuickDice';
 import { useQuickDice } from './features/dice/quickDiceStore';
 import ChatPanel from './features/chat/ChatPanel';
@@ -84,6 +84,10 @@ function AppShell() {
   // /settings → Display). When disabled the sidebar stays as a narrow rail.
   const hoverExpand = useSidebar((s) => s.hoverExpand);
   const [expanded, setExpanded] = useState(false);
+  // Mobile-only: hamburger-driven drawer state. Below md, the sidebar isn't
+  // visible at all by default — clicking the hamburger slides it in over the
+  // page. Auto-closes on nav link click.
+  const [mobileOpen, setMobileOpen] = useState(false);
   const viewAsPlayer = useSession((s) => s.viewAsPlayer);
   const setViewAsPlayer = useSession((s) => s.setViewAsPlayer);
   const trueIsGM = role === 'gm' || role === 'cogm';
@@ -92,7 +96,9 @@ function AppShell() {
   // technically edit anything they could before — this is purely so they can
   // preview what the players see.
   const isGM = trueIsGM && !viewAsPlayer;
-  const collapsed = !expanded;
+  // Mobile drawer always renders the expanded layout (full nav labels,
+  // campaign name in the header). Desktop honours the hover-expand state.
+  const collapsed = !expanded && !mobileOpen;
 
   // ── Page title ────────────────────────────────────────────────────────────
   const location = useLocation();
@@ -154,7 +160,27 @@ function AppShell() {
           <span className="opacity-70">— click to return to GM view</span>
         </button>
       )}
-      <div className="flex-1 flex min-h-0">
+      {/* Mobile top bar — visible <md only. Just the hamburger; campaign name
+          and dice live in the drawer so the bar stays out of the way. */}
+      <div className="md:hidden shrink-0 flex items-center px-2 py-1.5 border-b border-slate-800 bg-slate-900">
+        <button
+          onClick={() => setMobileOpen(true)}
+          className="p-2 rounded text-slate-300 hover:bg-slate-800 active:bg-slate-700"
+          aria-label="Open menu"
+        >
+          <Menu size={18} />
+        </button>
+      </div>
+
+      <div className="flex-1 flex min-h-0 relative">
+      {/* Backdrop — only on <md when drawer is open */}
+      {mobileOpen && (
+        <button
+          onClick={() => setMobileOpen(false)}
+          className="md:hidden fixed inset-0 z-30 bg-black/60"
+          aria-label="Close menu"
+        />
+      )}
       <aside
         onMouseEnter={hoverExpand ? () => setExpanded(true) : undefined}
         onMouseLeave={hoverExpand ? () => setExpanded(false) : undefined}
@@ -167,7 +193,13 @@ function AppShell() {
               }
             : undefined
         }
-        className={`${collapsed ? 'w-14' : 'w-56'} shrink-0 border-r border-slate-800 flex flex-col transition-[width] duration-150`}
+        className={`
+          ${collapsed ? 'md:w-14' : 'md:w-56'}
+          md:relative md:translate-x-0 md:flex md:shrink-0
+          fixed inset-y-0 left-0 z-40 w-64 transform transition-transform duration-200
+          ${mobileOpen ? 'translate-x-0' : '-translate-x-full'}
+          bg-slate-950 border-r border-slate-800 flex flex-col md:transition-[width]
+        `}
       >
         {/* ── Header ───────────────────────────────────────────────────────── */}
         {collapsed ? (
@@ -213,6 +245,16 @@ function AppShell() {
               </div>
             </div>
             <div className="flex gap-1 shrink-0">
+              {/* Mobile: close-drawer button (replaces the hamburger when the
+                  drawer is open). Hidden on md+ since the rail has no concept
+                  of "close" — the desktop user toggles via hover/auto-expand. */}
+              <button
+                onClick={() => setMobileOpen(false)}
+                aria-label="Close menu"
+                className="md:hidden p-1.5 rounded text-slate-400 hover:bg-slate-800"
+              >
+                <XIcon size={16} />
+              </button>
               {isGM && recordingSupported && (
                 <button
                   onClick={isRecording ? stopRecording : startRecording}
@@ -264,6 +306,7 @@ function AppShell() {
               key={to}
               to={to}
               title={collapsed ? label : undefined}
+              onClick={() => setMobileOpen(false)}
               className={({ isActive }) =>
                 `flex items-center ${collapsed ? 'justify-center px-0' : 'gap-3 px-4'} py-2 text-sm transition-colors border-l-2 ${
                   isActive
@@ -285,6 +328,7 @@ function AppShell() {
           <NavLink
             to="/settings"
             title={collapsed ? 'Settings' : undefined}
+            onClick={() => setMobileOpen(false)}
             className={({ isActive }) =>
               `flex items-center ${collapsed ? 'justify-center px-0' : 'gap-3 px-4'} py-2.5 text-sm transition-colors ${
                 isActive

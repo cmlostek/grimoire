@@ -1,6 +1,5 @@
 import { create } from 'zustand';
 import { supabase } from '../../lib/supabase';
-import { useParty } from '../party/partyStore';
 
 export type Condition = { name: string; rounds: number | null };
 
@@ -67,7 +66,7 @@ interface InitiativeState {
   clear(): void;
 
   add(c: Omit<InitiativeCombatant, 'id' | 'conditions' | 'turnOrder'>): Promise<void>;
-  update(id: string, patch: CombatantPatch): Promise<void>;
+  update(id: string, patch: CombatantPatch, fromSync?: boolean): Promise<void>;
   remove(id: string): Promise<void>;
   next(): void;
   reset(): Promise<void>;
@@ -147,7 +146,14 @@ export const useInitiativeStore = create<InitiativeState>((set, get) => ({
     }
   },
 
-  update: async (id, patch) => {
+  update: async (id, patch, fromSync = false) => {
+    const prev = get().combatants.find((c) => c.id === id);
+    if (!prev) return;
+    // Skip no-op updates so cross-surface HP sync doesn't keep echoing.
+    const changed = (Object.keys(patch) as (keyof typeof patch)[]).some(
+      (k) => prev[k] !== patch[k],
+    );
+    if (!changed) return;
     const dbPatch: Record<string, unknown> = {};
     if (patch.name      !== undefined) dbPatch.name       = patch.name;
     if (patch.initiative!== undefined) dbPatch.initiative = patch.initiative;
@@ -158,21 +164,17 @@ export const useInitiativeStore = create<InitiativeState>((set, get) => ({
     set((s) => ({ combatants: s.combatants.map((c) => c.id === id ? { ...c, ...patch } : c) }));
     await supabase.from('initiative_entries').update(dbPatch).eq('id', id);
 
-    // Sync HP/maxHp changes for PCs to the party panel
-    if ((patch.hp !== undefined || patch.maxHp !== undefined)) {
-      const combatant = get().combatants.find((c) => c.id === id);
-      if (combatant?.isPC) {
-        const { party, updatePartyMember } = useParty.getState();
-        const partyMember = party.find(
-          (p) => p.name.toLowerCase() === combatant.name.toLowerCase()
-        );
-        if (partyMember) {
-          const hpPatch: Record<string, number> = {};
-          if (patch.hp !== undefined) hpPatch.hp = patch.hp;
-          if (patch.maxHp !== undefined) hpPatch.maxHp = patch.maxHp;
-          updatePartyMember(partyMember.id, hpPatch);
-        }
-      }
+    // Fan PC HP changes out to party + map. fromSync breaks re-entry so a
+    // sync-induced update doesn't trigger another sync round.
+    if (!fromSync && (patch.hp !== undefined || patch.maxHp !== undefined) && prev.isPC) {
+      import('../hpLink').then((m) =>
+        m.syncPcHpAfterChange({
+          source: 'initiative',
+          name: prev.name,
+          hp: patch.hp,
+          maxHp: patch.maxHp,
+        }),
+      );
     }
   },
 

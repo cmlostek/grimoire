@@ -133,6 +133,12 @@ export type PartyMember = {
   hitDieSize?: number;
   /** Number of hit dice the character can still spend before a long rest. */
   hitDiceCurrent?: number;
+  /** Active condition slugs (matches CONDITIONS index from src/data/conditions.ts).
+   *  Exhaustion is excluded from this list — it has its own counter below. */
+  conditions?: string[];
+  /** 2024 SRD exhaustion level (0..6). -2 to all D20 tests and -5ft speed per
+   *  level; death at 6. Long rest reduces by 1. */
+  exhaustion?: number;
   /** Chosen subclass slug from the matching Class's subclasses[] entries. */
   subclassId?: string;
   /** Free-form appearance/personality fields collected during creation. */
@@ -206,6 +212,8 @@ function rowToMember(r: Row): PartyMember {
     details: d.details,
     hitDieSize: d.hitDieSize,
     hitDiceCurrent: d.hitDiceCurrent,
+    conditions: d.conditions ?? [],
+    exhaustion: d.exhaustion ?? 0,
   };
 }
 
@@ -250,6 +258,7 @@ function patchToUpdate(
     'xp', 'gold', 'deathSaves', 'skillProfs', 'saveProfs', 'inventory',
     'spellAbility', 'spellSlots', 'spells', 'customActions', 'features',
     'classId', 'subclassId', 'details', 'hitDieSize', 'hitDiceCurrent',
+    'conditions', 'exhaustion',
   ];
   const needsDataUpdate = dataKeys.some((k) => k in patch);
   if (needsDataUpdate) {
@@ -269,7 +278,7 @@ type PartyState = {
   clear: () => void;
 
   addPartyMember: (campaignId: string, m: Omit<PartyMember, 'id' | 'owner_user_id'>) => Promise<string | null>;
-  updatePartyMember: (id: string, patch: Partial<PartyMember>) => Promise<void>;
+  updatePartyMember: (id: string, patch: Partial<PartyMember>, fromSync?: boolean) => Promise<void>;
   removePartyMember: (id: string) => Promise<void>;
   claim: (id: string) => Promise<void>;
   unclaim: (id: string) => Promise<void>;
@@ -342,9 +351,16 @@ export const useParty = create<PartyState>((set, get) => ({
     return member.id;
   },
 
-  updatePartyMember: async (id, patch) => {
+  updatePartyMember: async (id, patch, fromSync = false) => {
     const prev = get().party.find((p) => p.id === id);
     if (!prev) return;
+    // Short-circuit no-op patches so the cross-surface HP sync chain
+    // terminates after one round of writes instead of bouncing back through
+    // the realtime echo.
+    const changed = (Object.keys(patch) as (keyof PartyMember)[]).some(
+      (k) => prev[k] !== patch[k],
+    );
+    if (!changed) return;
     const optimistic = { ...prev, ...patch };
     set((s) => ({ party: s.party.map((p) => (p.id === id ? optimistic : p)) }));
     const update = patchToUpdate(prev, patch);
@@ -362,6 +378,21 @@ export const useParty = create<PartyState>((set, get) => ({
     } else if (data) {
       const saved = rowToMember(data as Row);
       set((s) => ({ party: s.party.map((p) => (p.id === id ? saved : p)) }));
+    }
+    // Fan out HP changes to initiative + map so the sheet/party/init/map
+    // all stay in lock-step. fromSync gates the re-entry: a sync-induced
+    // update doesn't trigger another sync, otherwise rapid edits (e.g.
+    // holding the down-arrow on the map HP input) race stale sync chains.
+    if (!fromSync && (patch.hp !== undefined || patch.maxHp !== undefined)) {
+      import('../hpLink').then((m) =>
+        m.syncPcHpAfterChange({
+          source: 'party',
+          name: prev.name,
+          ownerUserId: prev.owner_user_id,
+          hp: patch.hp,
+          maxHp: patch.maxHp,
+        }),
+      );
     }
   },
 

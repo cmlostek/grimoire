@@ -159,7 +159,7 @@ export default function Items() {
       </PageHeader>
 
       <div className="flex-1 min-h-0 flex">
-        <aside className="w-80 border-r border-slate-800 flex flex-col">
+        <aside className={`${selected ? 'hidden md:flex' : 'flex'} w-full md:w-80 border-r border-slate-800 flex-col`}>
           <div className="p-3 space-y-2 border-b border-slate-800">
             <div className="relative">
               <Search size={14} className="absolute left-2 top-1/2 -translate-y-1/2 text-slate-500" />
@@ -290,7 +290,15 @@ export default function Items() {
           </div>
         </aside>
 
-        <section className="flex-1 min-w-0 overflow-y-auto">
+        <section className={`${selected ? 'flex' : 'hidden md:flex'} flex-col flex-1 min-w-0 overflow-y-auto`}>
+          {selected && (
+            <button
+              onClick={() => setSelected(null)}
+              className="md:hidden flex items-center gap-1 px-3 py-2 text-xs text-slate-400 hover:text-slate-200 border-b border-slate-800"
+            >
+              ← Back to list
+            </button>
+          )}
           {!selected ? (
             <div className="h-full flex items-center justify-center text-slate-500">Select an item.</div>
           ) : isHomebrew(selected) ? (

@@ -42,14 +42,41 @@ function unionDedupe<T extends { index: string }>(...arrays: T[][]): T[] {
   return out;
 }
 
+// The 2024 SRD parser drops entries whose source-markdown tables don't carry
+// the columns it expects (e.g. equipment without a Cost/Weight header, magic
+// items in narrative-only sections, rule sections without anchor headings).
+// Until the parser covers those, backfill each 2024 dataset with whatever
+// 2014 entries it lacks so the 2024-edition pickers aren't missing 100+ rows
+// players actually use. The 2024-tagged rows win on conflicts via the
+// "raw first" ordering — backfill only kicks in for missing indexes.
+function backfill2024<T extends { index: string }>(
+  raw: T[],
+  fallback: T[],
+): T[] {
+  const present = new Set(raw.map((x) => x.index));
+  return [...raw, ...fallback.filter((x) => !present.has(x.index))];
+}
+
 export const SPELLS_2014 = tag(spellsJson as unknown as Spell[], '2014');
-export const SPELLS_2024 = tag(spells2024Json as unknown as Spell[], '2024');
+export const SPELLS_2024 = backfill2024(
+  tag(spells2024Json as unknown as Spell[], '2024'),
+  SPELLS_2014,
+);
 export const EQUIPMENT_2014 = tag(equipmentJson as unknown as EquipmentItem[], '2014');
-export const EQUIPMENT_2024 = tag(equipment2024Json as unknown as EquipmentItem[], '2024');
+export const EQUIPMENT_2024 = backfill2024(
+  tag(equipment2024Json as unknown as EquipmentItem[], '2024'),
+  EQUIPMENT_2014,
+);
 export const MAGIC_ITEMS_2014 = tag(magicItemsJson as unknown as MagicItem[], '2014');
-export const MAGIC_ITEMS_2024 = tag(magicItems2024Json as unknown as MagicItem[], '2024');
+export const MAGIC_ITEMS_2024 = backfill2024(
+  tag(magicItems2024Json as unknown as MagicItem[], '2024'),
+  MAGIC_ITEMS_2014,
+);
 export const RULE_SECTIONS_2014 = tag(ruleSectionsJson as unknown as RuleSection[], '2014');
-export const RULE_SECTIONS_2024 = tag(ruleSections2024Json as unknown as RuleSection[], '2024');
+export const RULE_SECTIONS_2024 = backfill2024(
+  tag(ruleSections2024Json as unknown as RuleSection[], '2024'),
+  RULE_SECTIONS_2014,
+);
 
 // Deduped unions. 2014 wins on conflicts to preserve historical behavior for
 // non-edition-aware consumers (homebrew, character sheet, wiki index).

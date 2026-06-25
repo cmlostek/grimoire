@@ -2,8 +2,10 @@ import { useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import type { ReactNode } from 'react';
 import { Shield, Heart } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 import type { PartyMember } from '../party/partyStore';
 import { modifier } from '../../data/srd';
+import { hpBarColor, hpPercent } from '../hpBar';
 
 const ABILITIES = ['str', 'dex', 'con', 'int', 'wis', 'cha'] as const;
 
@@ -20,6 +22,7 @@ export function PartyRefSpan({
   const [visible, setVisible] = useState(false);
   const [style, setStyle] = useState<React.CSSProperties>({});
   const hideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const navigate = useNavigate();
 
   const scheduleHide = () => {
     hideTimer.current = setTimeout(() => setVisible(false), 150);
@@ -47,8 +50,8 @@ export function PartyRefSpan({
   };
 
   const m = member;
-  const hpPct = m.maxHp > 0 ? Math.min(100, (m.hp / m.maxHp) * 100) : 0;
-  const hpColor = hpPct > 50 ? '#10b981' : hpPct > 25 ? '#38bdf8' : '#f87171';
+  const hpPct = hpPercent(m.hp, m.maxHp);
+  const hpColor = hpBarColor(hpPct);
 
   const tooltip = (
     <div
@@ -99,6 +102,12 @@ export function PartyRefSpan({
     <span
       ref={spanRef}
       className={className}
+      style={{ cursor: 'pointer' }}
+      title={`Open ${m.name}'s character sheet`}
+      onClick={(e) => {
+        e.stopPropagation();
+        navigate(`/party#member-${m.id}`);
+      }}
       onMouseEnter={handleMouseEnter}
       onMouseLeave={scheduleHide}
     >

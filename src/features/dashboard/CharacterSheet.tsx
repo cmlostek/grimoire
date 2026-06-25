@@ -1,6 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Save, Printer, BedDouble, Coffee, Heart, Dices, HeartPulse, Skull, Eye, Search, Brain, Plus, X as XIcon, Swords, Shield as ShieldIcon, Sparkles, Backpack, Trash2, ChevronUp } from 'lucide-react';
+import { Save, Printer, BedDouble, Coffee, Heart, Dices, HeartPulse, Skull, Eye, Search, Brain, Plus, X as XIcon, Swords, Shield as ShieldIcon, Sparkles, Backpack, Trash2, ChevronUp, AlertTriangle, Pencil } from 'lucide-react';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import LevelUpModal, { type LevelUpResult } from './LevelUpModal';
+import { CONDITIONS } from '../../data/conditions';
 import {
   DEFAULT_DEATH_SAVES,
   DEFAULT_GOLD,
@@ -15,8 +18,9 @@ import {
   type SpellSlots,
 } from '../party/partyStore';
 import { useQuickDice } from '../dice/quickDiceStore';
+import { hpBarClass, hpPercent } from '../hpBar';
 import { useCatalog, searchCatalog, type CatalogEntry } from '../chat/catalog';
-import { EQUIPMENT, MAGIC_ITEMS, SPELLS, equipmentFor, spellsFor } from '../../data/srd';
+import { EQUIPMENT, MAGIC_ITEMS, SPELLS, SPECIES_2024, equipmentFor, spellsFor } from '../../data/srd';
 import type { SrdEdition } from '../notes/campaignSettingsStore';
 import { useCampaignSettings } from '../notes/campaignSettingsStore';
 import type { EquipmentItem, Spell } from '../../data/types';
@@ -72,6 +76,14 @@ export default function CharacterSheet({
   const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
   const [showLevelUp, setShowLevelUp] = useState(false);
+  // Target level for cascading multi-level jumps. When the player types LVL
+  // higher than current (or accumulates XP past multiple thresholds), the
+  // modal re-opens after each confirm until the target is reached.
+  const [levelUpTarget, setLevelUpTarget] = useState<number | null>(null);
+  // First render exits the XP-threshold effect below so we don't auto-open
+  // the modal just because the character was already at-threshold when the
+  // sheet opened. Subsequent edits do trigger the prompt.
+  const xpEffectMounted = useRef(false);
   const edition = useCampaignSettings((s) => s.settings.srdEdition);
 
   // Sync from server when not locally edited (matches CharCard's pattern).
@@ -79,8 +91,37 @@ export default function CharacterSheet({
     if (!dirty) setDraft(m);
   }, [m]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Auto-open the level-up modal when the player edits their XP across the
+  // current level's threshold. Mounting with already-eligible XP doesn't
+  // trigger — only changes the player makes during this session do, so the
+  // modal doesn't surprise-pop the moment the sheet opens.
+  useEffect(() => {
+    if (!xpEffectMounted.current) {
+      xpEffectMounted.current = true;
+      return;
+    }
+    const p = xpProgress(draft.xp ?? 0, draft.level);
+    if (!p.atMax && p.eligible && !showLevelUp) {
+      // Walk forward through XP bands so a huge XP entry cascades through
+      // every level it covers rather than capping at one.
+      let lv = draft.level;
+      let rem = draft.xp ?? 0;
+      while (lv < 20 && rem >= XP_PER_LEVEL[lv]) {
+        rem -= XP_PER_LEVEL[lv];
+        lv++;
+      }
+      setLevelUpTarget(lv);
+      setShowLevelUp(true);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [draft.xp, draft.level]);
+
   const apply = (p: Partial<PartyMember>) => {
-    setDraft((d) => ({ ...d, ...p }));
+    setDraft((d) => {
+      const next = { ...d, ...p };
+      if (p.dex !== undefined) next.initiativeBonus = abilityMod(next.dex);
+      return next;
+    });
     setDirty(true);
   };
 
@@ -98,6 +139,7 @@ export default function CharacterSheet({
   const longRest = () => {
     // Restore HP to max, clear temp HP, reset death saves, refill spell slots.
     // Hit dice recover up to half max (rounded down, min 1) per 5e rules.
+    // Exhaustion drops by 1 per the 2024 condition definition.
     const slots = (draft.spellSlots ?? []).map((s) => ({ ...s, current: s.max }));
     const maxDice = draft.level;
     const regained = Math.max(1, Math.floor(maxDice / 2));
@@ -108,6 +150,7 @@ export default function CharacterSheet({
       deathSaves: { ...DEFAULT_DEATH_SAVES },
       spellSlots: slots.length > 0 ? slots : undefined,
       hitDiceCurrent: newDice,
+      exhaustion: Math.max(0, (draft.exhaustion ?? 0) - 1),
     });
   };
 
@@ -151,7 +194,7 @@ export default function CharacterSheet({
   };
 
   return (
-    <div className="px-6 py-6 print-character-sheet relative">
+    <div className="px-4 py-4 sm:px-6 sm:py-6 print-character-sheet relative">
       {dirty && (
         <button
           onClick={save}
@@ -169,13 +212,20 @@ export default function CharacterSheet({
         onApply={apply}
         onSave={save}
         onPrint={printSheet}
-        onLevelUp={() => setShowLevelUp(true)}
+        onLevelUp={(targetLevel) => {
+          setLevelUpTarget(targetLevel ?? null);
+          setShowLevelUp(true);
+        }}
       />
 
       {showLevelUp && (
         <LevelUpModal
+          key={draft.level}
           member={draft}
-          onClose={() => setShowLevelUp(false)}
+          onClose={() => {
+            setShowLevelUp(false);
+            setLevelUpTarget(null);
+          }}
           onConfirm={(result: LevelUpResult) => {
             // Merge the modal output into the sheet. Newly-unlocked class
             // features append to the existing list so previously-tracked items
@@ -219,12 +269,19 @@ export default function CharacterSheet({
               ...(inferredDieSize ? { hitDieSize: inferredDieSize } : {}),
               ...bumped,
             });
+            // If we were asked to cascade up to a higher target level, leave
+            // the modal mounted — the key={draft.level} above will remount it
+            // with fresh state once apply() lands. Otherwise close out.
+            if (levelUpTarget !== null && result.level < levelUpTarget) {
+              return;
+            }
             setShowLevelUp(false);
+            setLevelUpTarget(null);
           }}
         />
       )}
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mt-4">
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 sm:gap-4 mt-4">
         <Card title="Vitals">
           <VitalsBlock
             draft={draft}
@@ -256,6 +313,10 @@ export default function CharacterSheet({
           <GoldBlock draft={draft} onApply={apply} />
         </Card>
 
+        <Card title="Skills" subtitle="Click pip to toggle proficiency · click modifier to roll" className="lg:col-span-2">
+          <SkillsBlock draft={draft} onApply={apply} />
+        </Card>
+
         <Card
           title="Inventory"
           subtitle="Click + to add from the catalog · weapons show attack/damage from your stats"
@@ -273,6 +334,14 @@ export default function CharacterSheet({
         </Card>
 
         <Card
+          title="Conditions & exhaustion"
+          subtitle="Active effects, tracked across the sheet and combat surfaces"
+          className="lg:col-span-2"
+        >
+          <ConditionsBlock draft={draft} onApply={apply} />
+        </Card>
+
+        <Card
           title="Actions"
           subtitle="Weapons + spells, grouped by action economy · add custom entries per bucket"
           className="lg:col-span-2"
@@ -286,10 +355,6 @@ export default function CharacterSheet({
           className="lg:col-span-2"
         >
           <FeaturesBlock draft={draft} onApply={apply} />
-        </Card>
-
-        <Card title="Skills" subtitle="Click pip to toggle proficiency · click modifier to roll" className="lg:col-span-2">
-          <SkillsBlock draft={draft} onApply={apply} />
         </Card>
 
         <Card title="Description" subtitle="Appearance, alignment, deity — flavour only" className="lg:col-span-2">
@@ -369,7 +434,7 @@ function SheetHeader({
   onApply: (p: Partial<PartyMember>) => void;
   onSave: () => void;
   onPrint: () => void;
-  onLevelUp: () => void;
+  onLevelUp: (targetLevel?: number) => void;
 }) {
   return (
     <div className="border border-slate-800 rounded-lg p-4 bg-slate-900">
@@ -402,7 +467,18 @@ function SheetHeader({
           <LabeledNumber
             label="LVL"
             value={draft.level}
-            onChange={(v) => onApply({ level: v })}
+            onChange={(v) => {
+              // Bumping LVL directly funnels into the level-up modal so the
+              // player still gets HP / features / slots / ASI prompts. Passing
+              // the typed value as the target cascades through every level up
+              // to it, re-opening the modal between each confirm. Decreasing a
+              // level applies straight through (homebrew / typo correction).
+              if (v > draft.level) {
+                onLevelUp(Math.min(20, v));
+              } else if (v < draft.level) {
+                onApply({ level: v });
+              }
+            }}
             width="w-16"
           />
           <LabeledNumber
@@ -438,6 +514,46 @@ function SheetHeader({
   );
 }
 
+/** Unified dead check used by Vitals + DeathSavesBlock. */
+export function isCharacterDead(m: PartyMember): boolean {
+  if (m.maxHp > 0 && m.hp <= -m.maxHp) return true;
+  if ((m.exhaustion ?? 0) >= 6) return true;
+  if ((m.deathSaves?.failures ?? 0) >= 3) return true;
+  return false;
+}
+
+/** 2024 SRD exhaustion penalty: −2 to every D20 test per level. Applied at
+ *  display and roll time to skills, saves, attacks, and initiative. */
+export function exhaustionD20Penalty(m: PartyMember): number {
+  return (m.exhaustion ?? 0) * -2;
+}
+
+/** Base movement speed in feet, derived from species when possible.
+ *  Falls back to parsing the free-text speed field, then to 30. */
+function parseSpeedFeet(s: string): number {
+  const m = (s ?? '').match(/(\d+)/);
+  return m ? parseInt(m[1], 10) : 30;
+}
+function speciesBaseSpeed(race: string): number | null {
+  if (!race) return null;
+  const hit = SPECIES_2024.find((sp) => sp.name.toLowerCase() === race.trim().toLowerCase());
+  return hit ? parseSpeedFeet(hit.speed) : null;
+}
+
+/** Effective speed for the round: base − 5 ft per exhaustion level, floored at 0. */
+export function effectiveSpeed(m: PartyMember): { base: number; penalty: number; effective: number; sourceLabel: string } {
+  const fromSpecies = speciesBaseSpeed(m.race);
+  const base = fromSpecies ?? parseSpeedFeet(m.speed ?? '30');
+  const penalty = (m.exhaustion ?? 0) * 5;
+  const effective = Math.max(0, base - penalty);
+  return {
+    base,
+    penalty,
+    effective,
+    sourceLabel: fromSpecies != null ? `${m.race} base` : 'manual',
+  };
+}
+
 // ── Vitals ──────────────────────────────────────────────────────────────
 
 function VitalsBlock({
@@ -456,12 +572,12 @@ function VitalsBlock({
   equippedWeapons: { item: InventoryItem; srd: EquipmentItem | null }[];
 }) {
   const rollFormula = useQuickDice((s) => s.rollFormula);
-  const hpPct = draft.maxHp > 0 ? (draft.hp / draft.maxHp) * 100 : 0;
-  // SRD instant-death rule: damage taken at 0 HP that equals or exceeds your
-  // HP maximum kills you outright — i.e. current HP would be at or below
-  // -maxHp. Show a status badge so the table notices.
-  const isDead = draft.maxHp > 0 && draft.hp <= -draft.maxHp;
-  const hpBarColor = hpPct > 50 ? 'bg-green-500' : hpPct > 25 ? 'bg-yellow-500' : 'bg-red-600';
+  const hpPct = hpPercent(draft.hp, draft.maxHp);
+  // SRD instant-death rule + 3 failed death saves + exhaustion 6 all kill.
+  // The DeathSavesBlock auto-flags failures>=3 too; Vitals just surfaces the
+  // unified badge so any of the three paths reads at a glance.
+  const isDead = isCharacterDead(draft);
+  const hpBarColor = hpBarClass(hpPct);
   // Hit dice — max equals character level. Default current to max on first
   // render so older characters without a stored value behave sanely.
   const maxHitDice = draft.level;
@@ -474,7 +590,7 @@ function VitalsBlock({
   };
   return (
     <div className="space-y-3">
-      <div className="flex gap-2 items-center text-sm text-slate-300">
+      <div className="flex gap-2 items-center text-sm text-slate-300 flex-wrap">
         <Heart size={14} className="text-rose-400" />
         <NumInput value={draft.hp} onChange={(v) => onApply({ hp: v })} className="w-16" />
         <span className="text-slate-500">/</span>
@@ -545,20 +661,40 @@ function VitalsBlock({
         ) : (
           <LabeledNumber label="AC" value={draft.ac} onChange={(v) => onApply({ ac: v })} width="w-full" />
         )}
-        <LabeledNumber
-          label="INIT"
-          value={draft.initiativeBonus}
-          onChange={(v) => onApply({ initiativeBonus: v })}
-          width="w-full"
-          showSign
-        />
+        {(() => {
+          const initMod = abilityMod(draft.dex);
+          return (
+            <div className="text-center">
+              <div className="text-[10px] uppercase tracking-wider text-slate-500 mb-1" title="From DEX modifier">
+                INIT
+              </div>
+              <div
+                className="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1 text-sm font-semibold text-slate-100 text-center font-mono"
+                title="Computed from DEX mod"
+              >
+                {fmt(initMod)}
+              </div>
+            </div>
+          );
+        })()}
         <div>
           <div className="text-[10px] uppercase tracking-wider text-slate-500 mb-1">Speed</div>
-          <input
-            value={draft.speed}
-            onChange={(e) => onApply({ speed: e.target.value })}
-            className="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1 text-sm text-slate-100 focus:outline-none focus:border-sky-700"
-          />
+          {(() => {
+            const sp = effectiveSpeed(draft);
+            return (
+              <div
+                className="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1 text-sm text-slate-100 text-center"
+                title={`${sp.base} ft ${sp.sourceLabel}${sp.penalty ? ` − ${sp.penalty} ft exhaustion` : ''}`}
+              >
+                <span className={sp.penalty ? 'text-amber-300 font-mono' : 'font-mono'}>{sp.effective} ft</span>
+                {sp.penalty > 0 && (
+                  <span className="block text-[10px] text-slate-500">
+                    base {sp.base} · −{sp.penalty}
+                  </span>
+                )}
+              </div>
+            );
+          })()}
         </div>
       </div>
 
@@ -656,7 +792,7 @@ function DeathSavesBlock({
         filled={ds.failures}
         onClickPip={(i) => togglePip('failures', i)}
       />
-          <div className="flex-4 flex flex-col items-center justify-center gap-2 mt-2 py-2 rounded" style={{ background: t.bg }}>
+          <div className="flex-1 min-h-[110px] flex flex-col items-center justify-center gap-2 mt-2 py-2 rounded" style={{ background: t.bg }}>
         <status.Icon
           size={56}
           strokeWidth={1.5}
@@ -896,11 +1032,13 @@ function SkillsBlock({
     onApply({ skillProfs: [...set] });
   };
 
+  // 2024 exhaustion penalty: every D20 test is reduced by 2 per level.
+  const exhPenalty = exhaustionD20Penalty(draft);
   return (
     <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6">
       {SKILLS.map(({ key, label, ability }) => {
         const prof = profs.includes(key);
-        const mod = abilityMod(draft[ability]) + (prof ? pb : 0);
+        const mod = abilityMod(draft[ability]) + (prof ? pb : 0) + exhPenalty;
         return (
           <ProfRow
             key={key}
@@ -935,11 +1073,12 @@ function SavesBlock({
     onApply({ saveProfs: [...set] });
   };
 
+  const exhPenalty = exhaustionD20Penalty(draft);
   return (
     <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6">
       {(['str', 'dex', 'con', 'int', 'wis', 'cha'] as Ability[]).map((a) => {
         const prof = profs.includes(a);
-        const mod = abilityMod(draft[a]) + (prof ? pb : 0);
+        const mod = abilityMod(draft[a]) + (prof ? pb : 0) + exhPenalty;
         return (
           <ProfRow
             key={a}
@@ -1083,13 +1222,16 @@ function Card({
   children: React.ReactNode;
   className?: string;
 }) {
+  // h-full + flex-col so a card that lives next to a taller sibling in the
+  // grid stretches its body to fill the row height — Death saves no longer
+  // leaves whitespace next to Vitals.
   return (
-    <section className={`bg-slate-900 border border-slate-800 rounded-lg p-4 ${className}`}>
-      <div className="flex items-baseline justify-between mb-3">
+    <section className={`bg-slate-900 border border-slate-800 rounded-lg p-4 h-full flex flex-col ${className}`}>
+      <div className="flex items-baseline justify-between mb-3 shrink-0">
         <h2 className="text-[10px] uppercase tracking-wider text-slate-400 font-semibold">{title}</h2>
         {subtitle && <span className="text-[10px] text-slate-600">{subtitle}</span>}
       </div>
-      {children}
+      <div className="flex-1 min-h-0">{children}</div>
     </section>
   );
 }
@@ -1266,7 +1408,8 @@ function weaponStats(member: PartyMember, weapon: EquipmentItem) {
   const pb = profBonus(member.level);
   return {
     ability,
-    attackBonus: mod + pb,
+    // Exhaustion subtracts from the attack roll (an attack is a D20 test).
+    attackBonus: mod + pb + exhaustionD20Penalty(member),
     abilityMod: mod,
     damageDice: weapon.damage?.damage_dice ?? '',
     damageType: weapon.damage?.damage_type?.name ?? '',
@@ -1317,9 +1460,10 @@ function InventoryBlock({
       ) : (
         <div className="space-y-1.5">
           {inventory.map((item) => (
-            // Non-equipped rows are dropped from the printed sheet — keeps the
-            // PDF tight by only showing what's currently in hand/worn.
-            <div key={item.id} className={item.equipped ? '' : 'print:hidden'}>
+            // Every inventory row now ships with the printed sheet — the PDF
+            // is the player's reference, so a complete loadout (including
+            // unequipped reserves, packs, and consumables) needs to be on it.
+            <div key={item.id}>
               <InventoryRow
                 item={item}
                 member={draft}
@@ -1357,6 +1501,17 @@ function InventoryRow({
   const isArmor = srdItem?.armor_class != null;
   const srdSpell = srdSpellFor(item, edition);
   const isSpell = !!srdSpell || item.sourceKind === 'spell' || item.sourceKind === 'srd-spell';
+  // Resolve a magic-item entry too — equipment-only lookups don't catch
+  // wondrous items, rings, etc., so the click-to-expand description still works.
+  const srdMagic = useMemo(() => {
+    if (item.sourceKind !== 'srd-item' || !item.sourceId) return null;
+    return MAGIC_ITEMS.find((m) => m.index === item.sourceId) ?? null;
+  }, [item.sourceKind, item.sourceId]);
+  // Any kind of SRD backing — desc paragraphs, weapon damage line, armor
+  // class line, cost/weight stats — means the row has *something* worth
+  // expanding to. Plain custom items without an SRD link stay collapsed.
+  const hasDetails = !!srdItem || !!srdMagic || !!srdSpell;
+  const [showDesc, setShowDesc] = useState(false);
 
   let KindIcon = Backpack;
   let kindColor = '#94a3b8';
@@ -1370,15 +1525,19 @@ function InventoryRow({
     : '';
 
   return (
-    <div className="flex items-center gap-2 bg-slate-950 border border-slate-800 rounded px-2 py-1.5">
+    <div className="bg-slate-950 border border-slate-800 rounded">
+    <div className="flex items-center gap-2 px-2 py-1.5">
       <KindIcon size={14} style={{ color: kindColor }} className="shrink-0" />
 
       <div className="min-w-0 flex-1">
-        <input
-          value={item.name}
-          onChange={(e) => onChange({ name: e.target.value })}
-          className="w-full bg-transparent text-sm text-slate-100 outline-none truncate"
-        />
+        <button
+          onClick={() => hasDetails && setShowDesc((v) => !v)}
+          disabled={!hasDetails}
+          className={`block w-full text-left text-sm text-slate-100 truncate ${hasDetails ? 'hover:text-sky-200 cursor-pointer' : 'cursor-text'}`}
+          title={hasDetails ? 'Click to view details' : undefined}
+        >
+          {item.name}
+        </button>
         {stats && (
           <div className="text-[11px] text-slate-500 flex flex-wrap items-center gap-x-3">
             <button
@@ -1443,6 +1602,92 @@ function InventoryRow({
           <XIcon size={12} />
         </button>
       </div>
+    </div>
+
+    {/* Expandable SRD details — always shows something for any SRD-backed
+        row. Basic items (Longsword, Plate, Backpack) get a stats line even
+        when there's no desc[]; magic items + spells render their full text. */}
+    {showDesc && hasDetails && (
+      // Inline srd-popover so the inventory description matches the spell +
+      // feat boxes. Strip the popover's own border/shadow/rounded-corners
+      // since it's nested inside the row's own bordered card.
+      <div
+        className="srd-popover"
+        style={{ maxHeight: 'none', margin: 0, borderRadius: 0, borderWidth: 0, borderTopWidth: 1, borderTopColor: '#1e293b', boxShadow: 'none' }}
+      >
+        <div className="srd-popover-header">
+          <div className="srd-popover-sub">
+            {srdSpell && (
+              <>
+                {srdSpell.level === 0 ? 'Cantrip' : `Level ${srdSpell.level}`} {srdSpell.school.name.toLowerCase()}
+                {srdSpell.ritual && ' · ritual'}
+                {srdSpell.concentration && ' · concentration'}
+              </>
+            )}
+            {srdMagic && !srdSpell && (
+              <>{srdMagic.equipment_category.name} · {srdMagic.rarity.name}</>
+            )}
+            {srdItem && !srdMagic && !srdSpell && (
+              <>
+                {srdItem.equipment_category.name}
+                {srdItem.weapon_category && ` · ${srdItem.weapon_category} ${srdItem.weapon_range ?? ''}`}
+                {srdItem.armor_category && ` · ${srdItem.armor_category} armor`}
+              </>
+            )}
+          </div>
+        </div>
+        {srdItem && !srdMagic && !srdSpell && (
+          <div className="srd-popover-stats">
+            {srdItem.cost && (
+              <div><span className="srd-popover-stat-label">Cost</span>{srdItem.cost.quantity} {srdItem.cost.unit}</div>
+            )}
+            {srdItem.weight !== undefined && (
+              <div><span className="srd-popover-stat-label">Weight</span>{srdItem.weight} lb</div>
+            )}
+            {srdItem.damage && (
+              <div style={{ gridColumn: '1 / -1' }}>
+                <span className="srd-popover-stat-label">Damage</span>
+                {srdItem.damage.damage_dice} {srdItem.damage.damage_type.name.toLowerCase()}
+                {srdItem.two_handed_damage && ` · 2h ${srdItem.two_handed_damage.damage_dice}`}
+              </div>
+            )}
+            {srdItem.armor_class && (
+              <div style={{ gridColumn: '1 / -1' }}>
+                <span className="srd-popover-stat-label">AC</span>
+                {srdItem.armor_class.base}
+                {srdItem.armor_class.dex_bonus && ' + Dex'}
+                {srdItem.armor_class.max_bonus && ` (max +${srdItem.armor_class.max_bonus})`}
+              </div>
+            )}
+            {srdItem.range && (srdItem.range.normal || srdItem.range.long) && (
+              <div><span className="srd-popover-stat-label">Range</span>{srdItem.range.normal}/{srdItem.range.long} ft</div>
+            )}
+            {srdItem.str_minimum && srdItem.str_minimum > 0 && (
+              <div><span className="srd-popover-stat-label">Str min</span>{srdItem.str_minimum}</div>
+            )}
+            {srdItem.properties && srdItem.properties.length > 0 && (
+              <div style={{ gridColumn: '1 / -1' }}>
+                <span className="srd-popover-stat-label">Properties</span>
+                {srdItem.properties.map((p) => p.name).join(', ')}
+              </div>
+            )}
+            {srdItem.stealth_disadvantage && (
+              <div style={{ gridColumn: '1 / -1', color: '#fcd34d' }}>Stealth disadvantage</div>
+            )}
+          </div>
+        )}
+        <div className="srd-popover-body markdown-body" style={{ overflowY: 'visible' }}>
+          {srdSpell?.desc?.map((p, i) => <p key={`s${i}`}>{p}</p>)}
+          {srdMagic?.desc?.map((p, i) => (
+            <ReactMarkdown key={`m${i}`} remarkPlugins={[remarkGfm]}>{p}</ReactMarkdown>
+          ))}
+          {!srdSpell && !srdMagic && srdItem?.desc?.map((p, i) => <p key={`i${i}`}>{p}</p>)}
+          {!srdSpell && !srdMagic && (!srdItem?.desc || srdItem.desc.length === 0) && (
+            <div className="text-[11px] text-slate-600 italic">No additional description in the SRD.</div>
+          )}
+        </div>
+      </div>
+    )}
     </div>
   );
 }
@@ -2064,6 +2309,110 @@ function DetailsBlock({ draft, onApply }: { draft: PartyMember; onApply: (p: Par
   );
 }
 
+// ── Conditions & exhaustion ───────────────────────────────────────────────
+
+/** SRD 5.1 conditions list minus Exhaustion (which has its own counter). */
+const SHEET_CONDITIONS = CONDITIONS.filter((c) => c.index !== 'exhaustion');
+
+function ConditionsBlock({ draft, onApply }: { draft: PartyMember; onApply: (p: Partial<PartyMember>) => void }) {
+  const active = new Set(draft.conditions ?? []);
+  const exh = draft.exhaustion ?? 0;
+  const dead = exh >= 6;
+
+  const toggleCondition = (slug: string) => {
+    const next = new Set(active);
+    if (next.has(slug)) next.delete(slug);
+    else next.add(slug);
+    onApply({ conditions: Array.from(next) });
+  };
+
+  const setExhaustion = (n: number) => {
+    const clamped = Math.max(0, Math.min(6, n));
+    // Exhaustion 6 in 2024 = instant death. Drop HP to 0 too so the rest of
+    // the sheet (HP bar, Dead badge in Vitals) reads consistently.
+    if (clamped >= 6) {
+      onApply({ exhaustion: 6, hp: 0 });
+    } else {
+      onApply({ exhaustion: clamped });
+    }
+  };
+
+  return (
+    <div className="grid grid-cols-1 lg:grid-cols-[1fr_220px] gap-4">
+      {/* Conditions list */}
+      <div>
+        <div className="text-[11px] uppercase tracking-wider text-slate-500 mb-2">Conditions</div>
+        <div className="flex flex-wrap gap-1.5">
+          {SHEET_CONDITIONS.map((c) => {
+            const on = active.has(c.index);
+            return (
+              <button
+                key={c.index}
+                onClick={() => toggleCondition(c.index)}
+                title={c.desc.split('\n')[0]}
+                className={`px-2 py-1 text-[11px] rounded border transition-colors ${
+                  on
+                    ? 'border-rose-600 bg-rose-900/40 text-rose-100'
+                    : 'border-slate-800 bg-slate-950 text-slate-400 hover:bg-slate-800 hover:text-slate-200'
+                }`}
+              >
+                {c.name}
+              </button>
+            );
+          })}
+        </div>
+        {active.size === 0 && (
+          <div className="text-[11px] text-slate-600 italic mt-2">
+            No active conditions. Click a chip to apply.
+          </div>
+        )}
+      </div>
+
+      {/* Exhaustion tracker (right column) */}
+      <div className="border-t lg:border-t-0 lg:border-l border-slate-800 lg:pl-4 pt-3 lg:pt-0">
+        <div className="flex items-center justify-between mb-2">
+          <div className="text-[11px] uppercase tracking-wider text-amber-300/80">Exhaustion</div>
+          <div className="text-[10px] text-slate-500 font-mono">{exh}/6</div>
+        </div>
+        <div className="flex gap-1 mb-3">
+          {[1, 2, 3, 4, 5, 6].map((n) => (
+            <button
+              key={n}
+              onClick={() => setExhaustion(exh === n ? n - 1 : n)}
+              className={`flex-1 h-5 rounded-sm border transition-colors ${
+                exh >= n
+                  ? n === 6
+                    ? 'bg-rose-700 border-rose-500'
+                    : 'bg-amber-700 border-amber-500'
+                  : 'bg-slate-900 border-slate-700 hover:bg-slate-800'
+              }`}
+              title={`Set exhaustion level ${n}`}
+            />
+          ))}
+        </div>
+        {exh > 0 && (
+          <div className="text-[11px] leading-relaxed text-slate-400 space-y-1 bg-slate-950 border border-slate-800 rounded p-2">
+            <div className="flex items-center gap-1 text-amber-300/90">
+              <AlertTriangle size={11} />
+              <span>−{exh * 2} on D20 tests · −{exh * 5} ft Speed</span>
+            </div>
+            {dead && (
+              <div className="text-rose-300 font-semibold">
+                Dead — exhaustion at 6.
+              </div>
+            )}
+          </div>
+        )}
+        {exh === 0 && (
+          <div className="text-[11px] text-slate-600 italic">
+            Click a pip to apply exhaustion levels. Long rest reduces by 1.
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ── Actions ───────────────────────────────────────────────────────────────
 
 /** Standard SRD combat actions that are always available regardless of class.
@@ -2468,17 +2817,22 @@ function FeatureRow({
   onChange: (patch: Partial<CharacterFeature>) => void;
   onRemove: () => void;
 }) {
+  // Collapsed by default — like the inventory rows + spell rows on the
+  // sheet, click the name to expand the description.
   const [open, setOpen] = useState(false);
+  const [editing, setEditing] = useState(false);
   const uses = feature.uses;
 
   return (
-    <div className="bg-slate-950 border border-slate-800 rounded p-2">
-      <div className="flex items-center gap-2">
+    <div className="srd-popover" style={{ maxHeight: 'none' }}>
+      <div className="srd-popover-header flex items-center gap-2">
         <button
           onClick={() => setOpen((v) => !v)}
-          className="flex-1 text-left text-sm text-slate-100 hover:text-sky-200"
+          className="flex-1 min-w-0 text-left"
+          title={open ? 'Collapse' : 'Expand description'}
         >
-          {feature.name}
+          <div className="srd-popover-name truncate hover:text-sky-200">{feature.name}</div>
+          <div className="srd-popover-sub">{feature.source}</div>
         </button>
         {uses && (
           <UsesControl
@@ -2491,30 +2845,51 @@ function FeatureRow({
         {!uses && (
           <button
             onClick={() => onChange({ uses: { current: 1, max: 1, period: 'Long' } })}
-            className="text-[10px] uppercase tracking-wider text-slate-500 hover:text-slate-200 px-1.5 py-0.5 rounded hover:bg-slate-800"
+            className="text-[10px] uppercase tracking-wider text-slate-500 hover:text-slate-200 px-1.5 py-0.5 rounded hover:bg-slate-800 shrink-0"
             title="Add a limited-use counter"
           >
             Track uses
           </button>
         )}
         <button
+          onClick={() => { setOpen(true); setEditing((v) => !v); }}
+          className="p-1 text-slate-500 hover:text-sky-300 shrink-0"
+          title={editing ? 'Done editing' : 'Edit description'}
+        >
+          <Pencil size={11} />
+        </button>
+        <button
           onClick={onRemove}
-          className="p-1 text-slate-600 hover:text-rose-400"
+          className="p-1 text-slate-600 hover:text-rose-400 shrink-0"
           title="Remove feature"
         >
           <Trash2 size={11} />
         </button>
       </div>
       {open && (
-        <div className="mt-2 pt-2 border-t border-slate-800 space-y-1.5">
-          <textarea
-            value={feature.desc ?? ''}
-            onChange={(e) => onChange({ desc: e.target.value })}
-            placeholder="Description (optional)"
-            rows={2}
-            className="w-full bg-slate-900 border border-slate-700 rounded px-2 py-1 text-xs text-slate-200 placeholder:text-slate-600 focus:outline-none focus:border-sky-700 resize-y"
-          />
-        </div>
+        editing ? (
+          <div className="srd-popover-body" style={{ overflowY: 'visible' }}>
+            <textarea
+              value={feature.desc ?? ''}
+              onChange={(e) => onChange({ desc: e.target.value })}
+              placeholder="Description (markdown supported)…"
+              rows={3}
+              className="w-full bg-slate-900 border border-slate-700 rounded px-2 py-1 text-xs text-slate-200 placeholder:text-slate-600 focus:outline-none focus:border-sky-700 resize-y"
+            />
+          </div>
+        ) : feature.desc ? (
+          <div className="srd-popover-body markdown-body" style={{ overflowY: 'visible' }}>
+            <ReactMarkdown remarkPlugins={[remarkGfm]}>{feature.desc}</ReactMarkdown>
+          </div>
+        ) : (
+          <div
+            className="srd-popover-body italic text-slate-600 cursor-pointer"
+            style={{ overflowY: 'visible' }}
+            onClick={() => setEditing(true)}
+          >
+            No description yet — click the pencil to add one.
+          </div>
+        )
       )}
     </div>
   );
