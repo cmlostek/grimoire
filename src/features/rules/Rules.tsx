@@ -183,7 +183,7 @@ export default function Rules() {
       </PageHeader>
 
       <div className="flex-1 min-h-0 flex">
-        <aside className="w-72 border-r border-slate-800 flex flex-col">
+        <aside className={`${selected ? 'hidden md:flex' : 'flex'} w-full md:w-72 border-r border-slate-800 flex-col`}>
           <div className="flex border-b border-slate-800">
             <button
               onClick={() => {
@@ -262,10 +262,18 @@ export default function Rules() {
             )}
           </div>
         </aside>
-        <section className="flex-1 min-w-0 overflow-y-auto">
+        <section className={`${selected ? 'flex' : 'hidden md:flex'} flex-col flex-1 min-w-0 overflow-y-auto`}>
+          {selected && (
+            <button
+              onClick={() => setSelectedIndex(null)}
+              className="md:hidden flex items-center gap-1 px-3 py-2 text-xs text-slate-400 hover:text-slate-200 border-b border-slate-800"
+            >
+              ← Back to list
+            </button>
+          )}
           {selected ? (
             <div
-              className="px-8 py-6 markdown-body max-w-4xl"
+              className="px-4 sm:px-8 py-6 markdown-body max-w-4xl"
               onClick={handleMarkdownClick}
             >
               <h1>{stripTag(selected.name)}</h1>

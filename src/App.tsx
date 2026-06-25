@@ -160,31 +160,15 @@ function AppShell() {
           <span className="opacity-70">— click to return to GM view</span>
         </button>
       )}
-      {/* Mobile top bar — visible <md only. Hamburger opens the drawer; the
-          campaign name and quick-dice live here so phones don't lose them. */}
-      <div className="md:hidden shrink-0 flex items-center gap-2 px-3 py-2 border-b border-slate-800 bg-slate-900">
+      {/* Mobile top bar — visible <md only. Just the hamburger; campaign name
+          and dice live in the drawer so the bar stays out of the way. */}
+      <div className="md:hidden shrink-0 flex items-center px-2 py-1.5 border-b border-slate-800 bg-slate-900">
         <button
           onClick={() => setMobileOpen(true)}
           className="p-2 rounded text-slate-300 hover:bg-slate-800 active:bg-slate-700"
           aria-label="Open menu"
         >
           <Menu size={18} />
-        </button>
-        <div className="flex-1 min-w-0">
-          <div className="font-serif text-base truncate" title={campaignName ?? ''}>
-            {campaignName ?? 'Grimoire'}
-          </div>
-        </div>
-        <button
-          onClick={toggleQuickDice}
-          aria-label="Quick dice"
-          className={`p-2 rounded ${
-            quickDiceOpen
-              ? 'bg-slate-800 text-sky-300'
-              : 'text-slate-300 hover:bg-slate-800 active:bg-slate-700'
-          }`}
-        >
-          <Dices size={16} />
         </button>
       </div>
 

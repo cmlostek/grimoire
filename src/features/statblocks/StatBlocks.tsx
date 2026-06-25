@@ -129,7 +129,7 @@ export default function StatBlocks() {
       </PageHeader>
 
       <div className="flex-1 min-h-0 flex">
-        <aside className="w-60 border-r border-slate-800 overflow-y-auto">
+        <aside className={`${current ? 'hidden md:block' : 'block'} w-full md:w-60 border-r border-slate-800 overflow-y-auto`}>
           {statBlocks.length === 0 && (
             <div className="p-4 text-xs text-slate-600 italic">No stat blocks yet.</div>
           )}
@@ -149,7 +149,15 @@ export default function StatBlocks() {
           ))}
         </aside>
 
-        <section className="flex-1 min-w-0 overflow-y-auto">
+        <section className={`${current ? 'flex' : 'hidden md:flex'} flex-col flex-1 min-w-0 overflow-y-auto`}>
+          {current && (
+            <button
+              onClick={() => setActiveStatBlock(null)}
+              className="md:hidden flex items-center gap-1 px-3 py-2 text-xs text-slate-400 hover:text-slate-200 border-b border-slate-800"
+            >
+              ← Back to list
+            </button>
+          )}
           {!current ? (
             <div className="h-full flex items-center justify-center text-slate-500 text-center px-8">
               Create a 2014 or 2024 stat block to begin, or import one from the SRD.
