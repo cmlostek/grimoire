@@ -466,6 +466,18 @@ export default function MapBoard() {
   // the cursor on grab.
   const [shapeDrag, setShapeDrag] = useState<{ id: string; ox: number; oy: number } | null>(null);
   const [shapeDragPos, setShapeDragPos] = useState<{ id: string; x: number; y: number } | null>(null);
+  // Image-layer drag state. `mode` is either 'move' (translate x/y) or
+  // 'resize' (grow w/h from the bottom-right corner). ox/oy is the offset
+  // from the anchor point to the mouse-down so the layer doesn't snap to
+  // the cursor on grab.
+  const [layerDrag, setLayerDrag] = useState<
+    | { id: string; mode: 'move'; ox: number; oy: number }
+    | { id: string; mode: 'resize'; ox: number; oy: number; startW: number; startH: number; startX: number; startY: number }
+    | null
+  >(null);
+  const [layerDragPos, setLayerDragPos] = useState<
+    { id: string; x: number; y: number; w: number; h: number } | null
+  >(null);
   const [selectedShapeColor, setSelectedShapeColor] = useState(SHAPE_COLORS[0]);
   const [tokenName, setTokenName] = useState('');
   const [tokenEmoji, setTokenEmoji] = useState('');
@@ -647,23 +659,37 @@ export default function MapBoard() {
     };
   }, []);
 
-  // ── Fit canvas to screen ─────────────────────────────────────────────────
+  // ── Fit content to screen ────────────────────────────────────────────────
+  // Fits the bounding box of the canvas border PLUS every visible image
+  // layer — image layers can extend past the canvas border now that the
+  // canvas no longer auto-resizes to the image, so fitting just the canvas
+  // leaves layers off-screen.
   const fitToScreen = useCallback(() => {
     const svg = svgRef.current;
     if (!svg) return;
     const rect = svg.getBoundingClientRect();
-    // Scale to fill 95% of the viewport while preserving the canvas aspect ratio.
-    const newZoom = Math.min(rect.width / canvasW, rect.height / canvasH) * 0.95;
+    let minX = 0;
+    let minY = 0;
+    let maxX = canvasW;
+    let maxY = canvasH;
+    for (const l of sceneLayers) {
+      if (l.hidden && !isGM) continue;
+      if (l.x < minX) minX = l.x;
+      if (l.y < minY) minY = l.y;
+      if (l.x + l.w > maxX) maxX = l.x + l.w;
+      if (l.y + l.h > maxY) maxY = l.y + l.h;
+    }
+    const contentW = Math.max(1, maxX - minX);
+    const contentH = Math.max(1, maxY - minY);
+    const newZoom = Math.min(rect.width / contentW, rect.height / contentH) * 0.95;
     setPan({
-      x: (rect.width - canvasW * newZoom) / 2,
-      y: (rect.height - canvasH * newZoom) / 2,
+      x: (rect.width - contentW * newZoom) / 2 - minX * newZoom,
+      y: (rect.height - contentH * newZoom) / 2 - minY * newZoom,
     });
     setZoom(newZoom);
-  }, [canvasW, canvasH]);
+  }, [canvasW, canvasH, sceneLayers, isGM]);
 
-  // Auto-fit once when the canvas dimensions change (new campaign load, background upload, etc.).
-  // fitToScreen already captures canvasW/canvasH via useCallback, so using it as the dep
-  // is equivalent to [canvasW, canvasH] without the eslint warning.
+  // Auto-fit when the canvas grows/shrinks (campaign load, first image upload).
   useEffect(() => {
     if (!canvasW || !canvasH) return;
     const id = requestAnimationFrame(() => {
@@ -1126,6 +1152,32 @@ export default function MapBoard() {
     if (shapeDrag) {
       setShapeDragPos({ id: shapeDrag.id, x: p.x - shapeDrag.ox, y: p.y - shapeDrag.oy });
     }
+    if (layerDrag) {
+      const layer = sceneLayers.find((l) => l.id === layerDrag.id);
+      if (!layer) return;
+      if (layerDrag.mode === 'move') {
+        setLayerDragPos({
+          id: layerDrag.id,
+          x: p.x - layerDrag.ox,
+          y: p.y - layerDrag.oy,
+          w: layer.w,
+          h: layer.h,
+        });
+      } else {
+        // Resize from the bottom-right corner: top-left stays put, w/h grow
+        // with the cursor (minus the grab offset). Clamp to a tiny minimum
+        // so a misclick can't make the layer zero-sized and un-grabbable.
+        const nw = Math.max(20, p.x - layerDrag.startX - layerDrag.ox);
+        const nh = Math.max(20, p.y - layerDrag.startY - layerDrag.oy);
+        setLayerDragPos({
+          id: layerDrag.id,
+          x: layerDrag.startX,
+          y: layerDrag.startY,
+          w: nw,
+          h: nh,
+        });
+      }
+    }
   };
 
   const onMouseUp = (e: React.MouseEvent) => {
@@ -1135,6 +1187,16 @@ export default function MapBoard() {
     }
     if (draggingTokenId) {
       commitDrag();
+      return;
+    }
+    if (layerDrag && layerDragPos && currentSceneId) {
+      const original = sceneLayers.find((l) => l.id === layerDrag.id);
+      if (original) {
+        const moved = { ...original, x: layerDragPos.x, y: layerDragPos.y, w: layerDragPos.w, h: layerDragPos.h };
+        void updateLayer(currentSceneId, moved);
+      }
+      setLayerDrag(null);
+      setLayerDragPos(null);
       return;
     }
     if (shapeDrag && shapeDragPos && currentSceneId) {
@@ -1865,26 +1927,97 @@ export default function MapBoard() {
                   scene. Hidden layers are skipped entirely for players, but
                   the GM sees them dimmed so they know what's queued up.
                   Layers render in array order, so earlier entries sit
-                  underneath later ones. */}
+                  underneath later ones. In select mode the GM can drag a
+                  layer to reposition it and use the bottom-right handle to
+                  resize. */}
               {sceneLayers.map((layer) => {
                 if (layer.hidden && !isGM) return null;
+                const draggable = isGM && tool === 'select';
+                const live = layerDragPos && layerDragPos.id === layer.id;
+                const lx = live ? layerDragPos.x : layer.x;
+                const ly = live ? layerDragPos.y : layer.y;
+                const lw = live ? layerDragPos.w : layer.w;
+                const lh = live ? layerDragPos.h : layer.h;
+                const handleR = Math.max(6, 10 / zoom);
                 return (
-                  <image
-                    key={layer.id}
-                    href={layer.url}
-                    x={layer.x}
-                    y={layer.y}
-                    width={layer.w}
-                    height={layer.h}
-                    preserveAspectRatio="none"
-                    opacity={layer.hidden ? 0.25 : 1}
-                    transform={
-                      layer.rotation
-                        ? `rotate(${layer.rotation} ${layer.x + layer.w / 2} ${layer.y + layer.h / 2})`
-                        : undefined
-                    }
-                    pointerEvents="none"
-                  />
+                  <g key={layer.id}>
+                    <image
+                      href={layer.url}
+                      x={lx}
+                      y={ly}
+                      width={lw}
+                      height={lh}
+                      preserveAspectRatio="none"
+                      opacity={layer.hidden ? 0.25 : 1}
+                      transform={
+                        layer.rotation
+                          ? `rotate(${layer.rotation} ${lx + lw / 2} ${ly + lh / 2})`
+                          : undefined
+                      }
+                      pointerEvents={draggable ? 'all' : 'none'}
+                      style={{ cursor: draggable ? (live ? 'grabbing' : 'move') : 'default' }}
+                      onMouseDown={
+                        draggable
+                          ? (e) => {
+                              e.stopPropagation();
+                              const p = screenToLogical(e);
+                              setLayerDrag({
+                                id: layer.id,
+                                mode: 'move',
+                                ox: p.x - layer.x,
+                                oy: p.y - layer.y,
+                              });
+                              setLayerDragPos({ id: layer.id, x: layer.x, y: layer.y, w: layer.w, h: layer.h });
+                            }
+                          : undefined
+                      }
+                    />
+                    {/* Bottom-right resize handle — only shown to the GM in
+                        select mode so it doesn't clutter the player view. */}
+                    {draggable && (
+                      <>
+                        <rect
+                          x={lx + lw - handleR}
+                          y={ly + lh - handleR}
+                          width={handleR * 2}
+                          height={handleR * 2}
+                          fill="#0ea5e9"
+                          stroke="#fafaf9"
+                          strokeWidth={1 / zoom}
+                          style={{ cursor: 'nwse-resize' }}
+                          onMouseDown={(e) => {
+                            e.stopPropagation();
+                            const p = screenToLogical(e);
+                            setLayerDrag({
+                              id: layer.id,
+                              mode: 'resize',
+                              ox: p.x - (layer.x + layer.w),
+                              oy: p.y - (layer.y + layer.h),
+                              startW: layer.w,
+                              startH: layer.h,
+                              startX: layer.x,
+                              startY: layer.y,
+                            });
+                            setLayerDragPos({ id: layer.id, x: layer.x, y: layer.y, w: layer.w, h: layer.h });
+                          }}
+                        />
+                        {/* Thin selection border so it's obvious which layer
+                            the corner handle belongs to when several overlap. */}
+                        <rect
+                          x={lx}
+                          y={ly}
+                          width={lw}
+                          height={lh}
+                          fill="none"
+                          stroke="#0ea5e9"
+                          strokeOpacity={0.5}
+                          strokeDasharray={`${4 / zoom} ${4 / zoom}`}
+                          strokeWidth={1 / zoom}
+                          pointerEvents="none"
+                        />
+                      </>
+                    )}
+                  </g>
                 );
               })}
 
