@@ -19,6 +19,7 @@ export const MAX_DAMAGE_LOG = 25;
 
 export type MapToken = {
   id: string;
+  scene_id: string | null;
   owner_user_id: string | null;
   name: string;
   x: number;
@@ -40,20 +41,46 @@ export type MapShape =
   | { id: string; kind: 'square'; x: number; y: number; w: number; h: number; color: string }
   | { id: string; kind: 'cone'; x: number; y: number; dx: number; dy: number; color: string };
 
-type StateData = {
-  show_grid?: boolean;
+/** A positioned image inside a scene. Multiple layers compose the visible
+ *  map — e.g. a base battlemat plus an overlay handout, plus a hidden
+ *  GM-only secret-door reveal. `hidden` toggles render-only visibility;
+ *  the GM can still see the layer in the panel either way. */
+export type ImageLayer = {
+  id: string;
+  url: string;
+  /** Friendly label shown in the layers panel. */
+  name: string;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  rotation: number;
+  hidden: boolean;
+};
+
+type SceneData = {
   shapes?: MapShape[];
+  layers?: ImageLayer[];
+};
+
+export type MapScene = {
+  id: string;
+  name: string;
+  order_idx: number;
+  grid_size: number;
+  show_grid: boolean;
+  width: number;
+  height: number;
+  shapes: MapShape[];
+  layers: ImageLayer[];
 };
 
 export type MapState = {
-  background_url: string | null;
-  grid_size: number;
-  show_grid: boolean;
-  shapes: MapShape[];
-  /** Logical canvas width in map units. All coordinates are in this space. */
-  width: number;
-  /** Logical canvas height in map units. */
-  height: number;
+  /** id of the scene every player currently sees. */
+  active_scene_id: string | null;
+  /** GM-only override — when set, the GM's local view renders this scene
+   *  instead of the active one. Players still see the active scene. */
+  gm_preview_scene_id: string | null;
 };
 
 type TokenData = {
@@ -67,6 +94,7 @@ type TokenData = {
 type TokenRow = {
   id: string;
   campaign_id: string;
+  scene_id: string | null;
   owner_user_id: string | null;
   label: string;
   color: string;
@@ -77,30 +105,36 @@ type TokenRow = {
   data: TokenData | null;
 };
 
-type StateRow = {
+type SceneRow = {
+  id: string;
   campaign_id: string;
-  background_url: string | null;
+  name: string;
+  order_idx: number;
   grid_size: number;
+  show_grid: boolean;
   width: number;
   height: number;
-  data: StateData | null;
+  data: SceneData | null;
+};
+
+type StateRow = {
+  campaign_id: string;
+  active_scene_id: string | null;
+  gm_preview_scene_id: string | null;
 };
 
 const DEFAULT_CANVAS_W = 2000;
 const DEFAULT_CANVAS_H = 1500;
 
 const DEFAULT_STATE: MapState = {
-  background_url: null,
-  grid_size: 50,
-  show_grid: true,
-  shapes: [],
-  width: DEFAULT_CANVAS_W,
-  height: DEFAULT_CANVAS_H,
+  active_scene_id: null,
+  gm_preview_scene_id: null,
 };
 
 function rowToToken(r: TokenRow): MapToken {
   return {
     id: r.id,
+    scene_id: r.scene_id,
     owner_user_id: r.owner_user_id,
     name: r.label,
     x: r.x,
@@ -126,20 +160,35 @@ function tokenDataPayload(t: Pick<MapToken, 'emoji' | 'hp' | 'maxHp' | 'damageLo
   return d;
 }
 
-function rowToState(r: StateRow): MapState {
+function rowToScene(r: SceneRow): MapScene {
   const d = r.data ?? {};
   return {
-    background_url: r.background_url,
+    id: r.id,
+    name: r.name,
+    order_idx: r.order_idx,
     grid_size: r.grid_size ?? 50,
-    show_grid: d.show_grid ?? true,
-    shapes: d.shapes ?? [],
+    show_grid: r.show_grid ?? true,
     width: r.width ?? DEFAULT_CANVAS_W,
     height: r.height ?? DEFAULT_CANVAS_H,
+    shapes: d.shapes ?? [],
+    layers: d.layers ?? [],
+  };
+}
+
+function sceneDataPayload(s: Pick<MapScene, 'shapes' | 'layers'>): SceneData {
+  return { shapes: s.shapes, layers: s.layers };
+}
+
+function rowToState(r: StateRow): MapState {
+  return {
+    active_scene_id: r.active_scene_id ?? null,
+    gm_preview_scene_id: r.gm_preview_scene_id ?? null,
   };
 }
 
 type MapStore = {
   state: MapState;
+  scenes: MapScene[];
   tokens: MapToken[];
   loaded: boolean;
   error: string | null;
@@ -148,36 +197,66 @@ type MapStore = {
   subscribe: (campaignId: string) => () => void;
   clear: () => void;
 
-  setBackground: (campaignId: string, url: string | null, w?: number, h?: number) => Promise<void>;
-  setGridSize: (campaignId: string, size: number) => Promise<void>;
-  setShowGrid: (campaignId: string, show: boolean) => Promise<void>;
-  setCanvasSize: (campaignId: string, w: number, h: number) => Promise<void>;
-  addShape: (campaignId: string, shape: MapShape) => Promise<void>;
-  updateShape: (campaignId: string, shape: MapShape) => Promise<void>;
-  removeShape: (campaignId: string, shapeId: string) => Promise<void>;
-  clearShapes: (campaignId: string) => Promise<void>;
+  // ── Scene CRUD ──────────────────────────────────────────────────────────
+  addScene: (campaignId: string, name?: string) => Promise<string | null>;
+  renameScene: (sceneId: string, name: string) => Promise<void>;
+  removeScene: (campaignId: string, sceneId: string) => Promise<void>;
+  reorderScenes: (campaignId: string, orderedIds: string[]) => Promise<void>;
+  setActiveScene: (campaignId: string, sceneId: string | null) => Promise<void>;
+  setGmPreviewScene: (campaignId: string, sceneId: string | null) => Promise<void>;
+  setSceneCanvas: (sceneId: string, w: number, h: number) => Promise<void>;
+  setSceneGridSize: (sceneId: string, size: number) => Promise<void>;
+  setSceneShowGrid: (sceneId: string, show: boolean) => Promise<void>;
 
+  // ── Image layers (within a scene) ───────────────────────────────────────
+  addLayer: (sceneId: string, layer: Omit<ImageLayer, 'id'>) => Promise<string | null>;
+  updateLayer: (sceneId: string, layer: ImageLayer) => Promise<void>;
+  removeLayer: (sceneId: string, layerId: string) => Promise<void>;
+
+  // ── Shapes (per-scene) ──────────────────────────────────────────────────
+  addShape: (sceneId: string, shape: MapShape) => Promise<void>;
+  updateShape: (sceneId: string, shape: MapShape) => Promise<void>;
+  removeShape: (sceneId: string, shapeId: string) => Promise<void>;
+  clearShapes: (sceneId: string) => Promise<void>;
+
+  // ── Tokens ──────────────────────────────────────────────────────────────
   addToken: (campaignId: string, t: Omit<MapToken, 'id'>) => Promise<string | null>;
   updateToken: (id: string, patch: Partial<MapToken>, fromSync?: boolean) => Promise<void>;
   removeToken: (id: string) => Promise<void>;
 };
 
-async function upsertStateData(campaignId: string, mutate: (d: StateData) => StateData) {
+// Mutate a scene's data jsonb safely — fetches current data, applies the
+// mutation, writes the merged result so realtime echoes back the correct
+// shape and we don't clobber a sibling field.
+async function mutateSceneData(sceneId: string, mutate: (s: MapScene) => Partial<MapScene>) {
   const { data, error } = await supabase
-    .from('map_state')
-    .select('data')
-    .eq('campaign_id', campaignId)
+    .from('map_scenes')
+    .select('*')
+    .eq('id', sceneId)
     .maybeSingle();
   if (error) throw error;
-  const next = mutate((data?.data ?? {}) as StateData);
+  if (!data) throw new Error('Scene not found');
+  const scene = rowToScene(data as SceneRow);
+  const patch = mutate(scene);
+  const next: MapScene = { ...scene, ...patch };
   const { error: upErr } = await supabase
-    .from('map_state')
-    .upsert({ campaign_id: campaignId, data: next }, { onConflict: 'campaign_id' });
+    .from('map_scenes')
+    .update({
+      name: next.name,
+      order_idx: next.order_idx,
+      grid_size: next.grid_size,
+      show_grid: next.show_grid,
+      width: next.width,
+      height: next.height,
+      data: sceneDataPayload(next),
+    })
+    .eq('id', sceneId);
   if (upErr) throw upErr;
 }
 
 export const useMap = create<MapStore>((set, get) => ({
   state: DEFAULT_STATE,
+  scenes: [],
   tokens: [],
   loaded: false,
   error: null,
@@ -185,15 +264,37 @@ export const useMap = create<MapStore>((set, get) => ({
   loadForCampaign: async (campaignId) => {
     set({ loaded: false, error: null });
     try {
-      const [stateRes, tokensRes] = await Promise.all([
-        supabase.from('map_state').select('*').eq('campaign_id', campaignId).maybeSingle(),
+      const [stateRes, scenesRes, tokensRes] = await Promise.all([
+        supabase.from('map_state').select('campaign_id, active_scene_id, gm_preview_scene_id').eq('campaign_id', campaignId).maybeSingle(),
+        supabase.from('map_scenes').select('*').eq('campaign_id', campaignId).order('order_idx', { ascending: true }),
         supabase.from('map_tokens').select('*').eq('campaign_id', campaignId),
       ]);
       if (stateRes.error) throw stateRes.error;
+      if (scenesRes.error) throw scenesRes.error;
       if (tokensRes.error) throw tokensRes.error;
       const st = stateRes.data ? rowToState(stateRes.data as StateRow) : DEFAULT_STATE;
+      const scenes = ((scenesRes.data ?? []) as SceneRow[]).map(rowToScene);
       const tokens = ((tokensRes.data ?? []) as TokenRow[]).map(rowToToken);
-      set({ state: st, tokens, loaded: true });
+
+      // Self-heal: if state has no active scene but we have at least one
+      // scene, pick the first as active so the GM doesn't see a blank board
+      // on a fresh campaign that pre-dates the migration's backfill.
+      let activeId = st.active_scene_id;
+      if (!activeId && scenes.length > 0) {
+        activeId = scenes[0].id;
+        // Best-effort write — failure here is non-fatal, just means the
+        // next load will re-heal.
+        void supabase
+          .from('map_state')
+          .upsert({ campaign_id: campaignId, active_scene_id: activeId }, { onConflict: 'campaign_id' });
+      }
+
+      set({
+        state: { ...st, active_scene_id: activeId },
+        scenes,
+        tokens,
+        loaded: true,
+      });
     } catch (e) {
       set({ error: e instanceof Error ? e.message : String(e), loaded: true });
     }
@@ -209,18 +310,42 @@ export const useMap = create<MapStore>((set, get) => ({
           if (payload.eventType === 'DELETE') {
             set({ state: DEFAULT_STATE });
           } else {
-            const newState = rowToState(payload.new as StateRow);
-            // Guard: if the realtime payload arrives with background_url=null but
-            // our local state already has a background, preserve it. Large base64
-            // data URLs can exceed Supabase Realtime's max message size, causing
-            // the field to appear null in the payload even though it's set in DB.
-            // We only clear the background when the user explicitly removes it
-            // (which goes through setBackground with an optimistic local clear first).
-            if (!newState.background_url) {
-              const currentBg = get().state.background_url;
-              if (currentBg) newState.background_url = currentBg;
+            set({ state: rowToState(payload.new as StateRow) });
+          }
+        },
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'map_scenes', filter: `campaign_id=eq.${campaignId}` },
+        (payload) => {
+          const { scenes } = get();
+          if (payload.eventType === 'INSERT') {
+            const s = rowToScene(payload.new as SceneRow);
+            if (!scenes.find((x) => x.id === s.id)) {
+              set({ scenes: [...scenes, s].sort((a, b) => a.order_idx - b.order_idx) });
             }
-            set({ state: newState });
+          } else if (payload.eventType === 'UPDATE') {
+            const newRow = payload.new as SceneRow;
+            // Image data-URLs stored inside data.layers can push the row
+            // beyond Supabase Realtime's per-message size cap. When that
+            // happens the payload arrives with `data` dropped to null even
+            // though the row in the DB is intact. Detect that case and keep
+            // our local shapes/layers — otherwise the very layer we just
+            // wrote would be erased by the echo of our own update.
+            const existing = scenes.find((x) => x.id === newRow.id);
+            const truncated = existing && newRow.data == null;
+            const incoming = rowToScene(newRow);
+            const merged: MapScene = truncated
+              ? { ...incoming, shapes: existing!.shapes, layers: existing!.layers }
+              : incoming;
+            set({
+              scenes: scenes
+                .map((x) => (x.id === merged.id ? merged : x))
+                .sort((a, b) => a.order_idx - b.order_idx),
+            });
+          } else if (payload.eventType === 'DELETE') {
+            const old = payload.old as Partial<SceneRow>;
+            set({ scenes: scenes.filter((x) => x.id !== old.id) });
           }
         },
       )
@@ -247,115 +372,257 @@ export const useMap = create<MapStore>((set, get) => ({
     };
   },
 
-  clear: () => set({ state: DEFAULT_STATE, tokens: [], loaded: false, error: null }),
+  clear: () => set({ state: DEFAULT_STATE, scenes: [], tokens: [], loaded: false, error: null }),
 
-  setBackground: async (campaignId, url, w, h) => {
-    const prev = get().state;
-    // Optimistic update — sets local background (and optional canvas size) immediately.
-    // Combining both into one upsert avoids the race condition where two separate
-    // upserts arrive in different realtime events with stale width/height defaults.
-    const nextState: MapState = { ...prev, background_url: url };
-    if (w !== undefined && h !== undefined) {
-      nextState.width = w;
-      nextState.height = h;
+  // ── Scenes ──────────────────────────────────────────────────────────────
+  addScene: async (campaignId, name) => {
+    const order_idx = get().scenes.length;
+    const { data, error } = await supabase
+      .from('map_scenes')
+      .insert({
+        campaign_id: campaignId,
+        name: name ?? `Scene ${order_idx + 1}`,
+        order_idx,
+        grid_size: 50,
+        show_grid: true,
+        width: DEFAULT_CANVAS_W,
+        height: DEFAULT_CANVAS_H,
+        data: { shapes: [], layers: [] },
+      })
+      .select()
+      .single();
+    if (error || !data) {
+      set({ error: error?.message ?? 'Failed to add scene' });
+      return null;
     }
-    set({ state: nextState });
-    const patch: Record<string, unknown> = { campaign_id: campaignId, background_url: url };
-    if (w !== undefined) patch.width = w;
-    if (h !== undefined) patch.height = h;
-    const { error } = await supabase
-      .from('map_state')
-      .upsert(patch, { onConflict: 'campaign_id' });
-    if (error) set({ state: prev, error: error.message });
-  },
-
-  setCanvasSize: async (campaignId, w, h) => {
-    const prev = get().state;
-    set({ state: { ...prev, width: w, height: h } });
-    const { error } = await supabase
-      .from('map_state')
-      .upsert({ campaign_id: campaignId, width: w, height: h }, { onConflict: 'campaign_id' });
-    if (error) set({ state: prev, error: error.message });
-  },
-
-  setGridSize: async (campaignId, size) => {
-    const prev = get().state;
-    set({ state: { ...prev, grid_size: size } });
-    const { error } = await supabase
-      .from('map_state')
-      .upsert({ campaign_id: campaignId, grid_size: size }, { onConflict: 'campaign_id' });
-    if (error) set({ state: prev, error: error.message });
-  },
-
-  setShowGrid: async (campaignId, show) => {
-    const prev = get().state;
-    set({ state: { ...prev, show_grid: show } });
-    try {
-      await upsertStateData(campaignId, (d) => ({ ...d, show_grid: show }));
-    } catch (e) {
-      set({ state: prev, error: e instanceof Error ? e.message : String(e) });
+    const scene = rowToScene(data as SceneRow);
+    set((s) =>
+      s.scenes.some((x) => x.id === scene.id) ? s : { scenes: [...s.scenes, scene] },
+    );
+    // First scene becomes active automatically so the board isn't blank.
+    if (get().scenes.length === 1 || !get().state.active_scene_id) {
+      await get().setActiveScene(campaignId, scene.id);
     }
+    return scene.id;
   },
 
-  addShape: async (campaignId, shape) => {
-    const prev = get().state;
-    set({ state: { ...prev, shapes: [...prev.shapes, shape] } });
-    try {
-      await upsertStateData(campaignId, (d) => ({
-        ...d,
-        shapes: [...(d.shapes ?? []), shape],
-      }));
-    } catch (e) {
-      set({ state: prev, error: e instanceof Error ? e.message : String(e) });
+  renameScene: async (sceneId, name) => {
+    const prev = get().scenes;
+    set({ scenes: prev.map((s) => (s.id === sceneId ? { ...s, name } : s)) });
+    const { error } = await supabase.from('map_scenes').update({ name }).eq('id', sceneId);
+    if (error) set({ scenes: prev, error: error.message });
+  },
+
+  removeScene: async (campaignId, sceneId) => {
+    const prev = get().scenes;
+    const prevState = get().state;
+    set({ scenes: prev.filter((s) => s.id !== sceneId) });
+    const { error } = await supabase.from('map_scenes').delete().eq('id', sceneId);
+    if (error) {
+      set({ scenes: prev, error: error.message });
+      return;
+    }
+    // If we just deleted the active scene, fall back to whichever scene is
+    // left (or null) so the board doesn't keep rendering a stale id.
+    if (prevState.active_scene_id === sceneId) {
+      const next = get().scenes[0]?.id ?? null;
+      await get().setActiveScene(campaignId, next);
+    }
+    if (prevState.gm_preview_scene_id === sceneId) {
+      await get().setGmPreviewScene(campaignId, null);
     }
   },
 
-  updateShape: async (campaignId, shape) => {
+  reorderScenes: async (campaignId, orderedIds) => {
+    const prev = get().scenes;
+    const byId = new Map(prev.map((s) => [s.id, s]));
+    const next = orderedIds
+      .map((id, i) => {
+        const s = byId.get(id);
+        return s ? { ...s, order_idx: i } : null;
+      })
+      .filter((s): s is MapScene => !!s);
+    set({ scenes: next });
+    // Batched update — one row per scene with its new order_idx.
+    const errors: string[] = [];
+    for (const s of next) {
+      const { error } = await supabase
+        .from('map_scenes')
+        .update({ order_idx: s.order_idx })
+        .eq('id', s.id)
+        .eq('campaign_id', campaignId);
+      if (error) errors.push(error.message);
+    }
+    if (errors.length) set({ scenes: prev, error: errors[0] });
+  },
+
+  setActiveScene: async (campaignId, sceneId) => {
     const prev = get().state;
+    set({ state: { ...prev, active_scene_id: sceneId } });
+    const { error } = await supabase
+      .from('map_state')
+      .upsert({ campaign_id: campaignId, active_scene_id: sceneId }, { onConflict: 'campaign_id' });
+    if (error) set({ state: prev, error: error.message });
+  },
+
+  setGmPreviewScene: async (campaignId, sceneId) => {
+    const prev = get().state;
+    set({ state: { ...prev, gm_preview_scene_id: sceneId } });
+    const { error } = await supabase
+      .from('map_state')
+      .upsert({ campaign_id: campaignId, gm_preview_scene_id: sceneId }, { onConflict: 'campaign_id' });
+    if (error) set({ state: prev, error: error.message });
+  },
+
+  setSceneCanvas: async (sceneId, w, h) => {
+    const prev = get().scenes;
+    set({ scenes: prev.map((s) => (s.id === sceneId ? { ...s, width: w, height: h } : s)) });
+    const { error } = await supabase
+      .from('map_scenes')
+      .update({ width: w, height: h })
+      .eq('id', sceneId);
+    if (error) set({ scenes: prev, error: error.message });
+  },
+
+  setSceneGridSize: async (sceneId, size) => {
+    const prev = get().scenes;
+    set({ scenes: prev.map((s) => (s.id === sceneId ? { ...s, grid_size: size } : s)) });
+    const { error } = await supabase
+      .from('map_scenes')
+      .update({ grid_size: size })
+      .eq('id', sceneId);
+    if (error) set({ scenes: prev, error: error.message });
+  },
+
+  setSceneShowGrid: async (sceneId, show) => {
+    const prev = get().scenes;
+    set({ scenes: prev.map((s) => (s.id === sceneId ? { ...s, show_grid: show } : s)) });
+    const { error } = await supabase
+      .from('map_scenes')
+      .update({ show_grid: show })
+      .eq('id', sceneId);
+    if (error) set({ scenes: prev, error: error.message });
+  },
+
+  // ── Image layers ────────────────────────────────────────────────────────
+  addLayer: async (sceneId, layer) => {
+    const id = crypto.randomUUID();
+    const full: ImageLayer = { id, ...layer };
+    const prev = get().scenes;
     set({
-      state: {
-        ...prev,
-        shapes: prev.shapes.map((s) => (s.id === shape.id ? shape : s)),
-      },
+      scenes: prev.map((s) => (s.id === sceneId ? { ...s, layers: [...s.layers, full] } : s)),
     });
     try {
-      await upsertStateData(campaignId, (d) => ({
-        ...d,
-        shapes: (d.shapes ?? []).map((s) => (s.id === shape.id ? shape : s)),
+      await mutateSceneData(sceneId, (s) => ({ layers: [...s.layers, full] }));
+      return id;
+    } catch (e) {
+      set({ scenes: prev, error: e instanceof Error ? e.message : String(e) });
+      return null;
+    }
+  },
+
+  updateLayer: async (sceneId, layer) => {
+    const prev = get().scenes;
+    set({
+      scenes: prev.map((s) =>
+        s.id === sceneId
+          ? { ...s, layers: s.layers.map((l) => (l.id === layer.id ? layer : l)) }
+          : s,
+      ),
+    });
+    try {
+      await mutateSceneData(sceneId, (s) => ({
+        layers: s.layers.map((l) => (l.id === layer.id ? layer : l)),
       }));
     } catch (e) {
-      set({ state: prev, error: e instanceof Error ? e.message : String(e) });
+      set({ scenes: prev, error: e instanceof Error ? e.message : String(e) });
     }
   },
 
-  removeShape: async (campaignId, shapeId) => {
-    const prev = get().state;
-    set({ state: { ...prev, shapes: prev.shapes.filter((s) => s.id !== shapeId) } });
+  removeLayer: async (sceneId, layerId) => {
+    const prev = get().scenes;
+    set({
+      scenes: prev.map((s) =>
+        s.id === sceneId ? { ...s, layers: s.layers.filter((l) => l.id !== layerId) } : s,
+      ),
+    });
     try {
-      await upsertStateData(campaignId, (d) => ({
-        ...d,
-        shapes: (d.shapes ?? []).filter((s) => s.id !== shapeId),
+      await mutateSceneData(sceneId, (s) => ({
+        layers: s.layers.filter((l) => l.id !== layerId),
       }));
     } catch (e) {
-      set({ state: prev, error: e instanceof Error ? e.message : String(e) });
+      set({ scenes: prev, error: e instanceof Error ? e.message : String(e) });
     }
   },
 
-  clearShapes: async (campaignId) => {
-    const prev = get().state;
-    set({ state: { ...prev, shapes: [] } });
+  // ── Shapes ──────────────────────────────────────────────────────────────
+  addShape: async (sceneId, shape) => {
+    const prev = get().scenes;
+    set({
+      scenes: prev.map((s) =>
+        s.id === sceneId ? { ...s, shapes: [...s.shapes, shape] } : s,
+      ),
+    });
     try {
-      await upsertStateData(campaignId, (d) => ({ ...d, shapes: [] }));
+      await mutateSceneData(sceneId, (s) => ({ shapes: [...s.shapes, shape] }));
     } catch (e) {
-      set({ state: prev, error: e instanceof Error ? e.message : String(e) });
+      set({ scenes: prev, error: e instanceof Error ? e.message : String(e) });
     }
   },
 
+  updateShape: async (sceneId, shape) => {
+    const prev = get().scenes;
+    set({
+      scenes: prev.map((s) =>
+        s.id === sceneId
+          ? { ...s, shapes: s.shapes.map((x) => (x.id === shape.id ? shape : x)) }
+          : s,
+      ),
+    });
+    try {
+      await mutateSceneData(sceneId, (s) => ({
+        shapes: s.shapes.map((x) => (x.id === shape.id ? shape : x)),
+      }));
+    } catch (e) {
+      set({ scenes: prev, error: e instanceof Error ? e.message : String(e) });
+    }
+  },
+
+  removeShape: async (sceneId, shapeId) => {
+    const prev = get().scenes;
+    set({
+      scenes: prev.map((s) =>
+        s.id === sceneId ? { ...s, shapes: s.shapes.filter((x) => x.id !== shapeId) } : s,
+      ),
+    });
+    try {
+      await mutateSceneData(sceneId, (s) => ({
+        shapes: s.shapes.filter((x) => x.id !== shapeId),
+      }));
+    } catch (e) {
+      set({ scenes: prev, error: e instanceof Error ? e.message : String(e) });
+    }
+  },
+
+  clearShapes: async (sceneId) => {
+    const prev = get().scenes;
+    set({
+      scenes: prev.map((s) => (s.id === sceneId ? { ...s, shapes: [] } : s)),
+    });
+    try {
+      await mutateSceneData(sceneId, () => ({ shapes: [] }));
+    } catch (e) {
+      set({ scenes: prev, error: e instanceof Error ? e.message : String(e) });
+    }
+  },
+
+  // ── Tokens ──────────────────────────────────────────────────────────────
   addToken: async (campaignId, t) => {
     const { data, error } = await supabase
       .from('map_tokens')
       .insert({
         campaign_id: campaignId,
+        scene_id: t.scene_id,
         owner_user_id: t.owner_user_id,
         label: t.name,
         color: t.color,
@@ -372,7 +639,6 @@ export const useMap = create<MapStore>((set, get) => ({
       return null;
     }
     const token = rowToToken(data as TokenRow);
-    // Dedupe — the realtime echo can win the race with this optimistic insert.
     set((s) =>
       s.tokens.some((x) => x.id === token.id) ? s : { tokens: [...s.tokens, token] },
     );
@@ -382,7 +648,6 @@ export const useMap = create<MapStore>((set, get) => ({
   updateToken: async (id, patch, fromSync = false) => {
     const prev = get().tokens.find((x) => x.id === id);
     if (!prev) return;
-    // Skip no-op updates so cross-surface HP sync doesn't keep echoing.
     const changed = (Object.keys(patch) as (keyof MapToken)[]).some(
       (k) => prev[k] !== patch[k],
     );
@@ -397,8 +662,9 @@ export const useMap = create<MapStore>((set, get) => ({
     if ('y' in patch) row.y = next.y;
     if ('size' in patch) row.size = next.size;
     if ('owner_user_id' in patch) row.owner_user_id = next.owner_user_id;
+    if ('scene_id' in patch) row.scene_id = next.scene_id;
     if ('hidden_from_players' in patch) row.hidden_from_players = next.hidden_from_players;
-    if ('emoji' in patch || 'hp' in patch || 'maxHp' in patch || 'damageLog' in patch) {
+    if ('emoji' in patch || 'hp' in patch || 'maxHp' in patch || 'damageLog' in patch || 'conditions' in patch) {
       row.data = tokenDataPayload(next);
     }
 

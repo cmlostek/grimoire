@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { useNavigate } from 'react-router-dom';
@@ -103,9 +104,55 @@ function getNoteIconDef(iconId: string | null | undefined): NoteIconDef {
   return NOTE_ICONS.find((i) => i.id === iconId) ?? NOTE_ICONS[0];
 }
 
+// Palette of selectable tints for note icons. Includes a "default" sentinel
+// so the user can drop their override and fall back to the icon's natural
+// colour from NOTE_ICONS.
+const NOTE_ICON_COLORS: { color: string | null; label: string }[] = [
+  { color: null,       label: 'Default' },
+  { color: '#60a5fa',  label: 'Blue' },
+  { color: '#f87171',  label: 'Red' },
+  { color: '#fbbf24',  label: 'Amber' },
+  { color: '#34d399',  label: 'Green' },
+  { color: '#a78bfa',  label: 'Purple' },
+  { color: '#fb923c',  label: 'Orange' },
+  { color: '#f472b6',  label: 'Pink' },
+  { color: '#94a3b8',  label: 'Slate' },
+  { color: '#facc15',  label: 'Yellow' },
+  { color: '#2dd4bf',  label: 'Teal' },
+  { color: '#fafafa',  label: 'White' },
+];
+
+/** note.icon is stored as either `iconId` (legacy / default colour) or
+ *  `iconId|#hex` once the user has picked a custom tint. Both forms round-
+ *  trip through this pair so existing data keeps working without a
+ *  migration. */
+function parseNoteIcon(stored: string | null | undefined): {
+  id: string | null;
+  color: string | null;
+} {
+  if (!stored) return { id: null, color: null };
+  const pipe = stored.indexOf('|');
+  if (pipe < 0) return { id: stored, color: null };
+  const id = stored.slice(0, pipe);
+  const color = stored.slice(pipe + 1);
+  return { id: id || null, color: color || null };
+}
+
+function formatNoteIcon(id: string | null, color: string | null): string | null {
+  // No custom colour → fall back to the legacy id-only form, including null
+  // for the default 'note' icon so we don't churn rows that only ever had
+  // their colour reset.
+  if (!color) {
+    if (!id || id === 'note') return null;
+    return id;
+  }
+  return `${id ?? 'note'}|${color}`;
+}
+
 function NoteIconDisplay({ iconId, size = 11 }: { iconId: string | null | undefined; size?: number }) {
-  const { Icon, color } = getNoteIconDef(iconId);
-  return <Icon size={size} style={{ color }} className="shrink-0" />;
+  const { id, color } = parseNoteIcon(iconId);
+  const def = getNoteIconDef(id);
+  return <def.Icon size={size} style={{ color: color ?? def.color }} className="shrink-0" />;
 }
 
 // ─── Note share status (sidebar icon only) ────────────────────────────────
@@ -821,36 +868,79 @@ export default function Notes() {
                     >
                       <NoteIconDisplay iconId={active.icon} size={18} />
                     </button>
-                    {showIconPicker && (
-                      <>
-                        <div
-                          className="fixed inset-0 z-20"
-                          onClick={() => setShowIconPicker(false)}
-                        />
-                        <div className="absolute top-full left-0 mt-1 z-30 bg-slate-900 border border-slate-700 rounded-lg shadow-xl p-2 grid grid-cols-6 gap-1 w-56">
-                          {NOTE_ICONS.map(({ id, Icon, color, label }) => (
-                            <button
-                              key={id}
-                              title={label}
-                              onClick={() => {
-                                updateNote(active.id, { icon: id === 'note' ? null : id });
-                                setShowIconPicker(false);
-                              }}
-                              className={`flex flex-col items-center gap-0.5 rounded p-1.5 transition-colors hover:bg-slate-800 ${
-                                (active.icon ?? 'note') === id
-                                  ? 'bg-slate-700 ring-1 ring-sky-500'
-                                  : ''
-                              }`}
-                            >
-                              <Icon size={14} style={{ color }} />
-                              <span className="text-[8px] text-slate-500 leading-none truncate w-full text-center">
-                                {label}
-                              </span>
-                            </button>
-                          ))}
-                        </div>
-                      </>
-                    )}
+                    {showIconPicker && (() => {
+                      // Decouple the parse from the loops below so the picked
+                      // colour stays sticky as the user clicks an icon next.
+                      const parsed = parseNoteIcon(active.icon);
+                      const selectedColor = parsed.color;
+                      const previewColor = (defaultColor: string) => selectedColor ?? defaultColor;
+                      return (
+                        <>
+                          <div
+                            className="fixed inset-0 z-20"
+                            onClick={() => setShowIconPicker(false)}
+                          />
+                          <div className="absolute top-full left-0 mt-1 z-30 bg-slate-900 border border-slate-700 rounded-lg shadow-xl p-2 w-60">
+                            {/* Colour row — pick a tint that applies to whatever
+                                icon the user selects next. Picking again with
+                                the same colour toggles back to the icon's
+                                default. */}
+                            <div className="flex flex-wrap gap-1 pb-2 mb-2 border-b border-slate-800">
+                              {NOTE_ICON_COLORS.map(({ color, label }) => {
+                                const isSelected = (selectedColor ?? null) === color;
+                                return (
+                                  <button
+                                    key={label}
+                                    title={label}
+                                    onClick={() => {
+                                      updateNote(active.id, {
+                                        icon: formatNoteIcon(parsed.id, color),
+                                      });
+                                    }}
+                                    className={`w-5 h-5 rounded-full border-2 transition-transform hover:scale-110 flex items-center justify-center ${
+                                      isSelected ? 'border-white' : 'border-transparent'
+                                    }`}
+                                    style={{ backgroundColor: color ?? 'transparent' }}
+                                  >
+                                    {color === null && (
+                                      <span className="text-[10px] text-slate-400 leading-none">×</span>
+                                    )}
+                                  </button>
+                                );
+                              })}
+                            </div>
+                            {/* Icon grid — each glyph previews in the currently
+                                selected colour (or its default if none picked
+                                yet) so the user sees the final look before
+                                committing. */}
+                            <div className="grid grid-cols-6 gap-1">
+                              {NOTE_ICONS.map(({ id, Icon, color: defaultColor, label }) => (
+                                <button
+                                  key={id}
+                                  title={label}
+                                  onClick={() => {
+                                    updateNote(active.id, {
+                                      icon: formatNoteIcon(id, selectedColor),
+                                    });
+                                    setShowIconPicker(false);
+                                  }}
+                                  className={`flex flex-col items-center gap-0.5 rounded p-1.5 transition-colors hover:bg-slate-800 ${
+                                    (parsed.id ?? 'note') === id
+                                      ? 'bg-slate-700 ring-1 ring-sky-500'
+                                      : ''
+                                  }`}
+                                >
+                                  <Icon size={14} style={{ color: previewColor(defaultColor) }} />
+                                  <span className="text-[8px] text-slate-500 leading-none truncate w-full text-center">
+                                    {label}
+                                  </span>
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                        </>
+                      );
+                    })()}
                   </div>
                 ) : (
                   <div className="shrink-0 p-1.5">
@@ -1163,6 +1253,86 @@ function LegendRow({
 }
 
 
+/** The folder color picker has to render through a portal because each
+ *  FolderNode sits inside a parent that uses `overflow: hidden` for the
+ *  expand/collapse grid animation. An absolute-positioned popover would be
+ *  clipped by that ancestor and become invisible — which is exactly the
+ *  "can't edit sub-folder colour" bug. Portal + fixed positioning relative
+ *  to the trigger's bounding rect sidesteps it entirely. */
+function FolderColorPickerButton({
+  folderId,
+  folderColor,
+  isOpen,
+  onToggle,
+  onClose,
+  onPick,
+}: {
+  folderId: string;
+  folderColor: string;
+  isOpen: boolean;
+  onToggle: () => void;
+  onClose: () => void;
+  onPick: (color: string) => void;
+}) {
+  const btnRef = useRef<HTMLButtonElement>(null);
+  const [coords, setCoords] = useState<{ left: number; top: number } | null>(null);
+
+  // Snap the popover to the button's screen position whenever it opens.
+  // Re-running on isOpen change is enough because scrolling/resizing while
+  // the popover is up is rare and we close on outside-click anyway.
+  useEffect(() => {
+    if (!isOpen) {
+      setCoords(null);
+      return;
+    }
+    const rect = btnRef.current?.getBoundingClientRect();
+    if (rect) setCoords({ left: rect.left, top: rect.bottom + 4 });
+  }, [isOpen]);
+
+  return (
+    <div className="relative">
+      <button
+        ref={btnRef}
+        onClick={(e) => { e.stopPropagation(); onToggle(); }}
+        title="Folder colour"
+        className="p-0.5 text-slate-500 hover:text-sky-300"
+      >
+        <Palette size={11} />
+      </button>
+      {isOpen && coords && createPortal(
+        <>
+          <div
+            className="fixed inset-0 z-[60]"
+            onClick={(e) => { e.stopPropagation(); onClose(); }}
+          />
+          <div
+            data-folder-color-picker={folderId}
+            className="fixed z-[61] bg-slate-900 border border-slate-700 rounded shadow-lg p-1.5 flex gap-1"
+            style={{ left: coords.left, top: coords.top }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            {FOLDER_COLORS.map(({ color, label }) => (
+              <button
+                key={color}
+                title={label}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onPick(color);
+                }}
+                className={`w-4 h-4 rounded-full border-2 transition-transform hover:scale-110 ${
+                  folderColor === color ? 'border-white' : 'border-transparent'
+                }`}
+                style={{ backgroundColor: color }}
+              />
+            ))}
+          </div>
+        </>,
+        document.body,
+      )}
+    </div>
+  );
+}
+
 type FolderNodeProps = {
   folder: Folder;
   depth: number;
@@ -1305,40 +1475,17 @@ function FolderNode(props: FolderNodeProps) {
               </button>
             )}
             {isGM && (
-              <div className="relative">
-                <button
-                  onClick={(e) => { e.stopPropagation(); setShowColorPicker((v) => !v); }}
-                  title="Folder colour"
-                  className="p-0.5 text-slate-500 hover:text-sky-300"
-                >
-                  <Palette size={11} />
-                </button>
-                {showColorPicker && (
-                  <>
-                    <div className="fixed inset-0 z-30" onClick={(e) => { e.stopPropagation(); setShowColorPicker(false); }} />
-                    <div
-                      className="absolute left-0 top-full mt-1 z-40 bg-slate-900 border border-slate-700 rounded shadow-lg p-1.5 flex gap-1"
-                      onClick={(e) => e.stopPropagation()}
-                    >
-                      {FOLDER_COLORS.map(({ color, label }) => (
-                        <button
-                          key={color}
-                          title={label}
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setFolderColor(folder.id, color);
-                            setShowColorPicker(false);
-                          }}
-                          className={`w-4 h-4 rounded-full border-2 transition-transform hover:scale-110 ${
-                            folderColor === color ? 'border-white' : 'border-transparent'
-                          }`}
-                          style={{ backgroundColor: color }}
-                        />
-                      ))}
-                    </div>
-                  </>
-                )}
-              </div>
+              <FolderColorPickerButton
+                folderId={folder.id}
+                folderColor={folderColor}
+                isOpen={showColorPicker}
+                onToggle={() => setShowColorPicker((v) => !v)}
+                onClose={() => setShowColorPicker(false)}
+                onPick={(color) => {
+                  setFolderColor(folder.id, color);
+                  setShowColorPicker(false);
+                }}
+              />
             )}
             {isGM && (
               <button

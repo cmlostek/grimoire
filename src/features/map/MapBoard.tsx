@@ -1,5 +1,5 @@
 import { useRef, useState, useEffect, useCallback, useMemo } from 'react';
-import { useMap, MAX_DAMAGE_LOG, type DamageLogEntry, type MapShape, type MapToken } from './mapStore';
+import { useMap, MAX_DAMAGE_LOG, type DamageLogEntry, type MapShape, type MapToken, type MapScene } from './mapStore';
 import { hpBarClass, hpPercent } from '../hpBar';
 import { CONDITIONS } from '../../data/conditions';
 
@@ -36,9 +36,16 @@ import {
   Heart,
   History,
   X,
+  Layers,
+  Film,
+  Plus,
+  Check,
+  ArrowUp,
+  ArrowDown,
+  Pencil,
 } from 'lucide-react';
 
-type Tool = 'select' | 'ruler' | 'circle' | 'square' | 'cone' | 'token' | 'ping';
+type Tool = 'select' | 'ruler' | 'circle' | 'square' | 'cone' | 'token' | 'ping' | 'edit';
 
 type Ping = { id: string; x: number; y: number; color: string };
 type Presence = { user_id: string; display_name: string; role: 'gm' | 'player' };
@@ -273,6 +280,126 @@ function TokenHpRow({
   );
 }
 
+/** One row in the Scenes panel: shows the scene name, indicates which scene
+ *  the GM is currently viewing (sky border) and which scene is "live" for
+ *  players (emerald dot), and exposes rename / reorder / set-active /
+ *  delete. Click the row to preview that scene in the GM's local view
+ *  without changing what players see. */
+type SceneRowProps = {
+  scene: MapScene;
+  index: number;
+  lastIndex: number;
+  isActive: boolean;
+  isViewing: boolean;
+  onView: () => void;
+  onSetActive: () => void;
+  onRename: (name: string) => void;
+  onRemove: () => void;
+  onMoveUp?: () => void;
+  onMoveDown?: () => void;
+  canDelete: boolean;
+};
+
+function SceneRow({
+  scene,
+  isActive,
+  isViewing,
+  onView,
+  onSetActive,
+  onRename,
+  onRemove,
+  onMoveUp,
+  onMoveDown,
+  canDelete,
+}: SceneRowProps) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(scene.name);
+  // Keep the local draft in sync if the row's name changes from elsewhere
+  // (realtime echo, another collaborator renaming). Only run when not
+  // actively editing so we don't yank the user's typing out of the field.
+  useEffect(() => {
+    if (!editing) setDraft(scene.name);
+  }, [scene.name, editing]);
+  const commit = () => {
+    setEditing(false);
+    const trimmed = draft.trim();
+    if (trimmed && trimmed !== scene.name) onRename(trimmed);
+    else setDraft(scene.name);
+  };
+  return (
+    <div
+      className={`rounded border px-1.5 py-1 text-xs ${
+        isViewing ? 'bg-sky-950/40 border-sky-700' : 'bg-slate-900 border-slate-800'
+      }`}
+    >
+      <div className="flex items-center gap-1">
+        <button
+          onClick={onSetActive}
+          title={isActive ? 'Players see this scene' : 'Make this the active scene (players will see it)'}
+          className={isActive ? 'text-emerald-400' : 'text-slate-600 hover:text-emerald-400'}
+        >
+          {isActive ? <Check size={12} /> : <Radio size={11} />}
+        </button>
+        {editing ? (
+          <input
+            autoFocus
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            onBlur={commit}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') commit();
+              if (e.key === 'Escape') {
+                setDraft(scene.name);
+                setEditing(false);
+              }
+            }}
+            className="flex-1 bg-slate-950 border border-slate-700 rounded px-1 outline-none text-slate-200 min-w-0"
+          />
+        ) : (
+          <button
+            onClick={onView}
+            className="flex-1 text-left truncate text-slate-200 hover:text-sky-200"
+            title="Preview this scene in your view"
+          >
+            {scene.name}
+          </button>
+        )}
+        <button
+          onClick={() => (editing ? commit() : setEditing(true))}
+          title="Rename"
+          className="text-slate-600 hover:text-slate-300"
+        >
+          <Pencil size={11} />
+        </button>
+        <button
+          onClick={onMoveUp}
+          disabled={!onMoveUp}
+          title="Move up"
+          className="text-slate-600 hover:text-slate-300 disabled:opacity-30"
+        >
+          <ArrowUp size={11} />
+        </button>
+        <button
+          onClick={onMoveDown}
+          disabled={!onMoveDown}
+          title="Move down"
+          className="text-slate-600 hover:text-slate-300 disabled:opacity-30"
+        >
+          <ArrowDown size={11} />
+        </button>
+        <button
+          onClick={onRemove}
+          disabled={!canDelete}
+          title={canDelete ? 'Delete scene' : 'At least one scene is required'}
+          className="text-slate-600 hover:text-rose-400 disabled:opacity-30"
+        >
+          <Trash2 size={11} />
+        </button>
+      </div>
+    </div>
+  );
+}
+
 export default function MapBoard() {
   const campaignId = useSession((s) => s.campaignId);
   const userId = useSession((s) => s.userId);
@@ -282,13 +409,23 @@ export default function MapBoard() {
   const displayName = useSession((s) => s.displayName);
 
   const state = useMap((s) => s.state);
+  const scenes = useMap((s) => s.scenes);
   const tokens = useMap((s) => s.tokens);
   const mapError = useMap((s) => s.error);
   const loadForCampaign = useMap((s) => s.loadForCampaign);
   const subscribe = useMap((s) => s.subscribe);
-  const setBackground = useMap((s) => s.setBackground);
-  const setGridSize = useMap((s) => s.setGridSize);
-  const setShowGrid = useMap((s) => s.setShowGrid);
+  const setSceneGridSize = useMap((s) => s.setSceneGridSize);
+  const setSceneShowGrid = useMap((s) => s.setSceneShowGrid);
+  const setSceneCanvas = useMap((s) => s.setSceneCanvas);
+  const addScene = useMap((s) => s.addScene);
+  const renameScene = useMap((s) => s.renameScene);
+  const removeScene = useMap((s) => s.removeScene);
+  const setActiveScene = useMap((s) => s.setActiveScene);
+  const setGmPreviewScene = useMap((s) => s.setGmPreviewScene);
+  const reorderScenesAction = useMap((s) => s.reorderScenes);
+  const addLayer = useMap((s) => s.addLayer);
+  const updateLayer = useMap((s) => s.updateLayer);
+  const removeLayer = useMap((s) => s.removeLayer);
   const addShape = useMap((s) => s.addShape);
   const removeShape = useMap((s) => s.removeShape);
   const updateShape = useMap((s) => s.updateShape);
@@ -297,14 +434,23 @@ export default function MapBoard() {
   const updateToken = useMap((s) => s.updateToken);
   const removeToken = useMap((s) => s.removeToken);
 
-  const {
-    background_url: mapBgUrl,
-    grid_size: mapGridSize,
-    show_grid: mapShowGrid,
-    shapes,
-    width: canvasW,
-    height: canvasH,
-  } = state;
+  // The GM may stage a non-active scene by setting gm_preview_scene_id; their
+  // local view follows that, while players always render the active scene.
+  // If neither is set (fresh load mid-migration), fall back to the first
+  // scene so the canvas isn't blank.
+  const currentSceneId =
+    (isGM ? state.gm_preview_scene_id : null) ?? state.active_scene_id ?? scenes[0]?.id ?? null;
+  const currentScene = useMemo(
+    () => scenes.find((s) => s.id === currentSceneId) ?? null,
+    [scenes, currentSceneId],
+  );
+  const isPreviewing = isGM && state.gm_preview_scene_id && state.gm_preview_scene_id !== state.active_scene_id;
+  const mapGridSize = currentScene?.grid_size ?? 50;
+  const mapShowGrid = currentScene?.show_grid ?? true;
+  const sceneShapes = currentScene?.shapes ?? [];
+  const sceneLayers = currentScene?.layers ?? [];
+  const canvasW = currentScene?.width ?? 2000;
+  const canvasH = currentScene?.height ?? 1500;
 
   const svgRef = useRef<SVGSVGElement>(null);
 
@@ -320,6 +466,28 @@ export default function MapBoard() {
   // the cursor on grab.
   const [shapeDrag, setShapeDrag] = useState<{ id: string; ox: number; oy: number } | null>(null);
   const [shapeDragPos, setShapeDragPos] = useState<{ id: string; x: number; y: number } | null>(null);
+  // Image-layer drag state. `mode` is either 'move' (translate x/y) or
+  // 'resize' (grow w/h from the bottom-right corner). ox/oy is the offset
+  // from the anchor point to the mouse-down so the layer doesn't snap to
+  // the cursor on grab.
+  const [layerDrag, setLayerDrag] = useState<
+    | { id: string; mode: 'move'; ox: number; oy: number }
+    | { id: string; mode: 'resize'; ox: number; oy: number; startW: number; startH: number; startX: number; startY: number }
+    | null
+  >(null);
+  const [layerDragPos, setLayerDragPos] = useState<
+    { id: string; x: number; y: number; w: number; h: number } | null
+  >(null);
+  // Token resize state — the GM grabs the bottom-right of a token in Edit
+  // mode to scale its diameter. We use the dominant axis (max of dx/dy) so
+  // square-ish drags feel predictable; the token is a circle so width and
+  // height are always equal.
+  const [tokenResize, setTokenResize] = useState<
+    { id: string; ox: number; oy: number } | null
+  >(null);
+  const [tokenResizePos, setTokenResizePos] = useState<
+    { id: string; size: number } | null
+  >(null);
   const [selectedShapeColor, setSelectedShapeColor] = useState(SHAPE_COLORS[0]);
   const [tokenName, setTokenName] = useState('');
   const [tokenEmoji, setTokenEmoji] = useState('');
@@ -360,6 +528,7 @@ export default function MapBoard() {
   const tokenEmojiRef  = useRef(tokenEmoji);  tokenEmojiRef.current  = tokenEmoji;
   const creatureHpRef    = useRef(creatureHp);    creatureHpRef.current    = creatureHp;
   const creatureMaxHpRef = useRef(creatureMaxHp); creatureMaxHpRef.current = creatureMaxHp;
+  const sceneIdRef = useRef<string | null>(null); sceneIdRef.current = currentSceneId;
 
   type TouchMode = 'none' | 'pan' | 'pinch' | 'drag';
   const touchModeRef  = useRef<TouchMode>('none');
@@ -500,23 +669,37 @@ export default function MapBoard() {
     };
   }, []);
 
-  // ── Fit canvas to screen ─────────────────────────────────────────────────
+  // ── Fit content to screen ────────────────────────────────────────────────
+  // Fits the bounding box of the canvas border PLUS every visible image
+  // layer — image layers can extend past the canvas border now that the
+  // canvas no longer auto-resizes to the image, so fitting just the canvas
+  // leaves layers off-screen.
   const fitToScreen = useCallback(() => {
     const svg = svgRef.current;
     if (!svg) return;
     const rect = svg.getBoundingClientRect();
-    // Scale to fill 95% of the viewport while preserving the canvas aspect ratio.
-    const newZoom = Math.min(rect.width / canvasW, rect.height / canvasH) * 0.95;
+    let minX = 0;
+    let minY = 0;
+    let maxX = canvasW;
+    let maxY = canvasH;
+    for (const l of sceneLayers) {
+      if (l.hidden && !isGM) continue;
+      if (l.x < minX) minX = l.x;
+      if (l.y < minY) minY = l.y;
+      if (l.x + l.w > maxX) maxX = l.x + l.w;
+      if (l.y + l.h > maxY) maxY = l.y + l.h;
+    }
+    const contentW = Math.max(1, maxX - minX);
+    const contentH = Math.max(1, maxY - minY);
+    const newZoom = Math.min(rect.width / contentW, rect.height / contentH) * 0.95;
     setPan({
-      x: (rect.width - canvasW * newZoom) / 2,
-      y: (rect.height - canvasH * newZoom) / 2,
+      x: (rect.width - contentW * newZoom) / 2 - minX * newZoom,
+      y: (rect.height - contentH * newZoom) / 2 - minY * newZoom,
     });
     setZoom(newZoom);
-  }, [canvasW, canvasH]);
+  }, [canvasW, canvasH, sceneLayers, isGM]);
 
-  // Auto-fit once when the canvas dimensions change (new campaign load, background upload, etc.).
-  // fitToScreen already captures canvasW/canvasH via useCallback, so using it as the dep
-  // is equivalent to [canvasW, canvasH] without the eslint warning.
+  // Auto-fit when the canvas grows/shrinks (campaign load, first image upload).
   useEffect(() => {
     if (!canvasW || !canvasH) return;
     const id = requestAnimationFrame(() => {
@@ -617,12 +800,15 @@ export default function MapBoard() {
           const { grid, size } = snapRef.current;
           const sx = grid && size > 1 ? Math.round(lx / size) * size : lx;
           const sy = grid && size > 1 ? Math.round(ly / size) * size : ly;
+          const sId = sceneIdRef.current;
+          if (!sId) return;
           if (!isGM) {
             const mine = myCharacter;
             if (!mine) return;
-            const already = useMap.getState().tokens.some((t) => t.owner_user_id === userId);
+            const already = useMap.getState().tokens.some((t) => t.owner_user_id === userId && t.scene_id === sId);
             if (already) return;
             void useMap.getState().addToken(cId, {
+              scene_id: sId,
               name: mine.name,
               x: sx,
               y: sy,
@@ -637,6 +823,7 @@ export default function MapBoard() {
             return;
           }
           void useMap.getState().addToken(cId, {
+            scene_id: sId,
             name: tokenNameRef.current || 'Token',
             x: sx,
             y: sy,
@@ -904,13 +1091,17 @@ export default function MapBoard() {
     // their claimed character (if any). Seeds name/HP from the character
     // sheet so the bar shows up immediately.
     if (tool === 'token') {
+      if (!currentSceneId) return;
       const sp = snap(p);
       const tokenSize = Math.max(30, mapGridSize * 0.8);
       if (!isGM) {
         if (!myCharacter) return; // No claimed character to place.
-        const alreadyHasToken = tokens.some((t) => t.owner_user_id === userId);
-        if (alreadyHasToken) return; // One token per player.
+        const alreadyHasToken = tokens.some(
+          (t) => t.owner_user_id === userId && t.scene_id === currentSceneId,
+        );
+        if (alreadyHasToken) return; // One token per player per scene.
         void addToken(campaignId, {
+          scene_id: currentSceneId,
           name: myCharacter.name,
           x: sp.x,
           y: sp.y,
@@ -925,6 +1116,7 @@ export default function MapBoard() {
         return;
       }
       void addToken(campaignId, {
+        scene_id: currentSceneId,
         name: tokenName || 'Token',
         x: sp.x,
         y: sp.y,
@@ -970,6 +1162,45 @@ export default function MapBoard() {
     if (shapeDrag) {
       setShapeDragPos({ id: shapeDrag.id, x: p.x - shapeDrag.ox, y: p.y - shapeDrag.oy });
     }
+    if (tokenResize) {
+      const tok = tokens.find((t) => t.id === tokenResize.id);
+      if (!tok) return;
+      // Drive the new diameter off the dominant axis from the token's
+      // centre, minus the grab offset so the cursor stays anchored to the
+      // exact pixel the user grabbed. Clamp to a sane minimum so a misclick
+      // can't shrink the token to a single pixel and lose the handle.
+      const dx = p.x - tok.x - tokenResize.ox;
+      const dy = p.y - tok.y - tokenResize.oy;
+      const newR = Math.max(10, Math.max(dx, dy));
+      setTokenResizePos({ id: tokenResize.id, size: Math.round(newR * 2) });
+      return;
+    }
+    if (layerDrag) {
+      const layer = sceneLayers.find((l) => l.id === layerDrag.id);
+      if (!layer) return;
+      if (layerDrag.mode === 'move') {
+        setLayerDragPos({
+          id: layerDrag.id,
+          x: p.x - layerDrag.ox,
+          y: p.y - layerDrag.oy,
+          w: layer.w,
+          h: layer.h,
+        });
+      } else {
+        // Resize from the bottom-right corner: top-left stays put, w/h grow
+        // with the cursor (minus the grab offset). Clamp to a tiny minimum
+        // so a misclick can't make the layer zero-sized and un-grabbable.
+        const nw = Math.max(20, p.x - layerDrag.startX - layerDrag.ox);
+        const nh = Math.max(20, p.y - layerDrag.startY - layerDrag.oy);
+        setLayerDragPos({
+          id: layerDrag.id,
+          x: layerDrag.startX,
+          y: layerDrag.startY,
+          w: nw,
+          h: nh,
+        });
+      }
+    }
   };
 
   const onMouseUp = (e: React.MouseEvent) => {
@@ -981,21 +1212,37 @@ export default function MapBoard() {
       commitDrag();
       return;
     }
-    if (shapeDrag && shapeDragPos && campaignId) {
-      const original = shapes.find((s) => s.id === shapeDrag.id);
+    if (tokenResize && tokenResizePos) {
+      void updateToken(tokenResize.id, { size: tokenResizePos.size });
+      setTokenResize(null);
+      setTokenResizePos(null);
+      return;
+    }
+    if (layerDrag && layerDragPos && currentSceneId) {
+      const original = sceneLayers.find((l) => l.id === layerDrag.id);
+      if (original) {
+        const moved = { ...original, x: layerDragPos.x, y: layerDragPos.y, w: layerDragPos.w, h: layerDragPos.h };
+        void updateLayer(currentSceneId, moved);
+      }
+      setLayerDrag(null);
+      setLayerDragPos(null);
+      return;
+    }
+    if (shapeDrag && shapeDragPos && currentSceneId) {
+      const original = sceneShapes.find((s) => s.id === shapeDrag.id);
       if (original) {
         // Translate the shape by the drag delta. Each kind anchors slightly
         // differently — circles/cones anchor at (x,y); squares at top-left.
         const dx = shapeDragPos.x - original.x;
         const dy = shapeDragPos.y - original.y;
         const moved: MapShape = { ...original, x: original.x + dx, y: original.y + dy };
-        void updateShape(campaignId, moved);
+        void updateShape(currentSceneId, moved);
       }
       setShapeDrag(null);
       setShapeDragPos(null);
       return;
     }
-    if (drafting && isGM && campaignId) {
+    if (drafting && isGM && currentSceneId) {
       const p = screenToLogical(e);
       const dx = p.x - drafting.x;
       const dy = p.y - drafting.y;
@@ -1020,35 +1267,63 @@ export default function MapBoard() {
           shape = { id: uid(), kind: 'cone', x: drafting.x, y: drafting.y, dx, dy, color: selectedShapeColor };
         }
       }
-      if (shape) void addShape(campaignId, shape);
+      if (shape) void addShape(currentSceneId, shape);
       setDrafting(null);
       setDraftEnd(null);
     }
   };
 
-  // ── Background image loading ──────────────────────────────────────────────
+  // ── Image layer loading ───────────────────────────────────────────────────
+  // Each upload becomes a positioned ImageLayer in the current scene. The
+  // first layer in a fresh scene also resizes the canvas to match the image
+  // (the classic "load a battlemap" behaviour); subsequent layers preserve
+  // their natural size but drop in at the canvas centre so the GM can drag
+  // them where they belong.
   const onLoadBg = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (!isGM || !campaignId) return;
+    if (!isGM || !currentSceneId) return;
     const f = e.target.files?.[0];
     if (!f) return;
+    const filename = f.name.replace(/\.[^.]+$/, '');
 
     const reader = new FileReader();
     reader.onload = () => {
       const dataUrl = reader.result as string;
-      // Detect natural image dimensions so the canvas matches the image exactly.
       const img = new Image();
       img.onload = () => {
-        const w = img.naturalWidth || canvasW;
-        const h = img.naturalHeight || canvasH;
-        // my last resort or im losing my mind
-        const dimensionsChanged = w !== canvasW || h !== canvasH;
-        void setBackground(campaignId, dataUrl, w, h);
-        if (!dimensionsChanged) requestAnimationFrame(fitToScreen);
+        const w = img.naturalWidth || 1000;
+        const h = img.naturalHeight || 1000;
+        const isFirstLayer = (currentScene?.layers.length ?? 0) === 0;
+        if (isFirstLayer) {
+          // Resize the canvas to fit, drop the image at origin.
+          void setSceneCanvas(currentSceneId, w, h);
+          void addLayer(currentSceneId, {
+            url: dataUrl,
+            name: filename || 'Background',
+            x: 0,
+            y: 0,
+            w,
+            h,
+            rotation: 0,
+            hidden: false,
+          });
+        } else {
+          // Centre the new layer on the existing canvas.
+          void addLayer(currentSceneId, {
+            url: dataUrl,
+            name: filename || `Layer ${(currentScene?.layers.length ?? 0) + 1}`,
+            x: Math.round(canvasW / 2 - w / 2),
+            y: Math.round(canvasH / 2 - h / 2),
+            w,
+            h,
+            rotation: 0,
+            hidden: false,
+          });
+        }
+        requestAnimationFrame(fitToScreen);
       };
       img.src = dataUrl;
     };
     reader.readAsDataURL(f);
-    // Reset so the same file can be picked again if needed.
     e.target.value = '';
   };
 
@@ -1057,10 +1332,20 @@ export default function MapBoard() {
     ? ((Math.hypot(ruler.x2 - ruler.x1, ruler.y2 - ruler.y1) / mapGridSize) * 5).toFixed(1)
     : '0';
 
-  const visibleTokens = tokens.map((t) => {
-    if (localDrag && localDrag.id === t.id) return { ...t, x: localDrag.x, y: localDrag.y };
-    return t;
-  });
+  // Only render tokens that belong to whichever scene is currently visible
+  // (the active scene for players, the previewed scene for the GM if set).
+  // Tokens without a scene_id are legacy/in-flight rows from before scenes
+  // existed and float in until they're cleaned up — show them only on the
+  // active scene to avoid orphaning them.
+  const visibleTokens = tokens
+    .filter((t) => {
+      if (t.scene_id) return t.scene_id === currentSceneId;
+      return currentSceneId === state.active_scene_id;
+    })
+    .map((t) => {
+      if (localDrag && localDrag.id === t.id) return { ...t, x: localDrag.x, y: localDrag.y };
+      return t;
+    });
 
   // Sidebar order: match each token to an initiative combatant by name
   // (case-insensitive) and use that initiative as the sort key — highest
@@ -1118,32 +1403,27 @@ export default function MapBoard() {
     );
   };
 
-  // Cursor: space = grab (pan mode), drawing tools = crosshair, otherwise default.
+  // Cursor: space = grab (pan mode), drawing tools = crosshair, otherwise
+  // default. Layers tool gets default cursor — the layer itself owns its
+  // own cursor (move / nwse-resize) so the SVG underneath shouldn't insist
+  // on crosshair.
   const svgCursor = isSpaceDown
     ? 'grab'
-    : tool === 'ping' || (isGM && tool !== 'select')
+    : tool === 'ping' || (isGM && tool !== 'select' && tool !== 'edit')
     ? 'crosshair'
     : 'default';
 
   return (
     <div className="h-full flex flex-col">
       <PageHeader title="Map">
-        {isGM && (
+        {isGM && currentSceneId && (
           <>
             <label className="px-3 py-1.5 text-xs bg-slate-800 hover:bg-slate-700 rounded cursor-pointer flex items-center gap-1">
-              <ImagePlus size={14} /> Load background
+              <ImagePlus size={14} /> Add image
               <input type="file" accept="image/*" onChange={onLoadBg} className="hidden" />
             </label>
-            {mapBgUrl && (
-              <button
-                onClick={() => campaignId && void setBackground(campaignId, null)}
-                className="px-3 py-1.5 text-xs bg-slate-800 hover:bg-slate-700 rounded"
-              >
-                Remove bg
-              </button>
-            )}
             <button
-              onClick={() => campaignId && void setShowGrid(campaignId, !mapShowGrid)}
+              onClick={() => void setSceneShowGrid(currentSceneId, !mapShowGrid)}
               className={`px-3 py-1.5 text-xs rounded flex items-center gap-1 ${
                 mapShowGrid ? 'bg-sky-900/40 text-sky-200' : 'bg-slate-800 text-slate-300'
               }`}
@@ -1156,11 +1436,16 @@ export default function MapBoard() {
                 type="number"
                 min="1"
                 value={mapGridSize}
-                onChange={(e) => campaignId && void setGridSize(campaignId, Math.max(1, parseInt(e.target.value || '1', 10)))}
+                onChange={(e) => void setSceneGridSize(currentSceneId, Math.max(1, parseInt(e.target.value || '1', 10)))}
                 className="w-14 bg-slate-900 border border-slate-800 rounded px-1 py-1 font-mono"
               />
               px
             </label>
+            {isPreviewing && (
+              <span className="px-2 py-1 text-[10px] uppercase tracking-wider rounded bg-amber-900/40 border border-amber-700 text-amber-200">
+                Previewing (players see active)
+              </span>
+            )}
           </>
         )}
       </PageHeader>
@@ -1168,13 +1453,144 @@ export default function MapBoard() {
       <div className="flex-1 min-h-0 flex">
         {/* ── Sidebar ─────────────────────────────────────────────────────── */}
         <aside className="w-56 border-r border-slate-800 p-3 space-y-4 overflow-y-auto text-sm shrink-0">
+          {/* ── Scenes ─────────────────────────────────────────────────── */}
+          {isGM && (
+            <div>
+              <div className="flex items-center justify-between mb-2">
+                <div className="text-xs uppercase tracking-wider text-slate-500 flex items-center gap-1">
+                  <Film size={11} /> Scenes
+                </div>
+                {campaignId && (
+                  <button
+                    onClick={() => void addScene(campaignId)}
+                    title="Add scene"
+                    className="text-slate-500 hover:text-emerald-300"
+                  >
+                    <Plus size={13} />
+                  </button>
+                )}
+              </div>
+              <div className="space-y-1">
+                {scenes.map((sc, i) => {
+                  const isActive = state.active_scene_id === sc.id;
+                  const isViewing = currentSceneId === sc.id;
+                  return (
+                    <SceneRow
+                      key={sc.id}
+                      scene={sc}
+                      index={i}
+                      lastIndex={scenes.length - 1}
+                      isActive={isActive}
+                      isViewing={isViewing}
+                      onView={() => {
+                        if (!campaignId) return;
+                        // Clicking a scene previews it locally for the GM.
+                        // Clicking the already-active scene clears any preview.
+                        if (sc.id === state.active_scene_id) {
+                          void setGmPreviewScene(campaignId, null);
+                        } else {
+                          void setGmPreviewScene(campaignId, sc.id);
+                        }
+                      }}
+                      onSetActive={() => {
+                        if (!campaignId) return;
+                        void setActiveScene(campaignId, sc.id);
+                        // Switching active scene cancels any stale preview.
+                        if (state.gm_preview_scene_id) void setGmPreviewScene(campaignId, null);
+                      }}
+                      onRename={(name) => void renameScene(sc.id, name)}
+                      onRemove={() => {
+                        if (!campaignId) return;
+                        if (scenes.length <= 1) return;
+                        if (!confirm(`Delete scene "${sc.name}" and all its tokens?`)) return;
+                        void removeScene(campaignId, sc.id);
+                      }}
+                      onMoveUp={
+                        i === 0 || !campaignId
+                          ? undefined
+                          : () => {
+                              const next = scenes.map((s) => s.id);
+                              [next[i - 1], next[i]] = [next[i], next[i - 1]];
+                              void reorderScenesAction(campaignId, next);
+                            }
+                      }
+                      onMoveDown={
+                        i === scenes.length - 1 || !campaignId
+                          ? undefined
+                          : () => {
+                              const next = scenes.map((s) => s.id);
+                              [next[i + 1], next[i]] = [next[i], next[i + 1]];
+                              void reorderScenesAction(campaignId, next);
+                            }
+                      }
+                      canDelete={scenes.length > 1}
+                    />
+                  );
+                })}
+                {scenes.length === 0 && (
+                  <div className="text-[10px] text-slate-600 italic">
+                    No scenes yet — click + to add one.
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* ── Layers (image stack for the current scene) ───────────── */}
+          {isGM && currentScene && (
+            <div>
+              <div className="text-xs uppercase tracking-wider text-slate-500 mb-2 flex items-center gap-1">
+                <Layers size={11} /> Layers ({sceneLayers.length})
+              </div>
+              <div className="space-y-1">
+                {sceneLayers.map((layer) => (
+                  <div
+                    key={layer.id}
+                    className="flex items-center gap-1 bg-slate-900 border border-slate-800 rounded px-1.5 py-1 text-[11px]"
+                  >
+                    <button
+                      onClick={() =>
+                        void updateLayer(currentScene.id, { ...layer, hidden: !layer.hidden })
+                      }
+                      title={layer.hidden ? 'Show layer' : 'Hide layer'}
+                      className={layer.hidden ? 'text-slate-600' : 'text-emerald-400'}
+                    >
+                      {layer.hidden ? <EyeOff size={12} /> : <Eye size={12} />}
+                    </button>
+                    <input
+                      value={layer.name}
+                      onChange={(e) => void updateLayer(currentScene.id, { ...layer, name: e.target.value })}
+                      className="flex-1 bg-transparent outline-none min-w-0 text-slate-300"
+                    />
+                    <button
+                      onClick={() => {
+                        if (!confirm(`Remove layer "${layer.name}"?`)) return;
+                        void removeLayer(currentScene.id, layer.id);
+                      }}
+                      className="text-slate-600 hover:text-rose-400"
+                      title="Remove layer"
+                    >
+                      <Trash2 size={11} />
+                    </button>
+                  </div>
+                ))}
+                {sceneLayers.length === 0 && (
+                  <div className="text-[10px] text-slate-600 italic">
+                    No images yet — click <span className="text-slate-400">Add image</span> in the header.
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
           <div>
             <div className="text-xs uppercase tracking-wider text-slate-500 mb-2">Tools</div>
             <div className="grid grid-cols-3 gap-1">
-              {toolButton('select', MousePointer2, 'Select / drag')}
+              {toolButton('select', MousePointer2, 'Select — drag tokens and shapes')}
               {toolButton('ping', Radio, 'Ping — click to flash a marker for everyone')}
               {toolButton('ruler', Ruler, 'Ruler (5 ft/cell)')}
               {toolButton('token', User, isGM ? 'Place token' : 'Place your character token')}
+              {toolButton('edit', Layers, 'Edit images & tokens — drag to move, corner to resize', true)}
               {toolButton('circle', CircleIcon, 'Circle AoE', true)}
               {toolButton('square', SquareIcon, 'Square AoE', true)}
               {toolButton('cone', Triangle, 'Cone AoE', true)}
@@ -1425,6 +1841,23 @@ export default function MapBoard() {
                       onApply={(patch) => void updateToken(t.id, patch)}
                     />
                     {isGM && (
+                      <label className="flex items-center gap-1.5 text-[10px] text-slate-500">
+                        <span className="uppercase tracking-wider">Size</span>
+                        <input
+                          type="number"
+                          min={10}
+                          step={1}
+                          value={t.size}
+                          onChange={(e) => {
+                            const n = Math.max(10, parseInt(e.target.value || '0', 10) || 0);
+                            if (n !== t.size) void updateToken(t.id, { size: n });
+                          }}
+                          className="w-14 bg-slate-950 border border-slate-800 rounded px-1 py-0.5 font-mono text-[10px]"
+                        />
+                        <span className="text-slate-700">px</span>
+                      </label>
+                    )}
+                    {isGM && (
                       <select
                         value={t.owner_user_id ?? ''}
                         onChange={(e) => void updateToken(t.id, { owner_user_id: e.target.value || null })}
@@ -1460,12 +1893,12 @@ export default function MapBoard() {
             </div>
           </div>
 
-          {isGM && shapes.length > 0 && (
+          {isGM && currentSceneId && sceneShapes.length > 0 && (
             <button
-              onClick={() => campaignId && void clearShapes(campaignId)}
+              onClick={() => void clearShapes(currentSceneId)}
               className="w-full px-2 py-1.5 text-xs bg-slate-800 hover:bg-rose-900 rounded flex items-center justify-center gap-1"
             >
-              <Eraser size={12} /> Clear {shapes.length} shape{shapes.length === 1 ? '' : 's'}
+              <Eraser size={12} /> Clear {sceneShapes.length} shape{sceneShapes.length === 1 ? '' : 's'}
             </button>
           )}
 
@@ -1512,6 +1945,8 @@ export default function MapBoard() {
           <div className="absolute bottom-3 left-3 z-10 text-[10px] text-slate-500 bg-slate-950/70 px-2 py-1 rounded">
             {tool === 'ping'
               ? 'Click anywhere to ping — everyone sees it flash.'
+              : tool === 'edit' && isGM
+              ? 'Drag image/token to move · Corner handle to resize · Switch to Select to drag tokens around the board'
               : isGM
               ? 'Double-click token/shape to remove · Dashed = hidden from players · Scroll to zoom · Space+drag to pan'
               : 'Drag your own token · Scroll to zoom · Space+drag to pan'}
@@ -1540,16 +1975,106 @@ export default function MapBoard() {
                 strokeWidth={2 / zoom}
               />
 
-              {/* Background image — canvas dimensions are set to the image's
-                  natural pixel size on upload, so this fills exactly 1:1. */}
-              {mapBgUrl && (
-                <image
-                  href={mapBgUrl}
-                  x={0} y={0}
-                  width={canvasW} height={canvasH}
-                  preserveAspectRatio="none"
-                />
-              )}
+              {/* Image layers — each one positioned independently inside the
+                  scene. Hidden layers are skipped entirely for players, but
+                  the GM sees them dimmed so they know what's queued up.
+                  Layers render in array order, so earlier entries sit
+                  underneath later ones. In select mode the GM can drag a
+                  layer to reposition it and use the bottom-right handle to
+                  resize. */}
+              {sceneLayers.map((layer) => {
+                if (layer.hidden && !isGM) return null;
+                // Layer drag/resize is gated on the dedicated Layers tool so
+                // the default Select tool can keep grabbing tokens and shapes
+                // without the GM accidentally moving the battlemat under them.
+                const draggable = isGM && tool === 'edit';
+                const live = layerDragPos && layerDragPos.id === layer.id;
+                const lx = live ? layerDragPos.x : layer.x;
+                const ly = live ? layerDragPos.y : layer.y;
+                const lw = live ? layerDragPos.w : layer.w;
+                const lh = live ? layerDragPos.h : layer.h;
+                const handleR = Math.max(6, 10 / zoom);
+                return (
+                  <g key={layer.id}>
+                    <image
+                      href={layer.url}
+                      x={lx}
+                      y={ly}
+                      width={lw}
+                      height={lh}
+                      preserveAspectRatio="none"
+                      opacity={layer.hidden ? 0.25 : 1}
+                      transform={
+                        layer.rotation
+                          ? `rotate(${layer.rotation} ${lx + lw / 2} ${ly + lh / 2})`
+                          : undefined
+                      }
+                      pointerEvents={draggable ? 'all' : 'none'}
+                      style={{ cursor: draggable ? (live ? 'grabbing' : 'move') : 'default' }}
+                      onMouseDown={
+                        draggable
+                          ? (e) => {
+                              e.stopPropagation();
+                              const p = screenToLogical(e);
+                              setLayerDrag({
+                                id: layer.id,
+                                mode: 'move',
+                                ox: p.x - layer.x,
+                                oy: p.y - layer.y,
+                              });
+                              setLayerDragPos({ id: layer.id, x: layer.x, y: layer.y, w: layer.w, h: layer.h });
+                            }
+                          : undefined
+                      }
+                    />
+                    {/* Bottom-right resize handle — only shown to the GM in
+                        select mode so it doesn't clutter the player view. */}
+                    {draggable && (
+                      <>
+                        <rect
+                          x={lx + lw - handleR}
+                          y={ly + lh - handleR}
+                          width={handleR * 2}
+                          height={handleR * 2}
+                          fill="#0ea5e9"
+                          stroke="#fafaf9"
+                          strokeWidth={1 / zoom}
+                          style={{ cursor: 'nwse-resize' }}
+                          onMouseDown={(e) => {
+                            e.stopPropagation();
+                            const p = screenToLogical(e);
+                            setLayerDrag({
+                              id: layer.id,
+                              mode: 'resize',
+                              ox: p.x - (layer.x + layer.w),
+                              oy: p.y - (layer.y + layer.h),
+                              startW: layer.w,
+                              startH: layer.h,
+                              startX: layer.x,
+                              startY: layer.y,
+                            });
+                            setLayerDragPos({ id: layer.id, x: layer.x, y: layer.y, w: layer.w, h: layer.h });
+                          }}
+                        />
+                        {/* Thin selection border so it's obvious which layer
+                            the corner handle belongs to when several overlap. */}
+                        <rect
+                          x={lx}
+                          y={ly}
+                          width={lw}
+                          height={lh}
+                          fill="none"
+                          stroke="#0ea5e9"
+                          strokeOpacity={0.5}
+                          strokeDasharray={`${4 / zoom} ${4 / zoom}`}
+                          strokeWidth={1 / zoom}
+                          pointerEvents="none"
+                        />
+                      </>
+                    )}
+                  </g>
+                );
+              })}
 
               {/* Grid overlay */}
               {mapShowGrid && mapGridSize >= 4 && (
@@ -1579,8 +2104,8 @@ export default function MapBoard() {
               )}
 
               {/* Shapes */}
-              {shapes.map((s) => {
-                const onDbl = isGM && campaignId ? () => void removeShape(campaignId, s.id) : undefined;
+              {sceneShapes.map((s) => {
+                const onDbl = isGM && currentSceneId ? () => void removeShape(currentSceneId, s.id) : undefined;
                 const draggable = isGM && tool === 'select';
                 const live = shapeDragPos && shapeDragPos.id === s.id;
                 const lx = live ? shapeDragPos.x : s.x;
@@ -1718,10 +2243,16 @@ export default function MapBoard() {
               {/* Tokens */}
               {visibleTokens.map((t) => {
                 const draggable = canDragToken(t) && tool === 'select';
+                const resizable = isGM && tool === 'edit';
                 const dispColor = tokenDisplayColor(t);
-                const r = t.size / 2;
+                // Live-resize preview: if this token is currently being
+                // resized, render at the in-flight size so the GM sees the
+                // change as they drag.
+                const liveSize = tokenResizePos && tokenResizePos.id === t.id ? tokenResizePos.size : t.size;
+                const r = liveSize / 2;
                 const labelY = t.y + r + Math.max(10, 14 / zoom);
                 const fontSize = Math.max(8, 11 / zoom);
+                const handleR = Math.max(5, 8 / zoom);
 
                 return (
                   <g
@@ -1840,6 +2371,45 @@ export default function MapBoard() {
                           ? ` — ${(t.conditions ?? []).map((s) => CONDITIONS.find((c) => c.index === s)?.name ?? s).join(', ')}`
                           : ''}
                       </title>
+                    )}
+                    {/* Edit-mode selection ring + bottom-right resize handle.
+                        Sized in screen pixels so the handle stays grabbable
+                        at any zoom. Both elements only render for GMs in the
+                        Edit tool — Select keeps tokens drag-only. */}
+                    {resizable && (
+                      <>
+                        <circle
+                          cx={t.x}
+                          cy={t.y}
+                          r={r + 4 / zoom}
+                          fill="none"
+                          stroke="#0ea5e9"
+                          strokeOpacity={0.6}
+                          strokeWidth={1 / zoom}
+                          strokeDasharray={`${4 / zoom} ${4 / zoom}`}
+                          pointerEvents="none"
+                        />
+                        <rect
+                          x={t.x + r - handleR}
+                          y={t.y + r - handleR}
+                          width={handleR * 2}
+                          height={handleR * 2}
+                          fill="#0ea5e9"
+                          stroke="#fafaf9"
+                          strokeWidth={1 / zoom}
+                          style={{ cursor: 'nwse-resize' }}
+                          onMouseDown={(e) => {
+                            e.stopPropagation();
+                            const p = screenToLogical(e);
+                            setTokenResize({
+                              id: t.id,
+                              ox: p.x - t.x - r,
+                              oy: p.y - t.y - r,
+                            });
+                            setTokenResizePos({ id: t.id, size: t.size });
+                          }}
+                        />
+                      </>
                     )}
                   </g>
                 );
