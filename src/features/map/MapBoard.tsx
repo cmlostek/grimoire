@@ -45,7 +45,7 @@ import {
   Pencil,
 } from 'lucide-react';
 
-type Tool = 'select' | 'ruler' | 'circle' | 'square' | 'cone' | 'token' | 'ping';
+type Tool = 'select' | 'ruler' | 'circle' | 'square' | 'cone' | 'token' | 'ping' | 'layers';
 
 type Ping = { id: string; x: number; y: number; color: string };
 type Presence = { user_id: string; display_name: string; role: 'gm' | 'player' };
@@ -1374,10 +1374,13 @@ export default function MapBoard() {
     );
   };
 
-  // Cursor: space = grab (pan mode), drawing tools = crosshair, otherwise default.
+  // Cursor: space = grab (pan mode), drawing tools = crosshair, otherwise
+  // default. Layers tool gets default cursor — the layer itself owns its
+  // own cursor (move / nwse-resize) so the SVG underneath shouldn't insist
+  // on crosshair.
   const svgCursor = isSpaceDown
     ? 'grab'
-    : tool === 'ping' || (isGM && tool !== 'select')
+    : tool === 'ping' || (isGM && tool !== 'select' && tool !== 'layers')
     ? 'crosshair'
     : 'default';
 
@@ -1554,10 +1557,11 @@ export default function MapBoard() {
           <div>
             <div className="text-xs uppercase tracking-wider text-slate-500 mb-2">Tools</div>
             <div className="grid grid-cols-3 gap-1">
-              {toolButton('select', MousePointer2, 'Select / drag')}
+              {toolButton('select', MousePointer2, 'Select — drag tokens and shapes')}
               {toolButton('ping', Radio, 'Ping — click to flash a marker for everyone')}
               {toolButton('ruler', Ruler, 'Ruler (5 ft/cell)')}
               {toolButton('token', User, isGM ? 'Place token' : 'Place your character token')}
+              {toolButton('layers', Layers, 'Edit images — drag to move, corner to resize', true)}
               {toolButton('circle', CircleIcon, 'Circle AoE', true)}
               {toolButton('square', SquareIcon, 'Square AoE', true)}
               {toolButton('cone', Triangle, 'Cone AoE', true)}
@@ -1895,6 +1899,8 @@ export default function MapBoard() {
           <div className="absolute bottom-3 left-3 z-10 text-[10px] text-slate-500 bg-slate-950/70 px-2 py-1 rounded">
             {tool === 'ping'
               ? 'Click anywhere to ping — everyone sees it flash.'
+              : tool === 'layers' && isGM
+              ? 'Drag an image to move · Corner handle to resize · Switch to Select to move tokens'
               : isGM
               ? 'Double-click token/shape to remove · Dashed = hidden from players · Scroll to zoom · Space+drag to pan'
               : 'Drag your own token · Scroll to zoom · Space+drag to pan'}
@@ -1932,7 +1938,10 @@ export default function MapBoard() {
                   resize. */}
               {sceneLayers.map((layer) => {
                 if (layer.hidden && !isGM) return null;
-                const draggable = isGM && tool === 'select';
+                // Layer drag/resize is gated on the dedicated Layers tool so
+                // the default Select tool can keep grabbing tokens and shapes
+                // without the GM accidentally moving the battlemat under them.
+                const draggable = isGM && tool === 'layers';
                 const live = layerDragPos && layerDragPos.id === layer.id;
                 const lx = live ? layerDragPos.x : layer.x;
                 const ly = live ? layerDragPos.y : layer.y;
