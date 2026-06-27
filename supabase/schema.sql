@@ -76,18 +76,40 @@ create table if not exists party_members (
 create index if not exists party_members_campaign_idx on party_members(campaign_id);
 
 create table if not exists map_state (
-  campaign_id    uuid primary key references campaigns(id) on delete cascade,
-  background_url text,
-  grid_size      int not null default 50,
-  width          int not null default 1000,
-  height         int not null default 1000,
-  data           jsonb not null default '{}'::jsonb,
-  updated_at     timestamptz not null default now()
+  campaign_id         uuid primary key references campaigns(id) on delete cascade,
+  background_url      text,
+  grid_size           int not null default 50,
+  width               int not null default 1000,
+  height              int not null default 1000,
+  data                jsonb not null default '{}'::jsonb,
+  active_scene_id     uuid,
+  gm_preview_scene_id uuid,
+  updated_at          timestamptz not null default now()
 );
+
+-- One campaign has many scenes; each scene owns its grid, shapes, and a
+-- list of free-positioned image layers (data.layers). map_state points at
+-- the active scene everyone sees; gm_preview_scene_id is an optional
+-- GM-only override so the GM can stage a different scene in private.
+create table if not exists map_scenes (
+  id           uuid primary key default gen_random_uuid(),
+  campaign_id  uuid not null references campaigns(id) on delete cascade,
+  name         text not null default 'Scene',
+  order_idx    int not null default 0,
+  grid_size    int not null default 50,
+  show_grid    boolean not null default true,
+  width        int not null default 2000,
+  height       int not null default 1500,
+  data         jsonb not null default '{}'::jsonb,
+  created_at   timestamptz not null default now(),
+  updated_at   timestamptz not null default now()
+);
+create index if not exists map_scenes_campaign_idx on map_scenes(campaign_id);
 
 create table if not exists map_tokens (
   id                  uuid primary key default gen_random_uuid(),
   campaign_id         uuid not null references campaigns(id) on delete cascade,
+  scene_id            uuid references map_scenes(id) on delete cascade,
   owner_user_id       uuid,
   label               text not null,
   color               text not null default '#f87171',
@@ -99,6 +121,20 @@ create table if not exists map_tokens (
   updated_at          timestamptz not null default now()
 );
 create index if not exists map_tokens_campaign_idx on map_tokens(campaign_id);
+create index if not exists map_tokens_scene_idx on map_tokens(scene_id);
+
+-- Deferred FKs from map_state -> map_scenes so map_state can be created
+-- first in the canonical schema. They're added once both tables exist.
+do $$ begin
+  if not exists (select 1 from pg_constraint where conname = 'map_state_active_scene_fk') then
+    alter table map_state add constraint map_state_active_scene_fk
+      foreign key (active_scene_id) references map_scenes(id) on delete set null;
+  end if;
+  if not exists (select 1 from pg_constraint where conname = 'map_state_preview_scene_fk') then
+    alter table map_state add constraint map_state_preview_scene_fk
+      foreign key (gm_preview_scene_id) references map_scenes(id) on delete set null;
+  end if;
+end $$;
 
 create table if not exists homebrew (
   id                 uuid primary key default gen_random_uuid(),
@@ -248,6 +284,7 @@ alter table campaign_members   enable row level security;
 alter table notes              enable row level security;
 alter table party_members      enable row level security;
 alter table map_state          enable row level security;
+alter table map_scenes         enable row level security;
 alter table map_tokens         enable row level security;
 alter table homebrew           enable row level security;
 alter table shops              enable row level security;
@@ -383,6 +420,12 @@ create policy map_state_select on map_state for select to authenticated using (i
 drop policy if exists map_state_all on map_state;
 create policy map_state_all on map_state for all to authenticated using (is_gm(campaign_id)) with check (is_gm(campaign_id));
 
+drop policy if exists map_scenes_select on map_scenes;
+create policy map_scenes_select on map_scenes for select to authenticated using (is_member(campaign_id));
+
+drop policy if exists map_scenes_all on map_scenes;
+create policy map_scenes_all on map_scenes for all to authenticated using (is_gm(campaign_id)) with check (is_gm(campaign_id));
+
 drop policy if exists map_tokens_select on map_tokens;
 create policy map_tokens_select on map_tokens for select to authenticated using (is_gm(campaign_id) or (is_member(campaign_id) and not hidden_from_players));
 
@@ -468,6 +511,9 @@ create trigger party_members_touch before update on party_members for each row e
 drop trigger if exists map_state_touch     on map_state;
 create trigger map_state_touch     before update on map_state     for each row execute function touch_updated_at();
 
+drop trigger if exists map_scenes_touch    on map_scenes;
+create trigger map_scenes_touch    before update on map_scenes    for each row execute function touch_updated_at();
+
 drop trigger if exists map_tokens_touch    on map_tokens;
 create trigger map_tokens_touch    before update on map_tokens    for each row execute function touch_updated_at();
 
@@ -532,6 +578,7 @@ alter publication supabase_realtime add table campaign_members;
 alter publication supabase_realtime add table notes;
 alter publication supabase_realtime add table party_members;
 alter publication supabase_realtime add table map_state;
+alter publication supabase_realtime add table map_scenes;
 alter publication supabase_realtime add table map_tokens;
 alter publication supabase_realtime add table homebrew;
 alter publication supabase_realtime add table shops;
