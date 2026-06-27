@@ -325,10 +325,22 @@ export const useMap = create<MapStore>((set, get) => ({
               set({ scenes: [...scenes, s].sort((a, b) => a.order_idx - b.order_idx) });
             }
           } else if (payload.eventType === 'UPDATE') {
-            const s = rowToScene(payload.new as SceneRow);
+            const newRow = payload.new as SceneRow;
+            // Image data-URLs stored inside data.layers can push the row
+            // beyond Supabase Realtime's per-message size cap. When that
+            // happens the payload arrives with `data` dropped to null even
+            // though the row in the DB is intact. Detect that case and keep
+            // our local shapes/layers — otherwise the very layer we just
+            // wrote would be erased by the echo of our own update.
+            const existing = scenes.find((x) => x.id === newRow.id);
+            const truncated = existing && newRow.data == null;
+            const incoming = rowToScene(newRow);
+            const merged: MapScene = truncated
+              ? { ...incoming, shapes: existing!.shapes, layers: existing!.layers }
+              : incoming;
             set({
               scenes: scenes
-                .map((x) => (x.id === s.id ? s : x))
+                .map((x) => (x.id === merged.id ? merged : x))
                 .sort((a, b) => a.order_idx - b.order_idx),
             });
           } else if (payload.eventType === 'DELETE') {
