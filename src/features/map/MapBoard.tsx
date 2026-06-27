@@ -45,7 +45,7 @@ import {
   Pencil,
 } from 'lucide-react';
 
-type Tool = 'select' | 'ruler' | 'circle' | 'square' | 'cone' | 'token' | 'ping' | 'layers';
+type Tool = 'select' | 'ruler' | 'circle' | 'square' | 'cone' | 'token' | 'ping' | 'edit';
 
 type Ping = { id: string; x: number; y: number; color: string };
 type Presence = { user_id: string; display_name: string; role: 'gm' | 'player' };
@@ -477,6 +477,16 @@ export default function MapBoard() {
   >(null);
   const [layerDragPos, setLayerDragPos] = useState<
     { id: string; x: number; y: number; w: number; h: number } | null
+  >(null);
+  // Token resize state — the GM grabs the bottom-right of a token in Edit
+  // mode to scale its diameter. We use the dominant axis (max of dx/dy) so
+  // square-ish drags feel predictable; the token is a circle so width and
+  // height are always equal.
+  const [tokenResize, setTokenResize] = useState<
+    { id: string; ox: number; oy: number } | null
+  >(null);
+  const [tokenResizePos, setTokenResizePos] = useState<
+    { id: string; size: number } | null
   >(null);
   const [selectedShapeColor, setSelectedShapeColor] = useState(SHAPE_COLORS[0]);
   const [tokenName, setTokenName] = useState('');
@@ -1152,6 +1162,19 @@ export default function MapBoard() {
     if (shapeDrag) {
       setShapeDragPos({ id: shapeDrag.id, x: p.x - shapeDrag.ox, y: p.y - shapeDrag.oy });
     }
+    if (tokenResize) {
+      const tok = tokens.find((t) => t.id === tokenResize.id);
+      if (!tok) return;
+      // Drive the new diameter off the dominant axis from the token's
+      // centre, minus the grab offset so the cursor stays anchored to the
+      // exact pixel the user grabbed. Clamp to a sane minimum so a misclick
+      // can't shrink the token to a single pixel and lose the handle.
+      const dx = p.x - tok.x - tokenResize.ox;
+      const dy = p.y - tok.y - tokenResize.oy;
+      const newR = Math.max(10, Math.max(dx, dy));
+      setTokenResizePos({ id: tokenResize.id, size: Math.round(newR * 2) });
+      return;
+    }
     if (layerDrag) {
       const layer = sceneLayers.find((l) => l.id === layerDrag.id);
       if (!layer) return;
@@ -1187,6 +1210,12 @@ export default function MapBoard() {
     }
     if (draggingTokenId) {
       commitDrag();
+      return;
+    }
+    if (tokenResize && tokenResizePos) {
+      void updateToken(tokenResize.id, { size: tokenResizePos.size });
+      setTokenResize(null);
+      setTokenResizePos(null);
       return;
     }
     if (layerDrag && layerDragPos && currentSceneId) {
@@ -1380,7 +1409,7 @@ export default function MapBoard() {
   // on crosshair.
   const svgCursor = isSpaceDown
     ? 'grab'
-    : tool === 'ping' || (isGM && tool !== 'select' && tool !== 'layers')
+    : tool === 'ping' || (isGM && tool !== 'select' && tool !== 'edit')
     ? 'crosshair'
     : 'default';
 
@@ -1561,7 +1590,7 @@ export default function MapBoard() {
               {toolButton('ping', Radio, 'Ping — click to flash a marker for everyone')}
               {toolButton('ruler', Ruler, 'Ruler (5 ft/cell)')}
               {toolButton('token', User, isGM ? 'Place token' : 'Place your character token')}
-              {toolButton('layers', Layers, 'Edit images — drag to move, corner to resize', true)}
+              {toolButton('edit', Layers, 'Edit images & tokens — drag to move, corner to resize', true)}
               {toolButton('circle', CircleIcon, 'Circle AoE', true)}
               {toolButton('square', SquareIcon, 'Square AoE', true)}
               {toolButton('cone', Triangle, 'Cone AoE', true)}
@@ -1812,6 +1841,23 @@ export default function MapBoard() {
                       onApply={(patch) => void updateToken(t.id, patch)}
                     />
                     {isGM && (
+                      <label className="flex items-center gap-1.5 text-[10px] text-slate-500">
+                        <span className="uppercase tracking-wider">Size</span>
+                        <input
+                          type="number"
+                          min={10}
+                          step={1}
+                          value={t.size}
+                          onChange={(e) => {
+                            const n = Math.max(10, parseInt(e.target.value || '0', 10) || 0);
+                            if (n !== t.size) void updateToken(t.id, { size: n });
+                          }}
+                          className="w-14 bg-slate-950 border border-slate-800 rounded px-1 py-0.5 font-mono text-[10px]"
+                        />
+                        <span className="text-slate-700">px</span>
+                      </label>
+                    )}
+                    {isGM && (
                       <select
                         value={t.owner_user_id ?? ''}
                         onChange={(e) => void updateToken(t.id, { owner_user_id: e.target.value || null })}
@@ -1899,8 +1945,8 @@ export default function MapBoard() {
           <div className="absolute bottom-3 left-3 z-10 text-[10px] text-slate-500 bg-slate-950/70 px-2 py-1 rounded">
             {tool === 'ping'
               ? 'Click anywhere to ping — everyone sees it flash.'
-              : tool === 'layers' && isGM
-              ? 'Drag an image to move · Corner handle to resize · Switch to Select to move tokens'
+              : tool === 'edit' && isGM
+              ? 'Drag image/token to move · Corner handle to resize · Switch to Select to drag tokens around the board'
               : isGM
               ? 'Double-click token/shape to remove · Dashed = hidden from players · Scroll to zoom · Space+drag to pan'
               : 'Drag your own token · Scroll to zoom · Space+drag to pan'}
@@ -1941,7 +1987,7 @@ export default function MapBoard() {
                 // Layer drag/resize is gated on the dedicated Layers tool so
                 // the default Select tool can keep grabbing tokens and shapes
                 // without the GM accidentally moving the battlemat under them.
-                const draggable = isGM && tool === 'layers';
+                const draggable = isGM && tool === 'edit';
                 const live = layerDragPos && layerDragPos.id === layer.id;
                 const lx = live ? layerDragPos.x : layer.x;
                 const ly = live ? layerDragPos.y : layer.y;
@@ -2197,10 +2243,16 @@ export default function MapBoard() {
               {/* Tokens */}
               {visibleTokens.map((t) => {
                 const draggable = canDragToken(t) && tool === 'select';
+                const resizable = isGM && tool === 'edit';
                 const dispColor = tokenDisplayColor(t);
-                const r = t.size / 2;
+                // Live-resize preview: if this token is currently being
+                // resized, render at the in-flight size so the GM sees the
+                // change as they drag.
+                const liveSize = tokenResizePos && tokenResizePos.id === t.id ? tokenResizePos.size : t.size;
+                const r = liveSize / 2;
                 const labelY = t.y + r + Math.max(10, 14 / zoom);
                 const fontSize = Math.max(8, 11 / zoom);
+                const handleR = Math.max(5, 8 / zoom);
 
                 return (
                   <g
@@ -2319,6 +2371,45 @@ export default function MapBoard() {
                           ? ` — ${(t.conditions ?? []).map((s) => CONDITIONS.find((c) => c.index === s)?.name ?? s).join(', ')}`
                           : ''}
                       </title>
+                    )}
+                    {/* Edit-mode selection ring + bottom-right resize handle.
+                        Sized in screen pixels so the handle stays grabbable
+                        at any zoom. Both elements only render for GMs in the
+                        Edit tool — Select keeps tokens drag-only. */}
+                    {resizable && (
+                      <>
+                        <circle
+                          cx={t.x}
+                          cy={t.y}
+                          r={r + 4 / zoom}
+                          fill="none"
+                          stroke="#0ea5e9"
+                          strokeOpacity={0.6}
+                          strokeWidth={1 / zoom}
+                          strokeDasharray={`${4 / zoom} ${4 / zoom}`}
+                          pointerEvents="none"
+                        />
+                        <rect
+                          x={t.x + r - handleR}
+                          y={t.y + r - handleR}
+                          width={handleR * 2}
+                          height={handleR * 2}
+                          fill="#0ea5e9"
+                          stroke="#fafaf9"
+                          strokeWidth={1 / zoom}
+                          style={{ cursor: 'nwse-resize' }}
+                          onMouseDown={(e) => {
+                            e.stopPropagation();
+                            const p = screenToLogical(e);
+                            setTokenResize({
+                              id: t.id,
+                              ox: p.x - t.x - r,
+                              oy: p.y - t.y - r,
+                            });
+                            setTokenResizePos({ id: t.id, size: t.size });
+                          }}
+                        />
+                      </>
                     )}
                   </g>
                 );
