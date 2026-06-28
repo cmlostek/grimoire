@@ -4,6 +4,246 @@ All notable changes to Grimoire are documented in this file. Format based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), versioning follows
 [SemVer](https://semver.org/).
 
+## [1.1.0] — 2026-06-27
+
+A feature release covering everything that landed between 1.0.2 and the
+current `preview` branch. The two biggest shapes of work are a full
+character system (Builder + Sheet + Level-Up) and a map overhaul that
+moves from "one background image" to "many scenes, each composed of
+positioned image layers". Co-GM role, mobile shell, dashboard chat,
+linked HP across every surface, and a long sweep of light-mode polish
+round out the release.
+
+### Added
+
+#### Character system
+
+- **Character Builder wizard** — multi-step flow over species, class,
+  background, ability scores, equipment, spells and identity details.
+  Class-skill picker, background features auto-applied, equipment
+  bullet lists parsed into structured inventory items.
+- **Character Builder is open to players** and auto-prompts on a
+  player's first join so they aren't dropped at a blank sheet.
+- **2024 SRD datasets** — classes, species, backgrounds, feats and
+  equipment parsed from the 2024 Free Rules. Falls back to the 2014
+  SRD to plug parser gaps and keep older content working.
+- **Character Sheet redesign** — Actions / Features / Inventory /
+  Spells panels with themed surfaces, a Hit Dice tracker, a Dead
+  status when reduced, XP-since-last-level readout, green / yellow /
+  red HP bars, ritual breakout, and a level-up entry point. Inventory
+  cards expand inline to show the SRD description.
+- **Themed SRD popover** — hover any spell name or feat to see the
+  full SRD entry without navigating away.
+- **Level-Up modal** — walks the player through HP gain (rolled or
+  average per campaign setting), new class features, subclass picks
+  at the right level, ASI / feat at every 4 levels with explanations,
+  Epic Boon at level 19, spell-slot diff, and prompts for new spells
+  whenever a caster column grows. Warlock-aware; doesn't trap Confirm
+  when the player has no spells to choose from. Auto-prompts on
+  manual XP / level edits.
+- **XP / level edits cascade** — change a single level's pick and the
+  rest of the sheet recomputes.
+- **Conditions + Exhaustion tracker on the sheet** — exhaustion now
+  subtracts from rolls per the SRD. Toggling a condition propagates to
+  Party, Initiative and Map.
+- **Race-derived speed.**
+- **Saving throws + Coin purse paired** to fill the empty grid cell on
+  the sheet.
+
+#### Map
+
+- **Multiple scenes per campaign.** New `map_scenes` table; each
+  campaign holds an ordered list of scenes. Active scene is what
+  players see; a separate GM-preview scene lets the GM stage the next
+  scene without flipping the player view. An on-screen **Previewing**
+  badge stays visible while the GM's view diverges from active.
+- **Free-positioned image layers per scene.** Each scene composes any
+  number of image layers with `{x, y, w, h, rotation, hidden, name}`.
+  Layers can be reordered, renamed, hidden per-layer, and dropped in
+  freely without disturbing siblings.
+- **Per-scene tokens.** `scene_id` on `map_tokens`; switching scenes
+  shows a fresh roster. Legacy tokens with no scene_id keep showing
+  on the active scene until cleaned up.
+- **Edit tool.** Select stays focused on tokens and shapes; the new
+  **Edit** tool exposes drag-to-move and a bottom-right corner handle
+  for both images and tokens. Selection ring + dashed border indicate
+  what's editable.
+- **Numeric token size input** in the GM sidebar row for precise
+  sizing (Large = 100, Huge = 150, ...).
+- **Fit-to-content.** Fit-to-screen now fits the union of the canvas
+  border and every visible image layer, so a battlemap larger than
+  the canvas no longer ends up off-screen.
+- **Token damage / heal input.** A signed-number control on each token
+  row that resolves multi-hit math in one entry, mirroring the same
+  control on the Character Sheet HP block.
+- **Pre-seed tokens from creatures.** PCs join the existing NPC / Stat
+  Block roster, so the GM can drop a Party token by name with HP
+  already filled.
+
+#### HP and conditions linked everywhere
+
+- **`hpLink` cross-surface sync.** A shared helper fans HP / max-HP
+  changes from any one surface (Character Sheet, Party, Initiative,
+  Map token) out to the others. A `fromSync` flag breaks the re-entry
+  loop so rapid keypresses don't race the sync round.
+- **DB fallback path.** When the target store isn't mounted (e.g. the
+  player has the Map open and changes HP, but the Initiative panel
+  hasn't been opened this session), `hpLink` patches the Supabase
+  rows directly so the change still lands.
+- **Unified HP bar colours** across Sheet, Party, Initiative and Map.
+- **Map → Sheet condition sync** rounds out the linked-condition
+  story (Initiative was already covered).
+- **Conditions on Party CharCard + Map tokens.** Same status chips
+  appear wherever the PC shows up.
+
+#### Multiplayer
+
+- **Co-GM role.** Full GM permissions except deleting the campaign.
+  `campaign_members.role` widened to `'gm' | 'cogm' | 'player'`; the
+  `is_gm()` helper now matches `('gm', 'cogm')`; the `campaigns_delete`
+  policy is narrowed to the primary GM only.
+- **Campaign chat as a Dashboard tab.** Messages, `@mentions`,
+  `[[wiki-style chips]]` for notes / NPCs / items, slash-prefixed
+  whispers visible only to the sender and recipients, GM-only labels,
+  GM can delete chat messages, notification sound on incoming.
+- **Per-member colour, bio, avatar.** Shared across chat, mentions,
+  map tokens and the viewer-avatar stack.
+
+#### Dashboard
+
+- **Dashboard chat tab** + **draggable Quick Dice** that floats
+  wherever it doesn't obscure the table.
+- **Eager chat-member loading** so the GM view shows player claim
+  labels immediately on first render.
+
+#### Mobile
+
+- **Hamburger-only top bar** below the medium breakpoint, with a
+  drawer for navigation. Desktop rail unchanged.
+- **Master-detail layout** for Notes / NPCs / Party — phone shows the
+  list first, tap-through opens the detail pane.
+- **Full-screen modals** for sheet editing on phones.
+- **Sheet density** compresses cards automatically at narrow widths.
+
+#### Notes
+
+- **`@{Name}` mentions click through to the Character Sheet.**
+- **Per-note icon colour picker.** Pick a colour and any of 16
+  thematic glyphs in one popover; the icon previews in your chosen
+  colour before you commit. Storage packs the colour into `note.icon`
+  as `iconId|#hex`; old id-only rows still work without a migration.
+- **Sub-folder colour picker rendered via React portal.** The
+  popover was being silently clipped by an `overflow: hidden`
+  ancestor (used for the folder expand / collapse animation), which
+  read as "can't edit lower-tier folders". Portal-anchored to the
+  trigger's bounding rect, so visibility is independent of depth.
+
+#### Settings
+
+- **Account section** — current email is shown; change email, change
+  password, and password reset link all accessible inside the app.
+- **Export campaign** — GM-only JSON snapshot from Settings covering
+  every campaign-scoped row (notes, party, NPCs, homebrew, ...).
+- **Sidebar auto-expand on hover** toggle for the collapsed rail.
+
+#### Rules
+
+- **Clickable See-also links** so cross-references jump straight to
+  the referenced section.
+- **Category filter chips** above the rules list.
+
+#### Inventory + features
+
+- **Themed boxes** + **collapsible feature descriptions** so a
+  features list with twenty entries stays scannable.
+- **Click to expand SRD descriptions** on inventory items.
+- **Full inventory shipped in the campaign PDF export.**
+
+### Changed
+
+- **`is_gm()` widened to match `cogm`.** Every is_gm-gated policy
+  across the database (notes, npcs, party, map, homebrew, shops, stat
+  blocks, transcripts, campaign settings) automatically picks up Co-GM
+  permissions through this helper. The `campaigns_delete` policy was
+  explicitly narrowed to `role = 'gm'` so a Co-GM cannot drop the
+  campaign.
+- **Map background → first image layer.** The legacy
+  `map_state.background_url` is preserved in-place; the new migration
+  promotes its value to a single full-canvas image layer on the
+  campaign's first scene so existing campaigns look identical after
+  upgrade. New uploads always go through the image-layer path.
+- **One token per player → one token per player per scene.** The
+  "already placed" check now scopes to `scene_id`, so a player can
+  place their PC's token on each scene independently.
+- **Fit-to-screen behaviour.** Previously fit the canvas border only;
+  now fits the union of canvas + visible image layers.
+- **HP rolling method** is a campaign-wide setting that the Level-Up
+  modal reads, instead of a per-prompt question.
+- **Settings → Account** replaces the old "Settings" placeholder.
+
+### Fixed
+
+- **Realtime echoes wiping freshly-added map layers.** Image data-URLs
+  inside `map_scenes.data` can push a row past Supabase Realtime's
+  per-message size cap; the payload then arrives with `data` dropped
+  to null even though the DB row is intact, so the echo of the GM's
+  own write was clobbering the layer they'd just added. The
+  subscription handler now detects truncation and preserves local
+  shapes / layers, only adopting column-level fields.
+- **Duplicate-content race when opening a note in two tabs.** The
+  second tab was racing the editor into a duplicate-content state
+  before the Yjs document hydrated. Resolved by ordering the
+  hydration steps so the doc is awaited before the editor mounts.
+- **HP sync feedback loop.** A `fromSync` flag on `updateToken` /
+  party / initiative updates breaks the re-entry round so a single
+  keypress on an HP input doesn't ping-pong through every store and
+  race the user's next keystroke.
+- **HP sync when the target store isn't mounted.** `hpLink` now
+  falls back to a direct Supabase update of the matching rows, so
+  cross-surface sync works even when only one panel is open.
+- **`@{Name}` hover tooltip + Notes party load.** The hover handler
+  was matching the wrapped `@{Name}` token against bare member
+  names; strip the wrapper first. Notes also wasn't loading the
+  party store on mount, so a hard reload to `/notes` left the
+  LiveEditor with an empty party array.
+- **SwitchRow thumb hanging off the right edge.**
+- **Level-Up modal trap.** Confirm no longer requires picking a spell
+  when the spell pool is empty (e.g. Warlock at a level with no new
+  prepared spells). Warlock semantics are now handled distinctly from
+  prepared casters.
+- **Inventory click handler.**
+- **Exhaustion math.** Exhaustion now actually subtracts from rolls
+  per the SRD; the tracker was decorative before.
+
+### Removed
+
+- **Old single-background map model.** `map_state.background_url` is
+  no longer written to; the column stays for the backfill but the
+  application path is entirely through `map_scenes.data.layers`.
+
+### Database migrations
+
+Run these in the Supabase SQL editor in **filename order**. Each is
+designed to be idempotent (`if not exists` guards on tables, columns
+and policies), so re-running an already-applied migration is a no-op.
+
+| File | What it does |
+|---|---|
+| `20260610000000_npc_stat_blocks.sql` | `npcs.stat_block` JSONB + `npcs.stat_block_visible` |
+| `20260610000001_npc_permissions.sql` | Per-NPC visibility table + RLS |
+| `20260615000000_chat_messages.sql` | `chat_messages` table + RLS + realtime |
+| `20260615000001_campaign_member_color.sql` | `campaign_members.color` |
+| `20260615000002_seed_test_chat_member.sql` | Seed data for the test campaign |
+| `20260616000000_campaign_member_bio.sql` | `campaign_members.bio` |
+| `20260616000001_user_profiles_avatars.sql` | `user_profiles` table for avatars |
+| `20260616000002_chat_messages_gm_delete.sql` | GM can delete chat messages |
+| `20260619000000_chat_messages_gm_whisper_visibility.sql` | Whispers visible to GM/Co-GM in addition to sender + recipients |
+| `20260619000001_cogm_role.sql` | Widens `role` check to include `cogm`, updates `is_gm()`, narrows `campaigns_delete` to primary GM only |
+| `20260627000000_map_scenes.sql` | `map_scenes` table; `map_state.active_scene_id` + `gm_preview_scene_id`; `map_tokens.scene_id`; backfill that creates "Scene 1" from each existing `map_state` row with the old background promoted to a full-canvas image layer |
+
+The application code falls back gracefully on rows that pre-date each
+migration; you can apply them at any time after pulling 1.1.0.
+
 ## [1.0.2] — 2026-05-27
 
 A light-mode contrast pass. Dark mode shipped first and most surfaces
@@ -205,6 +445,7 @@ map board, NPC tracker, spells, items, shop, statblocks, homebrew,
 session transcription, and SRD rules. Supabase-backed, real-time across
 all players in a campaign.
 
+[1.1.0]: https://github.com/cmlostek/grimoire/releases/tag/v1.1.0
 [1.0.2]: https://github.com/cmlostek/grimoire/releases/tag/v1.0.2
 [1.0.1]: https://github.com/cmlostek/grimoire/releases/tag/v1.0.1
 [1.0.0]: https://github.com/cmlostek/grimoire/releases/tag/v1.0.0

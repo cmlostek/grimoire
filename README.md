@@ -1,16 +1,17 @@
 <img width="480" height="168" alt="Arc 2026-04-23 22 11 36" src="https://github.com/user-attachments/assets/985fd684-b3d0-44e8-a186-8c46166327f8" />
 
-# ⚔️ Grimoire -- Version 1.0.2
+# ⚔️ Grimoire — Version 1.1.0
 - Built with [Claude](https://www.anthropic.com/) Sonnet 4.6 and Opus 4.7.
 - Release notes: [CHANGELOG.md](./CHANGELOG.md)
 - New features are published to [Preview](https://www.grimoire-preview.vercel.app/). Use your normal login credentials to view them.
 
-A real-time, multiplayer Game Master (GM) companion for running **Dungeons and Dragons 5e** campaigns in the browser. Built for game masters who want a single, fast screen that handles everything — notes, party tracking, combat, maps, spells, shops, and more — with live sync across all players at the table.
+A real-time, multiplayer Game Master companion for running **Dungeons & Dragons 5e** campaigns in the browser. One fast screen that handles every table-side concern — notes, party tracking, combat, maps, character sheets, level-ups, spells, items, shops, NPCs, chat, dice — with live sync across every player in the campaign.
 
 ---
 
 ## Table of Contents
 
+- [What's new in 1.1.0](#whats-new-in-110)
 - [Features](#features)
 - [Tech Stack](#tech-stack)
 - [Getting Started](#getting-started)
@@ -24,94 +25,169 @@ A real-time, multiplayer Game Master (GM) companion for running **Dungeons and D
 
 ---
 
+## What's new in 1.1.0
+
+A big release. The headlines:
+
+- **Full character system** — 2024 SRD-aware Character Builder wizard, redesigned Character Sheet with Actions / Features / Inventory / Spells panels, and a Level-Up modal that walks the player through HP gain, new features, subclass picks, ASI/feat choices and spell prep.
+- **Map scenes + image layers** — every campaign can hold many scenes; each scene composes multiple free-positioned image layers with per-layer visibility. GMs can preview a scene privately before flipping the player view.
+- **Edit tool for the map** — Select stays focused on tokens; the new Edit tool exposes drag-to-move + corner-handle-to-resize for both images and tokens, plus an inline size input on each token row.
+- **HP linked across every surface** — Character Sheet, Party panel, Initiative tracker and Map tokens now share one HP value per PC. Conditions sync the same way (Map ↔ Sheet ↔ Initiative ↔ Party).
+- **Co-GM role** — full GM permissions except deleting the campaign, so you can hand a friend the steering wheel without handing them the keys.
+- **Dashboard chat + draggable Quick Dice** — campaign chat is now a Dashboard tab with whispers, GM-only labels and chip mentions; Quick Dice can be dragged anywhere on screen.
+- **Mobile shell** — full hamburger-driven master-detail layout on phones, with full-screen modals and condensed sheet density. Desktop is unchanged.
+- **Light-mode polish** — a long sweep over every surface the original light-mode pass missed: feats, sidebar nav, decorators, init tracker, party cards, the CodeMirror selection highlight, table chrome.
+
+Full notes in [CHANGELOG.md](./CHANGELOG.md).
+
+---
+
 ## Features
 
 ### 📓 Notes
-A full campaign journal with live Obsidian-style markdown editing. Syntax markers hide when you move the cursor away, leaving only clean rendered text.
+A live Obsidian-style markdown editor with custom inline syntax. Syntax markers hide when the cursor leaves a line, leaving only the rendered text on screen.
 
-- **Hierarchical folders** with colour coding and per-folder player visibility controls
-- **Per-note icons** — 16 thematic icons (town, dungeon, ship, skull, crown…) in themed colours
-- **Per-user permissions** — pick view and/or edit access independently for each player, or use one-click presets (GM only · Party view · Party edit). GM and the author always have full access. *(v1.0.1)*
-- **Explicit Save button** — title and body edits buffer locally and broadcast to other viewers on save. Sidebar shows a dot next to dirty notes. *(v1.0.1)*
-- **Custom decorator syntax** for tagging content inline (locations, milestones, artifacts, secrets — see [Note Syntax Reference](#note-syntax-reference))
-- **Wiki links** `[[Note Name]]` with autocomplete and broken-link indicators
-- **Secrets** `{{hidden text}}` rendered as interactive lock/reveal cards; players only see revealed ones
-- **Inline dice rolls** `$1d20 + 5$` — click to roll directly into the dice panel
-- **Search & sort** — alphabetical or chronological sidebar ordering
+- **Hierarchical folders** with per-folder colour and player-visibility controls. Sub-folder colour pickers render through a React portal so they're never clipped by collapse animations.
+- **Per-note icons with colour** — pick a tint and any of 16 thematic glyphs (town, dungeon, ship, skull, crown, ...). The icon previews in your chosen colour before you click it.
+- **Per-user permissions** — pick view and/or edit access independently for each player, or use one-click presets (GM only · Party view · Party edit). The note's author and the campaign GM always have full access.
+- **Explicit Save button** — title and body edits buffer locally and broadcast to other viewers on save. Sidebar shows a dot next to dirty notes.
+- **Custom decorator syntax** — locations, milestones, plot dependencies, artifacts, secrets, GM-only comments (see [Note Syntax Reference](#note-syntax-reference)).
+- **Wiki links** `[[Note Name]]` with autocomplete and broken-link indicators.
+- **`@{Player Name}` mentions** click through to that player's Character Sheet.
+- **Secrets** `{{hidden text}}` rendered as interactive lock/reveal cards; players only see revealed ones.
+- **Inline dice rolls** `$1d20 + 5$` — click to roll into the dice panel.
+- **Multi-tab safe** — opening the same note in two tabs no longer races the editor into a duplicate-content state.
+
+### 🧙 Character system
+A full 2024 SRD-aware character pipeline, from creation to level-up to in-game tracking.
+
+#### Character Builder
+- **Multi-step wizard** — species, class, background, ability scores, equipment, spells, details.
+- **2024 SRD data** — classes, species, backgrounds, feats and equipment parsed from the 2024 Free Rules.
+- **Class skill picker** + auto-applied background features.
+- **Equipment auto-parse** — bullet lists in starting equipment become structured inventory items.
+- **Spell preparation** — visible to non-casters as well, so players can browse what spellcasters get.
+- **Open to players** — players join a campaign, get auto-prompted to build a character on their first visit.
+
+#### Character Sheet
+- **Actions, Features, Inventory, Spells panels** with themed surfaces.
+- **HP block** — current, max, temp, with green/yellow/red bars, an editable damage/heal input, a Hit Dice tracker and a Dead status when reduced.
+- **Conditions + Exhaustion** — toggle a condition on the sheet and it propagates to Party, Initiative and the Map token. Exhaustion now actually subtracts from rolls per the SRD.
+- **Inventory** — themed cards; click to expand the SRD description in place. Full inventory ships in the PDF export.
+- **Themed SRD popover** — hover any spell name to see the full SRD entry without leaving the page.
+- **Race-derived speed**, **ability score breakouts**, **saving throws + coin purse** paired to fill the empty grid cell.
+
+#### Level-Up Modal
+- Walks the player through **HP gain (rolled or average per campaign setting)**, new class features, subclass picks at the right level, ASI/feat at every 4 levels (and the Epic Boon at 19), spell-slot delta, and prompts for new spells whenever a caster column grows.
+- **Auto-prompts** on manual XP / level edits, and on the first time a player joins.
+- **Cascades through every level** — change a level-1 ability score and the rest of the sheet recomputes.
+- Warlock-aware (spell pool semantics), and won't trap the Confirm button when the player has no spells to choose from.
 
 ### 🎲 Dice
-- Standard dice: d4, d6, d8, d10, d12, d20, d100
-- **Advantage / Disadvantage** — rolls 2d20 and shows the dropped die
-- Modifier input with +/− buttons
-- Custom **roll labels** for tracking what each roll was for
-- Natural 20 / Natural 1 detection with colour coding
-- **Quick Dice panel** — compact float accessible from any screen
+- Standard dice: d4, d6, d8, d10, d12, d20, d100.
+- **Advantage / Disadvantage** — rolls 2d20 and shows the dropped die.
+- Modifier input with +/− buttons and custom roll labels.
+- Natural 20 / Natural 1 detection with colour coding.
+- **Draggable Quick Dice panel** — float it wherever it doesn't obscure the table; accessible from every screen.
 
 ### ⚔️ Initiative Tracker
-- Add combatants with name, initiative, HP, and AC
-- Auto-sort by initiative roll
-- Advance turns with round counter
-- Adjust HP inline during combat
-- PC flag to distinguish players from monsters
-- **Timed conditions** — attach Poisoned, Stunned, Restrained, etc. with a duration; the counter decrements on each round and the condition is removed automatically when it expires *(v1.0.1)*
+- Add combatants with name, initiative, HP and AC.
+- Auto-sort by initiative roll; advance turns with a round counter.
+- Adjust HP inline during combat.
+- PC flag to distinguish players from monsters.
+- **Linked HP & conditions** — editing HP or toggling a condition here syncs the matching PC on Party, Sheet and Map without any extra clicks.
+- **Timed conditions** — attach Poisoned, Stunned, Restrained etc. with a duration; the counter decrements each round and the condition is removed automatically when it expires.
 
 ### 👤 NPCs
-- Add NPCs for your players to add information about what they know of them
-- Track alive / dead / captured / unknown / missing, faction, and location
-- Sort or filter by status; search by name or faction
-- **Stat blocks** — every NPC carries a 5e-style stat block (AC, HP, hit dice, speed, ability scores, skills, senses, languages, damage / condition immunities, CR, traits, actions). GM edits inline; players see a formatted read-only card. *(v1.0.1)*
-- **Two-stage visibility** — reveal an NPC's identity to players without exposing their stats, or vice versa *(v1.0.1)*
+- Add NPCs your players can collect notes about.
+- Track alive / dead / captured / unknown / missing, faction and location.
+- Sort or filter by status; search by name or faction.
+- **Stat blocks** — every NPC carries a 5e-style stat block (AC, HP, hit dice, speed, ability scores, skills, senses, languages, damage / condition immunities, CR, traits, actions). GM edits inline; players see a formatted read-only card.
+- **Two-stage visibility** — reveal an NPC's identity without exposing their stats, or vice versa.
 
 ### 🗺️ Map Board
-- Upload any background image as a battle map
-- Toggle grid overlay with configurable cell size
-- **Tokens** with emoji, custom colour rings, and player labels
-- **Area-of-effect shapes** — circles, squares, cones with adjustable size and colour
-- **Ruler** for measuring distances
-- Drag-and-drop token positioning
-- **Ping tool** — click anywhere to drop a 2-second pulse visible to everyone viewing the map, broadcast via realtime. Available to GMs and players. *(v1.0.1)*
-- **Viewer presence** — avatar stack in the corner shows who else has the map open right now, with amber initials for GM and sky for players *(v1.0.1)*
+A scene-based tactical surface. Every campaign holds a list of scenes; each scene owns its own grid, image layers, shapes and tokens.
+
+- **Multiple scenes per campaign** — switch the active scene to flip the player view; GMs can stage a non-active scene privately first (the **Previewing** badge stays on screen so it's clear which view is yours).
+- **Image layers** — each scene composes any number of positioned image layers. Toggle layer visibility, rename, reorder, drop in a new image without disturbing the others.
+- **Edit tool** — Select moves tokens and shapes (the default). Switch to **Edit** (GM-only) to drag images and tokens around or grab the corner handle to resize them. Tokens also have a numeric size input in the sidebar for precise sizing.
+- **Tokens** with emoji, owner-tinted ring, name label, and a damage / heal input that runs the math for you.
+- **Linked HP & conditions** — every token's HP and conditions sync with the matching PC on Sheet, Party and Initiative.
+- **Pre-seed from creatures** — drop in tokens from your Party, NPCs or Stat Blocks with HP/AC already filled.
+- **Area-of-effect shapes** — circles, squares, cones with adjustable size and colour.
+- **Ruler** for measuring distances.
+- **Ping tool** — click anywhere to drop a 2-second pulse visible to everyone viewing the map.
+- **Viewer presence** — avatar stack shows who else has the map open right now.
+- **Fit-to-content** — fits the bounding box of the canvas + every visible image layer, so large layers don't end up off-screen.
+- **Realtime-safe** — large image data URLs that exceed Supabase Realtime's per-message cap no longer wipe your local state on echo.
 
 ### 👥 Party
-- Add characters manually or **import from D&D Beyond JSON**
-- Track HP (current / max / temp), AC, initiative bonus, passive perception
-- Full ability scores, saving throws, skills, languages, and features
-- Players can claim and edit their own character; GMs can edit all
-- **Hover cards** on `@{Player Name}` references in notes — see full stats inline
+- Add characters manually or **import from D&D Beyond JSON**.
+- Track HP (current / max / temp), AC, initiative bonus and passive perception.
+- Full ability scores, saving throws, skills, languages and features.
+- Players can claim and edit their own character; GMs can edit all.
+- **Hover cards** on `@{Player Name}` references in notes — see full stats inline.
+- **Linked across surfaces** — HP and conditions stay in sync with Sheet, Initiative and Map tokens.
+- **PCs feed the Map creature roster** so you can drop their tokens by name.
+
+### 💬 Dashboard + Chat
+- **Dashboard** is the campaign's landing page — party status at a glance, NPC roster, recent notes, and a chat tab.
+- **Campaign chat** with `@mentions`, `[[wiki-style chips]]` for notes/NPCs/items and slash-prefixed whispers. GM-only labels show on every message that came from a GM or Co-GM.
+- **Whispers** are visible only to the sender and recipients; the GM sees an indicator that a whisper exists in the channel.
+- **Notification sound** for incoming messages.
 
 ### 📚 Rules Reference
-- Full **SRD 5.1** rules browser with search
-- **Conditions** reference (poisoned, charmed, stunned…)
-- **Character-creation chapters** — Step-by-Step Character Creation, Ability Score Generation, Races (Overview), Classes (Overview), Backgrounds, Alignment & Personality, Equipment & Starting Wealth, Levels and Advancement, and Multiclassing *(v1.0.1)*
-- Read-only reference; always available as a sidebar
+- Full **SRD 5.1 + 2024 SRD** browser with search.
+- **Conditions** reference (poisoned, charmed, stunned ...).
+- **Character-creation chapters** — Step-by-Step Character Creation, Ability Score Generation, Races (Overview), Classes (Overview), Backgrounds, Alignment & Personality, Equipment & Starting Wealth, Levels and Advancement, and Multiclassing.
+- **Clickable See-also links** and **category filter chips** for fast navigation.
+- Read-only reference; always available as a sidebar.
+
+### 🧪 Stat Blocks
+- A standalone library of reusable creature stat blocks beyond the NPC roster.
+- Pre-seed a Map token from any stat block (HP, name, emoji).
 
 ### 🧙 Homebrew
-- Create custom **monsters, items, and spells**
-- Full stat block editor with traits, actions, bonus/legendary actions
-- Mark homebrew as campaign-visible to share with players
-- Clone any entry as a template
+- Create custom **monsters, items and spells**.
+- Full stat block editor with traits, actions, bonus / legendary actions.
+- Mark homebrew as campaign-visible to share with players.
+- Clone any entry as a template.
 
 ### 🛒 Shops
-- Build named merchant inventories from any SRD or homebrew item
-- Set per-item stock and price
-- **Random stock generator** — fills a shop with 8–16 random items at randomised quantities
-- Search items within the active shop
+- Build named merchant inventories from any SRD or homebrew item.
+- Set per-item stock and price.
+- **Random stock generator** — fills a shop with 8–16 random items at randomised quantities.
+- Search within the active shop.
 
 ### 🔮 Spells & Items Browsers
-- 300+ SRD spells filterable by level, school, ritual, and concentration
-- Full equipment and magic item tables, sortable by rarity
-- Homebrew appears inline alongside SRD content
+- 300+ SRD spells filterable by level, school, ritual and concentration.
+- Full equipment and magic item tables, sortable by rarity.
+- Homebrew inline alongside SRD content.
+- **Themed SRD popover** on hover.
 
 ### 🎙️ Transcription
-- **Speech-to-text** session journal using the browser Web Speech API
-- Real-time interim and final transcript display
-- Link recordings directly to campaign notes
-- Transcript history with timestamps and search
+- **Speech-to-text** session journal using the browser Web Speech API.
+- Real-time interim and final transcript display.
+- Link recordings directly to campaign notes.
+- Transcript history with timestamps and search.
 
-### 🎨 UI *(v1.0.1)*
-- **Collapsible sidebar** — toggle to icons-only at any time; state persisted across reloads
-- **Dark / Light mode** — single Sun/Moon toggle. Dark uses the saturated default blue; light uses a pale blue accent on slate-100 surfaces. (The previous 5-accent and 6-background color pickers were removed.)
-- **Light-mode contrast polish** *(v1.0.2)* — full sweep over every surface that was unreadable on a light backdrop: disabled buttons, sidebar selection, auth tabs, Rules tables, the CodeMirror selection highlight, and every note decorator (each one now has a dark 700/800-shade variant tuned for the white note canvas). Artifact decorators switched from green to pink so they no longer collide with `@{player}` mentions; the sidebar "Switch campaign" button uses a double-arrow icon to distinguish it from "Sign out".
+### ⚙️ Settings
+- **Account** — change email or password from inside the app; reset link for password recovery.
+- **Export campaign** — GM-only JSON snapshot of every campaign-scoped row (notes, party, NPCs, homebrew, ...).
+- **Sidebar auto-expand on hover** toggle.
+- **HP rolling method** (rolled or average) — campaign-wide, drives the Level-Up modal.
+
+### 📱 Mobile
+- **Hamburger-only top bar** below the medium breakpoint with a drawer for navigation; the desktop rail stays untouched on wider screens.
+- **Master-detail layout** on lists (Notes, NPCs, Party) — phone shows list first, tap-through opens detail.
+- **Full-screen modals** for sheet editing.
+- **Sheet density** automatically compresses to fit narrow viewports.
+
+### 🎨 UI
+- **Collapsible sidebar** — toggle to icons-only at any time, or set it to auto-expand on hover; state persists across reloads.
+- **Dark / Light mode** — single Sun/Moon toggle.
+- **Light-mode polish** — every surface tuned for legible text on a pale backdrop: disabled buttons, sidebar selection, auth tabs, Rules tables, the CodeMirror selection, every note decorator, the Initiative cards, party stat values, the feats list.
+- **Themed feature/inventory cards** with collapsible descriptions.
 
 ---
 
@@ -119,7 +195,7 @@ A full campaign journal with live Obsidian-style markdown editing. Syntax marker
 
 | Layer | Technology | Why |
 |---|---|---|
-| **Framework** | React 19 | Concurrent rendering, server components future-proofing |
+| **Framework** | React 19 | Concurrent rendering, server-components future-proofing |
 | **Build** | Vite 8 + TypeScript 6 | Sub-second HMR, strict type checking |
 | **Styling** | Tailwind CSS 3 | Utility-first, zero dead CSS in production |
 | **State** | Zustand 5 | Minimal boilerplate, per-feature stores with `loadForCampaign` pattern |
@@ -133,10 +209,12 @@ A full campaign journal with live Obsidian-style markdown editing. Syntax marker
 
 ### Architecture notes
 
-- **Feature-store pattern:** each feature (`notes`, `party`, `map`…) has a co-located Zustand store with a `loadForCampaign(campaignId)` action. The active campaign ID is stored in a root session store; switching campaigns triggers all feature stores to reload.
-- **Row-Level Security:** all Supabase tables enforce RLS so players can only read/write data belonging to their campaign and matching their role (`gm` or `player`).
-- **Realtime:** each store subscribes to `postgres_changes` for its table, filtered by `campaign_id`. A `useVisibilityReload` hook re-triggers `loadForCampaign` on tab focus to recover from stale WebSocket connections. The map additionally uses a dedicated `map-presence:` channel with Supabase `broadcast` events for ephemeral pings and Supabase `presence` for the viewer-avatar stack — neither hits the database.
-- **Live editor:** the Notes editor is built on CodeMirror 6 `ViewPlugin` + `WidgetType`. Markdown syntax markers are hidden via `Decoration.replace()` when the cursor is off that line, and custom decorator tokens (`@{…}`, `{{…}}`, `[[…]]`, etc.) are similarly hidden off-cursor, revealing only the rendered content.
+- **Feature-store pattern.** Each feature (`notes`, `party`, `map`, `chat`, ...) has a co-located Zustand store with a `loadForCampaign(campaignId)` action. The active campaign ID is stored in a root session store; switching campaigns triggers all feature stores to reload.
+- **Row-Level Security.** Every Supabase table enforces RLS so members can only read / write data belonging to their campaign and matching their role (`gm` · `cogm` · `player`).
+- **Realtime.** Each store subscribes to `postgres_changes` for its table, filtered by `campaign_id`. A `useVisibilityReload` hook re-triggers `loadForCampaign` on tab focus to recover from stale WebSocket connections. The map additionally uses a dedicated `map-presence:` channel with Supabase `broadcast` for ephemeral pings and Supabase `presence` for the viewer-avatar stack — neither hits the database.
+- **Realtime payload guards.** Large image data URLs (map scene layers) can exceed Supabase Realtime's per-message size cap, arriving with their `data` jsonb dropped to null. The map store detects truncation and preserves the local state rather than wiping the layer the user just added.
+- **Live editor.** The Notes editor is built on CodeMirror 6 `ViewPlugin` + `WidgetType`. Markdown syntax markers are hidden via `Decoration.replace()` when the cursor is off that line, and custom decorator tokens (`@{…}`, `{{…}}`, `[[…]]`, ...) are similarly hidden off-cursor, revealing only the rendered content.
+- **Cross-surface HP linking.** A shared `hpLink` helper fans an HP / max-HP change from any one surface (Sheet, Party, Initiative, Map) out to the others, including a Supabase fallback path so changes apply even when the target store isn't mounted. A `fromSync` flag breaks the re-entry loop so rapid keypresses on an HP input don't race the sync round.
 
 ---
 
@@ -156,45 +234,36 @@ Sign in to [app.supabase.com](https://app.supabase.com), create a new project, a
 
 #### 2. Run the schema
 
-Open the **SQL Editor** in your Supabase dashboard. Paste the contents of [`supabase/schema.sql`](supabase/schema.sql) and run each numbered section in order. The schema creates:
+Open the **SQL Editor** in your Supabase dashboard. Paste the contents of [`supabase/schema.sql`](supabase/schema.sql) and run each numbered section in order. The schema creates the full table set, RLS policies, helper functions (`is_member`, `is_gm`, `note_author`, `touch_updated_at`) and the realtime publication entries.
 
-| Table | Purpose |
-|---|---|
-| `campaigns` | Campaign names and join codes |
-| `campaign_members` | User ↔ campaign membership with `gm` / `player` role |
-| `notes` | Campaign notes with visibility and edit-permission flags |
-| `note_folders` | Hierarchical folder structure |
-| `party_members` | Character data per campaign |
-| `initiative_entries` | Combat tracker state |
-| `map_tokens` | Map token positions and properties |
-| `homebrew_monsters` | Custom monsters |
-| `homebrew_items` | Custom items |
-| `homebrew_spells` | Custom spells |
-| `transcripts` | Session speech-to-text recordings |
+Major tables include `campaigns`, `campaign_members`, `notes`, `note_folders`, `note_permissions`, `party_members`, `initiative_entries`, `map_state`, `map_scenes`, `map_tokens`, `npcs`, `homebrew`, `shops`, `stat_blocks`, `chat_messages`, `transcripts` and `user_profiles`.
 
 #### 3. Run the migrations
 
-Apply each file in [`supabase/migrations/`](supabase/migrations/) in the SQL Editor, in filename order. The application falls back gracefully when a column is missing, so you can apply migrations at any time after pulling the matching code release.
+Apply each file in [`supabase/migrations/`](supabase/migrations/) in **filename order** — they're prefixed with `YYYYMMDDHHMMSS` so a lexicographic sort matches the intended order. The application code is defensive: every store falls back gracefully when a column or table is missing, so you can apply migrations at any time after pulling the matching code release.
 
-| Migration | What it does | Required for |
-|---|---|---|
-| `20260422_campaign_settings_and_note_columns.sql` | `notes.icon`, `notes.player_editable`, `campaign_settings` table | v1.0 features |
-| `20260422_fix_party_unclaim_rls.sql` | Adjusts RLS so players can release a claimed character | v1.0 features |
-| `20260423_initiative_and_npcs.sql` | `initiative_entries` and `npcs` tables | v1.0 features |
-| `20260521_note_permissions.sql` | `note_permissions` table + RLS + backfill from the legacy boolean flags | v1.0.1 per-user note permissions |
-| `20260521_note_permissions_fix_recursion.sql` | Hotfix: replaces a recursive RLS subquery with a SECURITY DEFINER helper | v1.0.1 (run alongside the previous file) |
-| `20260521_npc_stat_blocks.sql` | `npcs.stat_block` JSONB + `npcs.stat_block_visible` boolean | v1.0.1 NPC stat blocks |
+A high-level summary of what the current set adds, in order:
+
+| Range | Adds |
+|---|---|
+| `20260610*_npc_*` | NPC stat blocks + per-NPC permission rows |
+| `20260615*_chat_*` + `*_campaign_member_color*` | Chat messages, per-member colour |
+| `20260616*` | Member bio, user-profile avatars, GM chat deletion |
+| `20260619*` | GM-only whisper visibility, **Co-GM** role |
+| `20260627*_map_scenes` | `map_scenes` table + `scene_id` on `map_tokens` + active/preview scene pointers on `map_state`, with a backfill that creates "Scene 1" from each existing `map_state` row |
+
+The CLI alternative is `supabase db push` from the project root; both paths land at the same place.
 
 #### 4. Enable email auth
 
-In your Supabase dashboard go to *Authentication → Providers* and make sure **Email** is enabled. For local development, disable email confirmation under *Authentication → Settings* so you can sign up immediately without checking email.
+In the Supabase dashboard go to *Authentication → Providers* and confirm **Email** is enabled. For local development, disable email confirmation under *Authentication → Settings* so sign-ups go through immediately.
 
 ### Local Development
 
 ```bash
 # 1. Clone the repo
-git clone https://github.com/cmlostek/dnd-gm.git
-cd dnd-gm
+git clone https://github.com/cmlostek/grimoire.git
+cd grimoire
 
 # 2. Install dependencies
 npm install
@@ -233,13 +302,13 @@ npm run preview  # Serve the production bundle locally
    - `VITE_SUPABASE_ANON_KEY`
 4. Click **Deploy**. The [`vercel.json`](vercel.json) rewrite (`/* → /index.html`) is already configured for SPA routing.
 
-Subsequent pushes to `main` deploy automatically.
+Subsequent pushes to `main` deploy automatically; the [Preview](https://www.grimoire-preview.vercel.app/) environment tracks the `preview` branch.
 
 ---
 
 ## Note Syntax Reference
 
-The note editor supports custom inline syntax on top of standard markdown. Syntax markers are **hidden when your cursor is on a different line** — move the cursor to a line to see and edit the raw syntax.
+The note editor supports custom inline syntax on top of standard markdown. Syntax markers are **hidden when your cursor is on a different line** — move the cursor onto a line to see and edit the raw syntax.
 
 ### Markdown (standard)
 
@@ -265,7 +334,7 @@ The note editor supports custom inline syntax on top of standard markdown. Synta
 | Syntax | Renders as | Use for |
 |--------|-----------|---------|
 | `&{The Hall of Noon}` | Orange badge | Locations — click to open the matching note |
-| `@{Aria Swiftwind}` | Green badge | Player refs — hover to see character stats |
+| `@{Aria Swiftwind}` | Green badge | Player refs — hover for stats, click to open the Character Sheet |
 | `?{The heir must be found}` | Red badge | Plot dependencies / conditions |
 | `!{The Siege Begins}` | Blue badge | Milestone events |
 | `${The Sunblade}` | Pink badge | Artifacts & key items |
@@ -280,13 +349,11 @@ The note editor supports custom inline syntax on top of standard markdown. Synta
 {{!This text is already revealed to players}}
 ```
 
-Secrets render as interactive cards in the preview. As GM you can click **Reveal / Hide** to toggle player visibility. Players only ever see revealed secrets — locked ones are invisible to them entirely.
-
-Secrets can contain **markdown formatting** including headings, bold, and bullet lists.
+Secrets render as interactive cards. As GM you can click **Reveal / Hide** to toggle player visibility; players only ever see revealed secrets. Secrets can contain markdown formatting (headings, bold, lists).
 
 ### Wiki Links
 
-Type `[[` to open autocomplete — start typing a note name and select from the dropdown. Broken links (target note doesn't exist) render in gray. Clicking a valid link navigates directly to that note.
+Type `[[` to open autocomplete. Broken links render in gray. Clicking a valid link navigates directly to that note.
 
 ---
 
@@ -294,25 +361,26 @@ Type `[[` to open autocomplete — start typing a note name and select from the 
 
 ### Campaigns and roles
 
-Every user belongs to one or more campaigns. Within each campaign they are either:
+Every user belongs to one or more campaigns. Within each campaign they hold one of:
 
 | Role | Can do |
 |---|---|
-| **GM** | Everything — create/delete notes & folders, control map, manage party, configure shops, manage NPC stat-block visibility, set per-user note permissions |
-| **Player** | See and edit notes they've been granted access to (independent view and edit flags per user), claim and edit their own party character, ping the map, view NPCs (and their stat blocks) the GM has revealed |
+| **GM** | Everything. Creates the campaign, can delete it, and holds every permission below. |
+| **Co-GM** | Everything the GM can, *except* deleting the campaign. Use this when handing temporary control to another player. |
+| **Player** | Edits notes they've been granted access to (independent view and edit flags per user), claims and edits their own party character, pings the map, views NPCs (and stat blocks) the GM has revealed, sees the active scene on the Map. |
 
 ### Joining a campaign
 
-1. GM creates a campaign → receives a 6-character join code (e.g. `X4K9MR`)
-2. Players sign up / sign in, click **Join campaign**, enter the code
-3. Players choose a display name for that campaign
+1. GM creates a campaign → receives a 6-character join code (e.g. `X4K9MR`).
+2. Players sign up / sign in, click **Join campaign**, enter the code.
+3. Players pick a display name for that campaign and (on first visit) are walked through the Character Builder.
 
 ### Note permissions
 
-Permissions are managed per user via the **Share** button in the note header (v1.0.1).
+Permissions are managed per user via the **Share** button in the note header.
 
-- The note's **author** and the campaign **GM** always have full view and edit access.
-- For every other player in the campaign, you can independently toggle **view** and **edit** access. Edit implies view.
+- The note's **author** and the campaign **GM / Co-GM** always have full view + edit.
+- For every other player you can independently toggle **view** and **edit**. Edit implies view.
 - Three quick presets stamp the matrix in one click: **GM only**, **Party view**, **Party edit**.
 
 The sidebar shows a glanceable status icon next to each note:
@@ -323,11 +391,11 @@ The sidebar shows a glanceable status icon next to each note:
 | 🔵 Blue eye | At least one player can view |
 | 🟢 Green eye | At least one player can edit |
 
-Note that the **Save** button must be clicked for body edits to broadcast to other viewers; the sidebar shows an amber dot on notes with unsaved changes.
+The **Save** button must be clicked for body edits to broadcast to other viewers; the sidebar shows an amber dot on notes with unsaved changes.
 
 ### Real-time sync
 
-All data syncs in real time via Supabase `postgres_changes` subscriptions. Changes made by the GM (moving a map token, updating a party member's HP, revealing a secret) appear instantly on all connected player screens — no refresh needed.
+All data syncs in real time via Supabase `postgres_changes` subscriptions. Changes made by the GM (moving a map token, updating a party member's HP, revealing a secret, switching the active scene) appear instantly on every connected player screen — no refresh needed.
 
 ---
 
@@ -336,31 +404,39 @@ All data syncs in real time via Supabase `postgres_changes` subscriptions. Chang
 ```
 src/
 ├── features/
-│   ├── dice/          # Dice roller + quick-dice panel + store
+│   ├── chat/          # Campaign chat, mentions, chips, whispers
+│   ├── dashboard/     # Landing page + Character Sheet + Character Builder + Level-Up modal
+│   ├── dice/          # Dice roller + draggable Quick Dice
 │   ├── homebrew/      # Custom monsters, items, spells
-│   ├── initiative/    # Combat tracker
+│   ├── initiative/    # Combat tracker (synced with HP / conditions)
 │   ├── items/         # SRD + homebrew item browser
-│   ├── map/           # Tactical map board + ping + presence
-│   ├── notes/         # Note editor, folders, wiki, decorators
-│   │   ├── LiveEditor.tsx      # CodeMirror 6 live markdown editor
-│   │   ├── SharePopover.tsx    # Per-user view/edit permission matrix
-│   │   ├── decorators.ts       # remark plugin for note syntax
-│   │   ├── notesStore.ts       # Zustand store + Supabase sync
-│   │   └── wikiIndex.ts        # Wiki link index builder
-│   ├── npcs/          # NPC tracker + stat blocks
-│   ├── party/         # Character roster
-│   ├── rules/         # SRD 5.1 reference
-│   ├── session/       # Auth, campaigns, join flow
-│   ├── shops/         # Merchant inventory manager
-│   ├── spells/        # SRD + homebrew spell browser
-│   └── transcription/ # Speech-to-text session notes
+│   ├── map/           # Scenes, image layers, tokens, shapes, ping, presence
+│   │   ├── MapBoard.tsx        # Canvas + sidebar + Edit tool
+│   │   └── mapStore.ts         # Scenes / layers / tokens stores + realtime
+│   ├── notes/         # Live editor, folders, wiki, decorators, share popover
+│   │   ├── LiveEditor.tsx
+│   │   ├── SharePopover.tsx
+│   │   ├── decorators.ts
+│   │   ├── notesStore.ts
+│   │   └── wikiIndex.ts
+│   ├── npcs/          # NPC tracker + stat blocks + permissions
+│   ├── party/         # Roster, claim flow, HP / condition sync
+│   ├── profiles/      # Per-user profile (display name, avatar)
+│   ├── rules/         # SRD 5.1 + 2024 rules browser
+│   ├── session/       # Auth, campaigns, join flow, role gating
+│   ├── settings/      # Account, export campaign, app preferences
+│   ├── spells/        # SRD + homebrew spell browser + popover
+│   ├── statblocks/    # Reusable creature stat block library
+│   ├── transcription/ # Web Speech API session journal
+│   ├── hpBar.ts       # Shared HP-bar colour math
+│   └── hpLink.ts      # Cross-surface HP / condition sync helper
 ├── hooks/
 │   └── useVisibilityReload.ts  # Re-fetch on tab focus
 ├── lib/
 │   └── supabase.ts             # Supabase client singleton
-├── data/                       # SRD 5.1 JSON (spells, items, monsters, rules)
+├── data/                       # SRD 5.1 + 2024 JSON (spells, items, monsters, rules)
 └── index.css                   # Global styles + markdown + decorator classes
 supabase/
-├── schema.sql                  # Full database schema with RLS
+├── schema.sql                  # Full canonical schema with RLS + realtime
 └── migrations/                 # Incremental schema changes
 ```
