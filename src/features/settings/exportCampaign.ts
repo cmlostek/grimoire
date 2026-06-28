@@ -39,6 +39,9 @@ export type CampaignExport = {
   homebrew: Record<string, unknown>[];
   initiative: Record<string, unknown>[];
   mapState: Record<string, unknown> | null;
+  /** Added after the original export was implemented — older snapshots
+   *  may omit this key and the import path treats absence as "no scenes". */
+  mapScenes?: Record<string, unknown>[];
   mapTokens: Record<string, unknown>[];
 };
 
@@ -64,6 +67,7 @@ export async function buildCampaignExport(campaignId: string): Promise<CampaignE
     homebrew,
     initiative,
     mapStateRow,
+    mapScenes,
     mapTokens,
   ] = await Promise.all([
     supabase.from('campaigns').select('*').eq('id', campaignId).maybeSingle().then((r) => r.data),
@@ -76,6 +80,7 @@ export async function buildCampaignExport(campaignId: string): Promise<CampaignE
     fetchAll('homebrew', campaignId),
     fetchAll('initiative_entries', campaignId),
     supabase.from('map_state').select('*').eq('campaign_id', campaignId).maybeSingle().then((r) => r.data),
+    fetchAll('map_scenes', campaignId),
     fetchAll('map_tokens', campaignId),
   ]);
 
@@ -92,6 +97,7 @@ export async function buildCampaignExport(campaignId: string): Promise<CampaignE
     homebrew,
     initiative,
     mapState: (mapStateRow as Record<string, unknown>) ?? null,
+    mapScenes,
     mapTokens,
   };
 }
