@@ -1050,13 +1050,19 @@ function MyRoleLabel({ isGM }: { isGM: boolean }) {
 /** Compact uppercase role chip used in the member roster and whisper
  *  picker. The role-specific tint replaces the previous flat slate-500
  *  treatment so GM / Co-GM / Player are immediately distinguishable at
- *  a glance. */
+ *  a glance.
+ *
+ *  Each colour is subscribed as its own primitive selector — returning
+ *  an object literal from a single selector would hand React a fresh
+ *  reference every render and trip the max-update-depth loop (#185). */
 function RosterRoleLabel({ role, suffix = '' }: { role: 'gm' | 'cogm' | 'player'; suffix?: string }) {
-  const colors = useRoleColors((s) => ({ gm: s.gm, cogm: s.cogm, player: s.player }));
+  const gm = useRoleColors((s) => s.gm);
+  const cogm = useRoleColors((s) => s.cogm);
+  const player = useRoleColors((s) => s.player);
   return (
     <div
       className="text-[10px] uppercase tracking-wider"
-      style={{ color: roleColor(role, colors) }}
+      style={{ color: roleColor(role, { gm, cogm, player }) }}
     >
       {role === 'gm' ? 'Game Master' : role === 'cogm' ? 'Co-GM' : 'Player'}
       {suffix}
