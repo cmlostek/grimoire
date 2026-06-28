@@ -29,6 +29,13 @@ import {
 } from 'lucide-react';
 import { downloadCampaignExport } from './exportCampaign';
 import { importCampaignFromExport, parseExportFile, type ImportResult } from './importCampaign';
+import {
+  useRoleColors,
+  ROLE_COLOR_SWATCHES,
+  DEFAULT_GM_COLOR,
+  DEFAULT_COGM_COLOR,
+  DEFAULT_PLAYER_COLOR,
+} from '../session/roleColorsStore';
 import PageHeader from '../../components/PageHeader';
 import { useSession } from '../session/sessionStore';
 import { useCampaignSettings } from '../notes/campaignSettingsStore';
@@ -146,6 +153,7 @@ export default function Settings() {
             checked={hoverExpand}
             onChange={setHoverExpand}
           />
+          <RoleColorRows />
         </Section>
 
         <Section title="Navigation">
@@ -305,6 +313,91 @@ export default function Settings() {
           <Row icon={<ArrowLeftRight size={14} />} label="Switch campaign" onClick={leaveCurrent} />
           <Row icon={<LogOut size={14} />} label="Sign out" onClick={signOut} danger />
         </Section>
+      </div>
+    </div>
+  );
+}
+
+/** Three rows that let the user retint the "Game Master" / "Co-GM" /
+ *  "Player" labels they see across the Dashboard and roster. Local-only
+ *  preference — these never leave the browser, so each user can pick a
+ *  palette that helps them parse the roster at a glance without imposing
+ *  it on anyone else. */
+function RoleColorRows() {
+  const gm = useRoleColors((s) => s.gm);
+  const cogm = useRoleColors((s) => s.cogm);
+  const player = useRoleColors((s) => s.player);
+  const setRoleColor = useRoleColors((s) => s.setRoleColor);
+  const resetRoleColors = useRoleColors((s) => s.resetRoleColors);
+  const allDefault =
+    gm === DEFAULT_GM_COLOR && cogm === DEFAULT_COGM_COLOR && player === DEFAULT_PLAYER_COLOR;
+  return (
+    <div className="px-4 py-3 border-b border-slate-800 last:border-b-0 space-y-2">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <div className="text-sm text-slate-200">Role label colours</div>
+          <div className="text-[11px] text-slate-500">
+            Tints the "Game Master", "Co-GM" and "Player" labels in your view. Personal — other
+            players see their own colours.
+          </div>
+        </div>
+        {!allDefault && (
+          <button
+            onClick={resetRoleColors}
+            className="text-[11px] text-slate-400 hover:text-slate-200 flex items-center gap-1 shrink-0"
+            title="Restore default colours"
+          >
+            <RotateCcw size={11} /> Reset
+          </button>
+        )}
+      </div>
+      <RoleColorRow label="Game Master" sample="Game Master" value={gm} onChange={(c) => setRoleColor('gm', c)} />
+      <RoleColorRow label="Co-GM" sample="Co-GM" value={cogm} onChange={(c) => setRoleColor('cogm', c)} />
+      <RoleColorRow label="Player" sample="Player" value={player} onChange={(c) => setRoleColor('player', c)} />
+    </div>
+  );
+}
+
+function RoleColorRow({
+  label,
+  sample,
+  value,
+  onChange,
+}: {
+  label: string;
+  sample: string;
+  value: string;
+  onChange: (color: string) => void;
+}) {
+  return (
+    <div className="flex items-center gap-3">
+      <div className="w-24 shrink-0 text-[11px] text-slate-400">{label}</div>
+      <div
+        className="text-[10px] uppercase tracking-wider w-24 shrink-0"
+        style={{ color: value }}
+        title={`Live preview — ${value}`}
+      >
+        {sample}
+      </div>
+      <div className="flex flex-wrap gap-1 flex-1">
+        {ROLE_COLOR_SWATCHES.map((c) => (
+          <button
+            key={c}
+            onClick={() => onChange(c)}
+            title={c}
+            className={`w-5 h-5 rounded-full border-2 transition-transform hover:scale-110 ${
+              value === c ? 'border-white' : 'border-transparent'
+            }`}
+            style={{ backgroundColor: c }}
+          />
+        ))}
+        <input
+          type="color"
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          className="h-5 w-6 bg-transparent border border-slate-700 rounded cursor-pointer"
+          title="Custom colour"
+        />
       </div>
     </div>
   );

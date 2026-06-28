@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Pencil, Check, X, UserPlus, MessageCircle, Camera, Trash2, User as UserIcon, Dice6, Shield, UserMinus, LogOut, ScrollText, Users as UsersIcon, ChevronLeft, Wand2 } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { useSession } from '../session/sessionStore';
+import { useRoleColors, roleColor } from '../session/roleColorsStore';
 import { useParty } from '../party/partyStore';
 import { CharCard } from '../party/Party';
 import ChatPanel from '../chat/ChatPanel';
@@ -123,9 +124,7 @@ export default function Dashboard() {
           <div className="min-w-0 flex-1">
             <DisplayNameEditor value={displayName ?? ''} onSave={updateMyDisplayName} />
             <div className="text-xs text-slate-500 mt-1">
-              <span className={isGM ? 'text-emerald-400' : 'text-sky-400'}>
-                {isGM ? 'Game Master' : 'Player'}
-              </span>
+              <MyRoleLabel isGM={isGM} />
             </div>
           </div>
         </div>
@@ -377,10 +376,7 @@ function CampaignManagementPanel({
                 <div className="text-sm font-medium truncate" style={{ color: m.color }}>
                   {m.displayName}
                 </div>
-                <div className="text-[10px] uppercase tracking-wider text-slate-500">
-                  {m.role === 'gm' ? 'Game Master' : m.role === 'cogm' ? 'Co-GM' : 'Player'}
-                  {isSelf && ' · you'}
-                </div>
+                <RosterRoleLabel role={m.role} suffix={isSelf ? ' · you' : ''} />
               </div>
               {!isSelf && m.role !== 'gm' && (
                 <button
@@ -915,9 +911,7 @@ function CampaignMembersPanel({ selfId }: { selfId: string | null }) {
             <div className="text-sm font-medium truncate" style={{ color: m.color }}>
               {m.displayName}
             </div>
-            <div className="text-[10px] uppercase tracking-wider text-slate-500">
-              {m.role === 'gm' ? 'Game Master' : m.role === 'cogm' ? 'Co-GM' : 'Player'}
-            </div>
+            <RosterRoleLabel role={m.role} />
           </div>
           <span className="text-[10px] uppercase tracking-wider text-slate-600 group-hover:text-sky-300 flex items-center gap-1">
             <MessageCircle size={11} /> Whisper
@@ -1034,6 +1028,38 @@ function ColorPicker({ value, onChange }: { value: string; onChange: (c: string)
         />
         Custom
       </label>
+    </div>
+  );
+}
+
+/** The "Game Master" / "Player" tag under the user's own display name at
+ *  the top of the dashboard. Pulls the colour from the role-colour store
+ *  so the user's chosen tint applies on every render — Co-GMs still see
+ *  the "Game Master" copy here (matches the existing isGM collapse) but
+ *  it's tinted with the GM colour. */
+function MyRoleLabel({ isGM }: { isGM: boolean }) {
+  const gm = useRoleColors((s) => s.gm);
+  const player = useRoleColors((s) => s.player);
+  return (
+    <span style={{ color: isGM ? gm : player }}>
+      {isGM ? 'Game Master' : 'Player'}
+    </span>
+  );
+}
+
+/** Compact uppercase role chip used in the member roster and whisper
+ *  picker. The role-specific tint replaces the previous flat slate-500
+ *  treatment so GM / Co-GM / Player are immediately distinguishable at
+ *  a glance. */
+function RosterRoleLabel({ role, suffix = '' }: { role: 'gm' | 'cogm' | 'player'; suffix?: string }) {
+  const colors = useRoleColors((s) => ({ gm: s.gm, cogm: s.cogm, player: s.player }));
+  return (
+    <div
+      className="text-[10px] uppercase tracking-wider"
+      style={{ color: roleColor(role, colors) }}
+    >
+      {role === 'gm' ? 'Game Master' : role === 'cogm' ? 'Co-GM' : 'Player'}
+      {suffix}
     </div>
   );
 }
