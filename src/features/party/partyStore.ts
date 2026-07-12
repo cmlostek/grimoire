@@ -148,7 +148,7 @@ export type PartyMember = {
 export const DEFAULT_GOLD: Gold = { pp: 0, gp: 0, ep: 0, sp: 0, cp: 0 };
 export const DEFAULT_DEATH_SAVES: DeathSaves = { successes: 0, failures: 0 };
 
-type Row = {
+export type Row = {
   id: string;
   campaign_id: string;
   owner_user_id: string | null;
@@ -165,7 +165,7 @@ type Row = {
   updated_at: string;
 };
 
-function rowToMember(r: Row): PartyMember {
+export function rowToMember(r: Row): PartyMember {
   const d = (r.data ?? {}) as Partial<PartyMember>;
   return {
     id: r.id,

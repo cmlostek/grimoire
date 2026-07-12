@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Pencil, Check, X, UserPlus, MessageCircle, Camera, Trash2, User as UserIcon, Dice6, Shield, UserMinus, LogOut, ScrollText, Users as UsersIcon, ChevronLeft, Wand2 } from 'lucide-react';
+import { Pencil, Check, X, UserPlus, MessageCircle, Camera, Trash2, User as UserIcon, Dice6, Shield, UserMinus, LogOut, ScrollText, Users as UsersIcon, ChevronLeft, ChevronRight, Wand2 } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { useSession } from '../session/sessionStore';
 import { useRoleColors, roleColor } from '../session/roleColorsStore';
@@ -13,6 +13,8 @@ import { supabase } from '../../lib/supabase';
 import DiceRoller from '../dice/DiceRoller';
 import CharacterSheet from './CharacterSheet';
 import CharacterBuilder from './CharacterBuilder';
+import MemberProfileModal from './MemberProfileModal';
+import CampaignSpectatorView from './CampaignSpectatorView';
 
 type DashboardTab = 'profile' | 'character' | 'chat' | 'dice' | 'manage';
 
@@ -35,11 +37,19 @@ export default function Dashboard() {
   const loadMyProfile = useSession((s) => s.loadMyProfile);
   const uploadMyAvatar = useSession((s) => s.uploadMyAvatar);
   const removeMyAvatar = useSession((s) => s.removeMyAvatar);
+  const refreshMyCampaigns = useSession((s) => s.refreshMyCampaigns);
+  const profiles = useProfiles((s) => s.profiles);
 
   // Hydrate the global profile (avatar) for this user on mount.
   useEffect(() => {
     void loadMyProfile();
   }, [userId, loadMyProfile]);
+
+  // Keep "your other campaigns" fresh — cheap idempotent fetch, and the
+  // list can go stale if the user joined/created a campaign elsewhere.
+  useEffect(() => {
+    void refreshMyCampaigns();
+  }, [userId, refreshMyCampaigns]);
 
   const party = useParty((s) => s.party);
   const partyLoaded = useParty((s) => s.loaded);
@@ -53,6 +63,9 @@ export default function Dashboard() {
   const loadChat = useChat((s) => s.loadForCampaign);
   const chatLoaded = useChat((s) => s.loaded);
   const [showBuilder, setShowBuilder] = useState(false);
+  const [profileTarget, setProfileTarget] = useState<ChatMember | null>(null);
+  const [spectatingCampaignId, setSpectatingCampaignId] = useState<string | null>(null);
+  const setWhisperTarget = useChatPanel((s) => s.setWhisperTarget);
 
   // Dashboard is often the first page visited, so the Party feature may not
   // have loaded yet. Loading here is cheap (idempotent server fetch).
@@ -167,8 +180,12 @@ export default function Dashboard() {
                 )}
               </Section>
 
+              <Section title="Other campaigns">
+                <OtherCampaignsPanel />
+              </Section>
+
               <Section title="Campaign members">
-                <CampaignMembersPanel selfId={userId} />
+                <CampaignMembersPanel selfId={userId} onOpenProfile={setProfileTarget} />
               </Section>
 
               <div className="pt-6 border-t border-slate-800">
@@ -229,6 +246,32 @@ export default function Dashboard() {
         <CharacterBuilder
           onClose={() => setShowBuilder(false)}
           onCreate={handleBuilderCreate}
+        />
+      )}
+
+      {profileTarget && campaignId && (
+        <MemberProfileModal
+          member={profileTarget}
+          party={party}
+          currentCampaignId={campaignId}
+          avatarPath={profiles[profileTarget.userId]?.avatarPath ?? null}
+          onClose={() => setProfileTarget(null)}
+          onWhisper={(uid) => {
+            setWhisperTarget(uid);
+            setTab('chat');
+            setProfileTarget(null);
+          }}
+          onSpectate={(cid) => {
+            setProfileTarget(null);
+            setSpectatingCampaignId(cid);
+          }}
+        />
+      )}
+
+      {spectatingCampaignId && (
+        <CampaignSpectatorView
+          campaignId={spectatingCampaignId}
+          onClose={() => setSpectatingCampaignId(null)}
         />
       )}
     </div>
@@ -863,13 +906,83 @@ function GmCharactersView({
 }
 
 /**
- * Lists every other campaign member with their color, role, and an at-a-glance
- * Whisper affordance. Click a row → sets them as the chat whisper recipient.
- * Avatars are currently a colored initial; real image upload comes later.
+ * Quick-switch cards for every other campaign this profile belongs to.
+ * Clicking a card calls switchToCampaign directly (skips the "leave then
+ * pick" round trip through Settings → Switch campaign → CampaignPicker).
  */
-function CampaignMembersPanel({ selfId }: { selfId: string | null }) {
+function OtherCampaignsPanel() {
+  const myCampaigns = useSession((s) => s.myCampaigns);
+  const campaignId = useSession((s) => s.campaignId);
+  const switchToCampaign = useSession((s) => s.switchToCampaign);
+  const gm = useRoleColors((s) => s.gm);
+  const cogm = useRoleColors((s) => s.cogm);
+  const player = useRoleColors((s) => s.player);
+  const [switchingId, setSwitchingId] = useState<string | null>(null);
+
+  const others = useMemo(
+    () => myCampaigns.filter((c) => c.id !== campaignId),
+    [myCampaigns, campaignId],
+  );
+
+  if (others.length === 0) {
+    return (
+      <div className="text-sm text-slate-500 italic">
+        You're only in this campaign right now.
+      </div>
+    );
+  }
+
+  const switchTo = async (id: string) => {
+    if (switchingId) return;
+    setSwitchingId(id);
+    await switchToCampaign(id);
+    setSwitchingId(null);
+  };
+
+  return (
+    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+      {others.map((c) => (
+        <button
+          key={c.id}
+          onClick={() => switchTo(c.id)}
+          disabled={switchingId === c.id}
+          className="group flex items-center justify-between gap-3 px-3 py-2.5 rounded-lg bg-slate-900 hover:bg-slate-800 border border-slate-800 hover:border-slate-700 disabled:opacity-60 text-left transition-colors"
+        >
+          <div className="min-w-0">
+            <div className="text-sm font-serif text-slate-100 truncate">{c.name}</div>
+            <div className="text-[11px] flex items-center gap-1">
+              <span style={{ color: roleColor(c.role, { gm, cogm, player }) }}>
+                {c.role === 'gm' ? 'Game Master' : c.role === 'cogm' ? 'Co-GM' : 'Player'}
+              </span>
+              <span className="opacity-50 text-slate-500">·</span>
+              <span className="text-slate-500 truncate">{c.display_name}</span>
+            </div>
+          </div>
+          {switchingId === c.id ? (
+            <span className="text-[10px] uppercase tracking-wider text-slate-500 shrink-0">Switching…</span>
+          ) : (
+            <ChevronRight size={16} className="text-slate-600 group-hover:text-sky-300 shrink-0" />
+          )}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+/**
+ * Lists every other campaign member with their color and role. Click a row
+ * to open their profile popover (avatar, bio, claimed character, other
+ * campaigns) — see `MemberProfileModal`. Avatars are currently a colored
+ * initial; real image upload comes later.
+ */
+function CampaignMembersPanel({
+  selfId,
+  onOpenProfile,
+}: {
+  selfId: string | null;
+  onOpenProfile: (m: ChatMember) => void;
+}) {
   const membersMap = useChat((s) => s.members);
-  const setWhisperTarget = useChatPanel((s) => s.setWhisperTarget);
   const profiles = useProfiles((s) => s.profiles);
   const loadProfiles = useProfiles((s) => s.loadFor);
 
@@ -902,8 +1015,8 @@ function CampaignMembersPanel({ selfId }: { selfId: string | null }) {
       {others.map((m) => (
         <button
           key={m.userId}
-          onClick={() => setWhisperTarget(m.userId)}
-          title={`Whisper @${m.displayName}`}
+          onClick={() => onOpenProfile(m)}
+          title={`View ${m.displayName}'s profile`}
           className="w-full flex items-center gap-3 px-3 py-2 rounded bg-slate-900 hover:bg-slate-800 border border-slate-800 hover:border-slate-700 transition-colors group"
         >
           <MemberAvatar color={m.color} name={m.displayName} url={avatarPublicUrl(profiles[m.userId]?.avatarPath ?? null)} />
@@ -913,9 +1026,7 @@ function CampaignMembersPanel({ selfId }: { selfId: string | null }) {
             </div>
             <RosterRoleLabel role={m.role} />
           </div>
-          <span className="text-[10px] uppercase tracking-wider text-slate-600 group-hover:text-sky-300 flex items-center gap-1">
-            <MessageCircle size={11} /> Whisper
-          </span>
+          <ChevronRight size={14} className="text-slate-600 group-hover:text-sky-300 shrink-0" />
         </button>
       ))}
     </div>

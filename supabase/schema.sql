@@ -274,6 +274,38 @@ as $func$
   select owner_user_id from notes where id = p_note;
 $func$;
 
+-- Campaign spectator access — read-only cross-campaign browsing. A user can
+-- spectate a campaign they aren't a member of as long as they share at
+-- least one campaign with someone who IS a member of it. See
+-- migrations/20260712000000_campaign_spectator.sql for the full writeup.
+create or replace function public.shares_campaign_with(p_user uuid)
+returns boolean
+language sql
+stable
+security definer
+set search_path = public
+as $func$
+  select exists (
+    select 1 from campaign_members mine
+    join campaign_members theirs on theirs.campaign_id = mine.campaign_id
+    where mine.user_id = auth.uid() and theirs.user_id = p_user
+  );
+$func$;
+
+create or replace function public.is_spectator(p_campaign uuid)
+returns boolean
+language sql
+stable
+security definer
+set search_path = public
+as $func$
+  select exists (
+    select 1 from campaign_members target
+    where target.campaign_id = p_campaign
+      and public.shares_campaign_with(target.user_id)
+  );
+$func$;
+
 
 -- =============================================
 -- SECTION 3 — Enable RLS
@@ -319,7 +351,8 @@ create policy campaigns_delete on campaigns for delete to authenticated using (
 );
 
 drop policy if exists members_select on campaign_members;
-create policy members_select on campaign_members for select to authenticated using (is_member(campaign_id));
+create policy members_select on campaign_members for select to authenticated
+  using (is_member(campaign_id) or shares_campaign_with(user_id));
 
 drop policy if exists members_insert on campaign_members;
 create policy members_insert on campaign_members for insert to authenticated with check (user_id = auth.uid());
@@ -341,6 +374,7 @@ create policy notes_select on notes for select to authenticated
     is_gm(campaign_id)
     or (is_member(campaign_id) and owner_user_id = auth.uid())
     or (is_member(campaign_id) and visible_to_players)
+    or (is_spectator(campaign_id) and visible_to_players)
     or exists (
       select 1 from note_permissions p
       where p.note_id = notes.id and p.user_id = auth.uid() and p.can_view
@@ -396,7 +430,8 @@ create policy note_permissions_write on note_permissions for all to authenticate
   );
 
 drop policy if exists party_select on party_members;
-create policy party_select on party_members for select to authenticated using (is_member(campaign_id));
+create policy party_select on party_members for select to authenticated
+  using (is_member(campaign_id) or is_spectator(campaign_id));
 
 drop policy if exists party_insert on party_members;
 create policy party_insert on party_members for insert to authenticated with check (is_gm(campaign_id));
@@ -473,7 +508,11 @@ create policy initiative_delete on initiative_entries for delete to authenticate
 
 drop policy if exists npcs_select on npcs;
 create policy npcs_select on npcs for select to authenticated
-  using (is_gm(campaign_id) or (is_member(campaign_id) and visible_to_players = true));
+  using (
+    is_gm(campaign_id)
+    or (is_member(campaign_id) and visible_to_players = true)
+    or (is_spectator(campaign_id) and visible_to_players = true)
+  );
 
 drop policy if exists npcs_insert on npcs;
 create policy npcs_insert on npcs for insert to authenticated with check (is_gm(campaign_id));
