@@ -332,6 +332,14 @@ export default function Notes() {
   // ── Campaign-wide presence (sidebar: who has which note open) ─────────────
   const [notePresence, setNotePresence] = useState<Record<string, PresenceUser[]>>({});
   const presenceChannelRef = useRef<ReturnType<typeof supabase.channel> | null>(null);
+  // Tracks a channel whose teardown is delayed (see presence effect below) so
+  // a React 19 StrictMode phantom remount can cancel it and reuse the live
+  // channel instead of racing Supabase's topic registry.
+  const pendingPresenceTeardownRef = useRef<{
+    channel: ReturnType<typeof supabase.channel>;
+    topic: string;
+    timer: ReturnType<typeof setTimeout>;
+  } | null>(null);
 
   // ── Load data for campaign ────────────────────────────────────────────────
   useEffect(() => {
@@ -372,8 +380,41 @@ export default function Notes() {
   useEffect(() => {
     if (!campaignId || !userId) return;
     const { color } = userCollabColor(userId);
+    const topic = `notes-presence:${campaignId}`;
 
-    const ch = supabase.channel(`notes-presence:${campaignId}`);
+    // React 19 StrictMode double-invokes this effect on mount (setup →
+    // cleanup → setup again) within the same synchronous tick. Supabase's
+    // RealtimeClient.channel(topic) returns the SAME channel object while a
+    // topic is still registered, and a channel mid-teardown can neither be
+    // re-listened-on (throws if still 'joined'/'joining') nor re-subscribed
+    // (silently no-ops until it reaches 'closed', which only happens after a
+    // server round-trip). So if a teardown from a phantom first mount is
+    // still pending below, cancel it and reuse the live channel instead of
+    // racing it.
+    const pending = pendingPresenceTeardownRef.current;
+    if (pending && pending.topic === topic) {
+      clearTimeout(pending.timer);
+      pendingPresenceTeardownRef.current = null;
+      presenceChannelRef.current = pending.channel;
+      return () => {
+        const reused = pending.channel;
+        void reused.untrack();
+        presenceChannelRef.current = null;
+        setNotePresence({});
+        pendingPresenceTeardownRef.current = {
+          channel: reused,
+          topic,
+          // Delay teardown so the untrack message has time to flush over the
+          // WebSocket before the connection is closed (see below).
+          timer: setTimeout(() => {
+            pendingPresenceTeardownRef.current = null;
+            supabase.removeChannel(reused);
+          }, 400),
+        };
+      };
+    }
+
+    const ch = supabase.channel(topic);
     presenceChannelRef.current = ch;
 
     // Rebuild the presence map from the full Supabase Presence state.
@@ -428,9 +469,17 @@ export default function Notes() {
       setNotePresence({});
       // Delay channel teardown so the untrack message has time to flush over
       // the WebSocket before the connection is closed. Without the delay,
-      // peers keep seeing the stale dot for up to 30 seconds.
-      const channel = ch;
-      setTimeout(() => supabase.removeChannel(channel), 400);
+      // peers keep seeing the stale dot for up to 30 seconds. The delay is
+      // cancelable (see top of this effect) so a StrictMode phantom remount
+      // can reuse this channel instead of colliding with it mid-teardown.
+      pendingPresenceTeardownRef.current = {
+        channel: ch,
+        topic,
+        timer: setTimeout(() => {
+          pendingPresenceTeardownRef.current = null;
+          supabase.removeChannel(ch);
+        }, 400),
+      };
     };
   }, [campaignId, userId, displayName]);
 
