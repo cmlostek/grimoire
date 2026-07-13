@@ -13,6 +13,10 @@ export type Note = {
   /** Legacy: kept in sync with note_permissions for older clients. */
   player_editable: boolean | null;
   owner_user_id: string | null;
+  /** Immutable author — who first created the note. GM-authored notes have
+   *  owner_user_id = null but created_by = the GM, so this is how a GM's
+   *  "own" notes are identified (see ownsNote in Dashboard). */
+  created_by: string | null;
   icon: string | null;
   created_at: string;
   updated_at: string;

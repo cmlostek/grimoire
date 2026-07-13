@@ -942,6 +942,17 @@ function GmCharactersView({
 
 type NoteTab = 'all' | 'owned' | 'editor' | 'view';
 
+/**
+ * Whether `userId` counts as the owner of a note. A note is yours if you're
+ * its explicit owner, OR if it has no explicit owner and you created it —
+ * the latter covers GM-authored notes, which are stored with
+ * owner_user_id = null but created_by = the GM.
+ */
+function ownsNote(note: Note, userId: string | null): boolean {
+  if (!userId) return false;
+  return note.owner_user_id === userId || (note.owner_user_id === null && note.created_by === userId);
+}
+
 function relativeTime(iso: string): string {
   const ms = Date.now() - new Date(iso).getTime();
   const min = Math.floor(ms / 60000);
@@ -985,7 +996,7 @@ function RecentNotesPanel({
   const filtered = useMemo(() => {
     if (noteTab === 'all') return visible;
     return visible.filter((n) => {
-      const owned = n.owner_user_id === userId;
+      const owned = ownsNote(n, userId);
       const edit = isGM || canEditNote(n, userId, role, permissions[n.id] ?? EMPTY_PERMS);
       if (noteTab === 'owned') return owned;
       if (noteTab === 'editor') return !owned && edit;
@@ -1028,7 +1039,7 @@ function RecentNotesPanel({
       ) : (
         <div className="flex gap-2 overflow-x-auto scrollbar-none pb-1">
           {sorted.map((n) => {
-            const owned = n.owner_user_id === userId;
+            const owned = ownsNote(n, userId);
             const edit = isGM || owned || canEditNote(n, userId, role, permissions[n.id] ?? EMPTY_PERMS);
             const label = owned ? 'Owner' : edit ? 'Editor' : 'View';
             return (
