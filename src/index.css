@@ -192,6 +192,39 @@ html.light .cm-fold-arrow:hover { color: #1e293b !important; }  /* slate-800 */
 html.light .cm-selectionBackground,
 html.light .cm-focused .cm-selectionBackground { background-color: #bae6fd !important; }
 
+/* ─── Dark-mode colour themes ──────────────────────────────────────────────
+   themeStore.apply() swaps the accent ramp (var(--ac-*)) and toggles a
+   `theme-<colour>` class on <html> when a non-blue theme is active in dark
+   mode. These rules tint the three core dark surfaces (plus the surfaces
+   plumbed through CSS vars) toward the chosen hue via color-mix, so the whole
+   app shifts — not just accents. Blue is the neutral default and gets no
+   class, so it keeps the original slate palette untouched. */
+html.theme-red    { --theme-hue: #f43f5e; }
+html.theme-green  { --theme-hue: #10b981; }
+html.theme-purple { --theme-hue: #8b5cf6; }
+html.theme-teal   { --theme-hue: #14b8a6; }
+
+html.theme-red, html.theme-green, html.theme-purple, html.theme-teal {
+  --surface-elev:          color-mix(in srgb, #0f172a 89%, var(--theme-hue));
+  --editor-bg:             color-mix(in srgb, #020617 91%, var(--theme-hue));
+  --chat-input-bg:         color-mix(in srgb, #020617 91%, var(--theme-hue));
+  --chat-suggest-bg:       color-mix(in srgb, #0f172a 89%, var(--theme-hue));
+  --chat-suggest-hover-bg: color-mix(in srgb, #1e293b 87%, var(--theme-hue));
+}
+
+html.theme-red    .bg-slate-950, html.theme-green  .bg-slate-950,
+html.theme-purple .bg-slate-950, html.theme-teal   .bg-slate-950 {
+  background-color: color-mix(in srgb, #020617 91%, var(--theme-hue)) !important;
+}
+html.theme-red    .bg-slate-900, html.theme-green  .bg-slate-900,
+html.theme-purple .bg-slate-900, html.theme-teal   .bg-slate-900 {
+  background-color: color-mix(in srgb, #0f172a 89%, var(--theme-hue)) !important;
+}
+html.theme-red    .bg-slate-800, html.theme-green  .bg-slate-800,
+html.theme-purple .bg-slate-800, html.theme-teal   .bg-slate-800 {
+  background-color: color-mix(in srgb, #1e293b 87%, var(--theme-hue)) !important;
+}
+
 html, body, #root { height: 100%; }
 body { margin: 0; }
 
