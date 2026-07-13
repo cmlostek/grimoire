@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import { supabase } from '../../lib/supabase';
+import type { CampaignSummary } from '../session/sessionStore';
 
 export type UserProfile = {
   userId: string;
@@ -11,6 +12,34 @@ export function avatarPublicUrl(path: string | null): string | null {
   if (!path) return null;
   const { data } = supabase.storage.from('avatars').getPublicUrl(path);
   return data.publicUrl;
+}
+
+/**
+ * Every campaign a given user belongs to, as visible to the caller under
+ * RLS: their own campaigns fully, plus (via `shares_campaign_with`) any
+ * campaign belonging to someone the caller already shares a campaign with.
+ * Powers the Dashboard member-profile popover's "their campaigns" list.
+ * Fetched fresh on demand rather than cached in the store.
+ */
+export async function fetchUserCampaigns(userId: string): Promise<CampaignSummary[]> {
+  const { data, error } = await supabase
+    .from('campaign_members')
+    .select('role, display_name, campaigns!inner(id, name, join_code)')
+    .eq('user_id', userId);
+  if (error) {
+    console.error('[profiles] fetchUserCampaigns failed', error);
+    return [];
+  }
+  return (data ?? []).map((row) => {
+    const c = row.campaigns as unknown as { id: string; name: string; join_code: string };
+    return {
+      id: c.id,
+      name: c.name,
+      join_code: c.join_code,
+      role: row.role as CampaignSummary['role'],
+      display_name: row.display_name as string,
+    };
+  });
 }
 
 interface State {

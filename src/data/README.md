@@ -21,9 +21,26 @@ canonical JSON port of the WotC SRD 5.1 used by the public dnd5eapi.co.
 Spells/items/magic items/rules (used by the catalog pages):
 
 - `5e-SRD-Spells-2024.json` (339 entries)
-- `5e-SRD-Equipment-2024.json` (167 entries)
-- `5e-SRD-Magic-Items-2024.json` (258 entries)
+- `5e-SRD-Equipment-2024.json` (220 entries)
+- `5e-SRD-Magic-Items-2024.json` (282 entries)
 - `5e-SRD-Rule-Sections-2024.json` (154 entries)
+
+Equipment and magic items are merged from two sources (see
+`scripts/merge-srd-2024-canonical.mjs`): the markdown parse below, topped up
+with [5e-bits/5e-database](https://github.com/5e-bits/5e-database)'s `2024`
+branch — a structured, actively-maintained JSON port of the same SRD 5.2.1
+(MIT-licensed tooling over OGL 1.0a content) that started shipping 2024 data
+in 2026. Where both sources have an entry, 5e-bits wins (it carries richer
+structure — weapon mastery, tool crafting/utilize DCs, armor don/doff times);
+entries only the markdown parser found (mounts, vehicles, hirelings,
+lifestyle expenses, aggregated magic-item variants like "+1/+2/+3 Weapon")
+are kept as-is. 5e-bits doesn't have 2024 spells or rules-glossary data yet,
+so those two stay markdown-only. Re-run the merge whenever 5e-bits adds more
+2024 entries:
+
+```sh
+node scripts/merge-srd-2024-canonical.mjs
+```
 
 Character-builder corpus (consumed by the level-up + character creation flows
 coming in phases 4–5):
@@ -52,11 +69,17 @@ curl -sL https://raw.githubusercontent.com/downfallx/dnd-5e-srd-markdown/master/
 
 # 2. Re-parse to src/data
 node scripts/parse-srd-2024.mjs
+
+# 3. Top up Equipment/Magic-Items with the 5e-bits canonical dataset
+node scripts/merge-srd-2024-canonical.mjs
 ```
 
-The 2024 dataset is intentionally a subset of the printed SRD 5.2.1 — for
-example, generic crafting tools and trade goods aren't enumerated as discrete
-items in the markdown source, so they don't appear in the equipment list.
+Classes/species/backgrounds/feats are markdown-only and intentionally a
+subset of the printed SRD 5.2.1 — the free SRD itself only ships one
+subclass per class, 4 backgrounds, and 17 feats (see WotC's SRD 5.2.1 for
+what's excluded from the free release). Equipment and magic items are no
+longer capped by the markdown parser's table-matching heuristics; see the
+merge step above.
 
 ## How the app uses both editions
 

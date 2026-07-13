@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import {
   Sun,
   Moon,
@@ -21,10 +21,21 @@ import {
   Mic,
   BookOpen,
   Download,
+  Upload,
+  CheckCircle2,
+  AlertCircle,
   Mail,
   KeyRound,
 } from 'lucide-react';
 import { downloadCampaignExport } from './exportCampaign';
+import { importCampaignFromExport, parseExportFile, type ImportResult } from './importCampaign';
+import {
+  useRoleColors,
+  ROLE_COLOR_SWATCHES,
+  DEFAULT_GM_COLOR,
+  DEFAULT_COGM_COLOR,
+  DEFAULT_PLAYER_COLOR,
+} from '../session/roleColorsStore';
 import PageHeader from '../../components/PageHeader';
 import { useSession } from '../session/sessionStore';
 import { useCampaignSettings } from '../notes/campaignSettingsStore';
@@ -61,6 +72,41 @@ export default function Settings() {
   const campaignId = useSession((s) => s.campaignId);
   const campaignName = useSession((s) => s.campaignName);
   const [exporting, setExporting] = useState(false);
+  const importInputRef = useRef<HTMLInputElement>(null);
+  const [importing, setImporting] = useState(false);
+  const [importPhase, setImportPhase] = useState('');
+  const [importResult, setImportResult] = useState<ImportResult | null>(null);
+  const [importError, setImportError] = useState<string | null>(null);
+
+  const onPickImportFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const f = e.target.files?.[0];
+    e.target.value = '';
+    if (!f) return;
+    setImporting(true);
+    setImportError(null);
+    setImportResult(null);
+    setImportPhase('Reading file');
+    try {
+      const data = await parseExportFile(f);
+      const result = await importCampaignFromExport(data, (phase) => setImportPhase(phase));
+      setImportResult(result);
+    } catch (err) {
+      setImportError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setImporting(false);
+      setImportPhase('');
+    }
+  };
+
+  const switchToImported = () => {
+    if (!importResult) return;
+    // Hand the new campaign id off to the session bootstrap by writing it
+    // to the same localStorage key the session store reads on init, then
+    // reload so every per-feature store rehydrates against the new id.
+    localStorage.setItem('dnd-gm:campaignId', importResult.campaignId);
+    window.location.reload();
+  };
+
   const { mode, toggle: toggleMode } = useTheme();
   const hoverExpand = useSidebar((s) => s.hoverExpand);
   const setHoverExpand = useSidebar((s) => s.setHoverExpand);
@@ -107,6 +153,7 @@ export default function Settings() {
             checked={hoverExpand}
             onChange={setHoverExpand}
           />
+          <RoleColorRows />
         </Section>
 
         <Section title="Navigation">
@@ -194,6 +241,72 @@ export default function Settings() {
           </Section>
         )}
 
+        <Section title="Backup & restore">
+          <Row
+            icon={<Upload size={14} />}
+            label={importing ? `Importing — ${importPhase || 'working'}…` : 'Import campaign'}
+            hint="Load a Grimoire export JSON to create a new campaign with everything from the backup. Your current campaign is not modified."
+            onClick={() => {
+              if (importing) return;
+              importInputRef.current?.click();
+            }}
+          />
+          <input
+            ref={importInputRef}
+            type="file"
+            accept="application/json,.json"
+            className="hidden"
+            onChange={onPickImportFile}
+          />
+          {importError && (
+            <div className="px-4 py-3 border-t border-slate-800 flex items-start gap-2 text-[12px] text-rose-300">
+              <AlertCircle size={14} className="text-rose-400 shrink-0 mt-0.5" />
+              <div className="flex-1 min-w-0">
+                <div className="font-medium">Import failed</div>
+                <div className="text-rose-400/90 break-words">{importError}</div>
+              </div>
+              <button
+                onClick={() => setImportError(null)}
+                className="text-rose-400/70 hover:text-rose-200 shrink-0"
+              >
+                Dismiss
+              </button>
+            </div>
+          )}
+          {importResult && (
+            <div className="px-4 py-3 border-t border-slate-800 text-[12px] text-slate-200">
+              <div className="flex items-start gap-2">
+                <CheckCircle2 size={14} className="text-emerald-400 shrink-0 mt-0.5" />
+                <div className="flex-1 min-w-0">
+                  <div className="font-medium">
+                    Created <span className="text-emerald-300">{importResult.campaignName}</span>
+                  </div>
+                  <div className="text-slate-400 mt-0.5">
+                    Join code{' '}
+                    <span className="font-mono text-sky-300">{importResult.joinCode}</span> ·
+                    {' '}
+                    {summariseCounts(importResult)}
+                  </div>
+                  <div className="mt-2 flex items-center gap-2">
+                    <button
+                      onClick={switchToImported}
+                      className="text-[11px] px-2 py-1 rounded bg-sky-700 hover:bg-sky-600 text-white"
+                    >
+                      Switch to it now
+                    </button>
+                    <button
+                      onClick={() => setImportResult(null)}
+                      className="text-[11px] px-2 py-1 rounded text-slate-400 hover:text-slate-200"
+                    >
+                      Dismiss
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+        </Section>
+
         <Section title="Account">
           <AccountEmailRow email={email} />
           <AccountPasswordRow email={email} />
@@ -203,6 +316,107 @@ export default function Settings() {
       </div>
     </div>
   );
+}
+
+/** Three rows that let the user retint the "Game Master" / "Co-GM" /
+ *  "Player" labels they see across the Dashboard and roster. Local-only
+ *  preference — these never leave the browser, so each user can pick a
+ *  palette that helps them parse the roster at a glance without imposing
+ *  it on anyone else. */
+function RoleColorRows() {
+  const gm = useRoleColors((s) => s.gm);
+  const cogm = useRoleColors((s) => s.cogm);
+  const player = useRoleColors((s) => s.player);
+  const setRoleColor = useRoleColors((s) => s.setRoleColor);
+  const resetRoleColors = useRoleColors((s) => s.resetRoleColors);
+  const allDefault =
+    gm === DEFAULT_GM_COLOR && cogm === DEFAULT_COGM_COLOR && player === DEFAULT_PLAYER_COLOR;
+  return (
+    <div className="px-4 py-3 border-b border-slate-800 last:border-b-0 space-y-2">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <div className="text-sm text-slate-200">Role label colours</div>
+          <div className="text-[11px] text-slate-500">
+            Tints the "Game Master", "Co-GM" and "Player" labels in your view. Personal — other
+            players see their own colours.
+          </div>
+        </div>
+        {!allDefault && (
+          <button
+            onClick={resetRoleColors}
+            className="text-[11px] text-slate-400 hover:text-slate-200 flex items-center gap-1 shrink-0"
+            title="Restore default colours"
+          >
+            <RotateCcw size={11} /> Reset
+          </button>
+        )}
+      </div>
+      <RoleColorRow label="Game Master" sample="Game Master" value={gm} onChange={(c) => setRoleColor('gm', c)} />
+      <RoleColorRow label="Co-GM" sample="Co-GM" value={cogm} onChange={(c) => setRoleColor('cogm', c)} />
+      <RoleColorRow label="Player" sample="Player" value={player} onChange={(c) => setRoleColor('player', c)} />
+    </div>
+  );
+}
+
+function RoleColorRow({
+  label,
+  sample,
+  value,
+  onChange,
+}: {
+  label: string;
+  sample: string;
+  value: string;
+  onChange: (color: string) => void;
+}) {
+  return (
+    <div className="flex items-center gap-3">
+      <div className="w-24 shrink-0 text-[11px] text-slate-400">{label}</div>
+      <div
+        className="text-[10px] uppercase tracking-wider w-24 shrink-0"
+        style={{ color: value }}
+        title={`Live preview — ${value}`}
+      >
+        {sample}
+      </div>
+      <div className="flex flex-wrap gap-1 flex-1">
+        {ROLE_COLOR_SWATCHES.map((c) => (
+          <button
+            key={c}
+            onClick={() => onChange(c)}
+            title={c}
+            className={`w-5 h-5 rounded-full border-2 transition-transform hover:scale-110 ${
+              value === c ? 'border-white' : 'border-transparent'
+            }`}
+            style={{ backgroundColor: c }}
+          />
+        ))}
+        <input
+          type="color"
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          className="h-5 w-6 bg-transparent border border-slate-700 rounded cursor-pointer"
+          title="Custom colour"
+        />
+      </div>
+    </div>
+  );
+}
+
+/** Compact "37 notes, 12 NPCs, 4 scenes" line for the import-result panel.
+ *  Skips zero-count buckets so a small import doesn't list seven zeros. */
+function summariseCounts(r: ImportResult): string {
+  const c = r.counts;
+  const parts: string[] = [];
+  if (c.notes) parts.push(`${c.notes} note${c.notes === 1 ? '' : 's'}`);
+  if (c.folders) parts.push(`${c.folders} folder${c.folders === 1 ? '' : 's'}`);
+  if (c.party) parts.push(`${c.party} PC${c.party === 1 ? '' : 's'}`);
+  if (c.npcs) parts.push(`${c.npcs} NPC${c.npcs === 1 ? '' : 's'}`);
+  if (c.homebrew) parts.push(`${c.homebrew} homebrew`);
+  if (c.scenes) parts.push(`${c.scenes} scene${c.scenes === 1 ? '' : 's'}`);
+  if (c.tokens) parts.push(`${c.tokens} token${c.tokens === 1 ? '' : 's'}`);
+  if (c.initiative) parts.push(`${c.initiative} initiative row${c.initiative === 1 ? '' : 's'}`);
+  return parts.length ? parts.join(', ') : 'empty backup';
 }
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
