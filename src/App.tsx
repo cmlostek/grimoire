@@ -52,6 +52,7 @@ export default function App() {
   const loading = useSession((s) => s.loading);
   const userId = useSession((s) => s.userId);
   const campaignId = useSession((s) => s.campaignId);
+  const recovery = useSession((s) => s.recovery);
 
   useEffect(() => {
     bootstrap();
@@ -65,6 +66,9 @@ export default function App() {
     );
   }
 
+  // Returning from a password-reset email link — show the reset screen even if
+  // the recovery session makes the user look signed in.
+  if (recovery) return <CampaignPicker />;
   if (!userId) return <CampaignPicker />;
   if (!campaignId) return <CampaignPicker />;
 

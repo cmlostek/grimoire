@@ -1,13 +1,15 @@
 import { useEffect, useState } from 'react';
 import { useSession, rememberedDisplayName } from './sessionStore';
-import { Swords, LogIn, Plus, ChevronRight, Mail, KeyRound } from 'lucide-react';
+import { Swords, LogIn, Plus, ChevronRight, Mail, KeyRound, ArrowLeft } from 'lucide-react';
 
 type Mode = 'choose' | 'create' | 'join';
-type AuthMode = 'signin' | 'signup';
+type AuthMode = 'signin' | 'signup' | 'forgot';
 
 export default function CampaignPicker() {
   const userId = useSession((s) => s.userId);
+  const recovery = useSession((s) => s.recovery);
 
+  if (recovery) return <ResetPasswordScreen />;
   if (!userId) return <AuthScreen />;
   return <CampaignScreen />;
 }
@@ -16,15 +18,33 @@ function AuthScreen() {
   const [mode, setMode] = useState<AuthMode>('signin');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [notice, setNotice] = useState<string | null>(null);
   const signIn = useSession((s) => s.signIn);
   const signUp = useSession((s) => s.signUp);
+  const resetPassword = useSession((s) => s.resetPassword);
   const error = useSession((s) => s.error);
   const loading = useSession((s) => s.loading);
 
   const submit = () => {
+    if (mode === 'forgot') return;
     if (!email.trim() || !password.trim()) return;
     if (mode === 'signin') signIn(email.trim(), password);
     else signUp(email.trim(), password);
+  };
+
+  const sendReset = async () => {
+    if (!email.trim() || loading) return;
+    setNotice(null);
+    const res = await resetPassword(email);
+    if (res.ok) {
+      setNotice('If an account exists for that email, a reset link is on its way.');
+    }
+  };
+
+  const switchMode = (m: AuthMode) => {
+    setMode(m);
+    setNotice(null);
+    useSession.setState({ error: null });
   };
 
   return (
@@ -38,22 +58,37 @@ function AuthScreen() {
         </div>
 
         <div className="bg-slate-900 border border-slate-800 rounded-lg p-4 space-y-3">
-          <div className="flex gap-1 rounded overflow-hidden border border-slate-800 text-xs">
+          {mode === 'forgot' ? (
             <button
-              onClick={() => setMode('signin')}
-              className={`flex-1 py-1.5 ${mode !== 'signin' ? 'bg-slate-900 text-slate-400 hover:bg-slate-800' : ''}`}
-              style={mode === 'signin' ? { background: 'color-mix(in srgb, var(--ac-900) 40%, transparent)', color: 'var(--auth-tab-active-fg)' } : undefined}
+              onClick={() => switchMode('signin')}
+              className="flex items-center gap-1.5 text-xs text-slate-400 hover:text-slate-200"
             >
-              Sign in
+              <ArrowLeft size={13} /> Back to sign in
             </button>
-            <button
-              onClick={() => setMode('signup')}
-              className={`flex-1 py-1.5 ${mode !== 'signup' ? 'bg-slate-900 text-slate-400 hover:bg-slate-800' : ''}`}
-              style={mode === 'signup' ? { background: 'color-mix(in srgb, var(--ac-900) 40%, transparent)', color: 'var(--auth-tab-active-fg)' } : undefined}
-            >
-              Create account
-            </button>
-          </div>
+          ) : (
+            <div className="flex gap-1 rounded overflow-hidden border border-slate-800 text-xs">
+              <button
+                onClick={() => switchMode('signin')}
+                className={`flex-1 py-1.5 ${mode !== 'signin' ? 'bg-slate-900 text-slate-400 hover:bg-slate-800' : ''}`}
+                style={mode === 'signin' ? { background: 'color-mix(in srgb, var(--ac-900) 40%, transparent)', color: 'var(--auth-tab-active-fg)' } : undefined}
+              >
+                Sign in
+              </button>
+              <button
+                onClick={() => switchMode('signup')}
+                className={`flex-1 py-1.5 ${mode !== 'signup' ? 'bg-slate-900 text-slate-400 hover:bg-slate-800' : ''}`}
+                style={mode === 'signup' ? { background: 'color-mix(in srgb, var(--ac-900) 40%, transparent)', color: 'var(--auth-tab-active-fg)' } : undefined}
+              >
+                Create account
+              </button>
+            </div>
+          )}
+
+          {mode === 'forgot' && (
+            <div className="text-xs text-slate-500">
+              Enter your account email and we'll send you a link to reset your password.
+            </div>
+          )}
 
           <label className="block">
             <div className="text-xs text-slate-400 mb-1">Email</div>
@@ -63,38 +98,66 @@ function AuthScreen() {
                 type="email"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
-                onKeyDown={(e) => e.key === 'Enter' && submit()}
+                onKeyDown={(e) => e.key === 'Enter' && (mode === 'forgot' ? sendReset() : submit())}
                 placeholder="you@example.com"
                 className="w-full bg-slate-800 border border-slate-700 rounded pl-7 pr-2 py-1.5 text-sm"
               />
             </div>
           </label>
 
-          <label className="block">
-            <div className="text-xs text-slate-400 mb-1">Password</div>
-            <div className="relative">
-              <KeyRound size={13} className="absolute left-2 top-1/2 -translate-y-1/2 text-slate-500" />
-              <input
-                type="password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                onKeyDown={(e) => e.key === 'Enter' && submit()}
-                placeholder="••••••••"
-                className="w-full bg-slate-800 border border-slate-700 rounded pl-7 pr-2 py-1.5 text-sm"
-              />
-            </div>
-          </label>
+          {mode !== 'forgot' && (
+            <label className="block">
+              <div className="text-xs text-slate-400 mb-1">Password</div>
+              <div className="relative">
+                <KeyRound size={13} className="absolute left-2 top-1/2 -translate-y-1/2 text-slate-500" />
+                <input
+                  type="password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  onKeyDown={(e) => e.key === 'Enter' && submit()}
+                  placeholder="••••••••"
+                  className="w-full bg-slate-800 border border-slate-700 rounded pl-7 pr-2 py-1.5 text-sm"
+                />
+              </div>
+            </label>
+          )}
 
-          <button
-            onClick={submit}
-            disabled={!email.trim() || !password.trim() || loading}
-            className="ac-btn w-full px-3 py-2 rounded disabled:bg-slate-800 disabled:text-slate-600 font-semibold text-sm flex items-center justify-center gap-2"
-          >
-            <LogIn size={14} />
-            {mode === 'signin' ? 'Sign in' : 'Create account'}
-          </button>
+          {mode === 'forgot' ? (
+            <button
+              onClick={sendReset}
+              disabled={!email.trim() || loading}
+              className="ac-btn w-full px-3 py-2 rounded disabled:bg-slate-800 disabled:text-slate-600 font-semibold text-sm flex items-center justify-center gap-2"
+            >
+              <Mail size={14} /> Send reset link
+            </button>
+          ) : (
+            <button
+              onClick={submit}
+              disabled={!email.trim() || !password.trim() || loading}
+              className="ac-btn w-full px-3 py-2 rounded disabled:bg-slate-800 disabled:text-slate-600 font-semibold text-sm flex items-center justify-center gap-2"
+            >
+              <LogIn size={14} />
+              {mode === 'signin' ? 'Sign in' : 'Create account'}
+            </button>
+          )}
+
+          {mode === 'signin' && (
+            <div className="text-center">
+              <button
+                onClick={() => switchMode('forgot')}
+                className="text-xs text-slate-500 hover:text-slate-300 underline underline-offset-2"
+              >
+                Forgot password?
+              </button>
+            </div>
+          )}
         </div>
 
+        {notice && (
+          <div className="text-sm text-emerald-300 bg-emerald-950/40 border border-emerald-900 rounded p-3">
+            {notice}
+          </div>
+        )}
         {error && (
           <div className="text-sm text-rose-300 bg-rose-950/40 border border-rose-900 rounded p-3">
             {error}
@@ -103,6 +166,102 @@ function AuthScreen() {
         {mode === 'signup' && !error && (
           <div className="text-xs text-slate-500 text-center">
             After signing up you may need to confirm your email before signing in.
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function ResetPasswordScreen() {
+  const updatePassword = useSession((s) => s.updatePassword);
+  const clearRecovery = useSession((s) => s.clearRecovery);
+  const [password, setPassword] = useState('');
+  const [confirm, setConfirm] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const [done, setDone] = useState(false);
+  const [busy, setBusy] = useState(false);
+
+  const submit = async () => {
+    if (busy) return;
+    if (password.length < 6) {
+      setError('Password must be at least 6 characters.');
+      return;
+    }
+    if (password !== confirm) {
+      setError('Passwords do not match.');
+      return;
+    }
+    setError(null);
+    setBusy(true);
+    const res = await updatePassword(password);
+    setBusy(false);
+    if (res.ok) setDone(true);
+    else setError(res.error);
+  };
+
+  return (
+    <div className="h-full w-full flex items-center justify-center bg-slate-950 text-slate-100 p-6">
+      <div className="w-full max-w-sm space-y-6">
+        <div className="text-center space-y-1">
+          <div className="font-serif text-3xl tracking-wide flex items-center justify-center gap-3">
+            <Swords style={{ color: 'var(--ac-400)' }} size={28} /> Grimoire
+          </div>
+          <div className="text-sm text-slate-500">Set a new password</div>
+        </div>
+
+        {done ? (
+          <div className="bg-slate-900 border border-slate-800 rounded-lg p-4 space-y-3 text-center">
+            <div className="text-sm text-emerald-300">Your password has been updated.</div>
+            <button
+              onClick={clearRecovery}
+              className="ac-btn w-full px-3 py-2 rounded font-semibold text-sm"
+            >
+              Continue
+            </button>
+          </div>
+        ) : (
+          <div className="bg-slate-900 border border-slate-800 rounded-lg p-4 space-y-3">
+            <label className="block">
+              <div className="text-xs text-slate-400 mb-1">New password</div>
+              <div className="relative">
+                <KeyRound size={13} className="absolute left-2 top-1/2 -translate-y-1/2 text-slate-500" />
+                <input
+                  type="password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  placeholder="••••••••"
+                  className="w-full bg-slate-800 border border-slate-700 rounded pl-7 pr-2 py-1.5 text-sm"
+                />
+              </div>
+            </label>
+            <label className="block">
+              <div className="text-xs text-slate-400 mb-1">Confirm password</div>
+              <div className="relative">
+                <KeyRound size={13} className="absolute left-2 top-1/2 -translate-y-1/2 text-slate-500" />
+                <input
+                  type="password"
+                  value={confirm}
+                  onChange={(e) => setConfirm(e.target.value)}
+                  onKeyDown={(e) => e.key === 'Enter' && submit()}
+                  placeholder="••••••••"
+                  className="w-full bg-slate-800 border border-slate-700 rounded pl-7 pr-2 py-1.5 text-sm"
+                />
+              </div>
+            </label>
+            <button
+              onClick={submit}
+              disabled={!password || !confirm || busy}
+              className="ac-btn w-full px-3 py-2 rounded disabled:bg-slate-800 disabled:text-slate-600 font-semibold text-sm"
+            >
+              Update password
+            </button>
+          </div>
+        )}
+
+        {error && (
+          <div className="text-sm text-rose-300 bg-rose-950/40 border border-rose-900 rounded p-3">
+            {error}
           </div>
         )}
       </div>
