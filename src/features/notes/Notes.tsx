@@ -60,6 +60,7 @@ import {
   AlignRight,
   List,
   ChevronDown,
+  GripVertical,
 } from 'lucide-react';
 import { useVisibilityReload } from '../../hooks/useVisibilityReload';
 import { useCampaignSettings } from './campaignSettingsStore';
@@ -227,6 +228,24 @@ type DragItem =
   | { kind: 'note'; id: string }
   | { kind: 'folder'; id: string };
 
+/** Applies a user's saved manual drag order (Custom sort mode) to a list of
+ *  notes already scoped to one folder/root group. Notes not yet present in
+ *  the saved order (e.g. created after the last reorder) are appended at
+ *  the end, keeping their existing relative order. */
+function applyNoteOrder(list: Note[], folderKey: string, noteOrder: Record<string, string[]>): Note[] {
+  const order = noteOrder[folderKey];
+  if (!order || order.length === 0) return list;
+  const pos = new Map(order.map((id, i) => [id, i]));
+  return [...list].sort((a, b) => {
+    const ai = pos.get(a.id);
+    const bi = pos.get(b.id);
+    if (ai !== undefined && bi !== undefined) return ai - bi;
+    if (ai !== undefined) return -1;
+    if (bi !== undefined) return 1;
+    return 0;
+  });
+}
+
 export default function Notes() {
   const campaignId = useSession((s) => s.campaignId);
   const userId = useSession((s) => s.userId);
@@ -240,6 +259,8 @@ export default function Notes() {
   const folders = useNotes((s) => s.folders);
   const drafts = useNotes((s) => s.drafts);
   const permissions = useNotes((s) => s.permissions);
+  const noteOrder = useNotes((s) => s.noteOrder);
+  const reorderNotes = useNotes((s) => s.reorderNotes);
   const activeNoteId = useNotes((s) => s.activeNoteId);
   const loadForCampaign = useNotes((s) => s.loadForCampaign);
   const subscribe = useNotes((s) => s.subscribe);
@@ -561,10 +582,35 @@ export default function Notes() {
       return next;
     });
   }, []);
-  const [sortMode, setSortMode] = useState<'updated' | 'alpha'>(() => {
+  const [sortMode, setSortModeState] = useState<'updated' | 'alpha' | 'custom'>(() => {
     const stored = localStorage.getItem('dnd-gm:noteSortMode');
-    return stored === 'alpha' ? 'alpha' : 'updated';
+    return stored === 'alpha' || stored === 'custom' ? stored : 'updated';
   });
+  const setSortMode = (mode: 'updated' | 'alpha' | 'custom') => {
+    localStorage.setItem('dnd-gm:noteSortMode', mode);
+    setSortModeState(mode);
+  };
+
+  // Drag-to-reorder (Custom sort mode) — separate from the folder-move drag
+  // system below (dragData/dragOverId/onDrop), which stays GM-only. Anyone
+  // who can see a note can reorder it within its current folder/root group.
+  const [reorderDragId, setReorderDragId] = useState<string | null>(null);
+  const [reorderOverId, setReorderOverId] = useState<string | null>(null);
+  const handleReorderDrop = (folderKey: string, groupNotes: Note[], targetId: string) => {
+    const fromId = reorderDragId;
+    setReorderDragId(null);
+    setReorderOverId(null);
+    if (!fromId || fromId === targetId) return;
+    const ids = groupNotes.map((n) => n.id);
+    const fromIdx = ids.indexOf(fromId);
+    const toIdx = ids.indexOf(targetId);
+    if (fromIdx === -1 || toIdx === -1) return;
+    const next = ids.slice();
+    const [moved] = next.splice(fromIdx, 1);
+    next.splice(toIdx, 0, moved);
+    reorderNotes(folderKey, next);
+    if (sortMode !== 'custom') setSortMode('custom');
+  };
 
   const visibleNotes = useMemo(
     () => (isGM ? notes : notes.filter((n) => canViewNote(n, userId, role, permissions[n.id] ?? []))),
@@ -654,7 +700,8 @@ export default function Notes() {
   const rootFolders = sortedFolders.filter(
     (f) => f.parent_id === null && (isGM || !hiddenFolderIds.includes(f.id))
   );
-  const rootNotes = sortedVisibleNotes.filter((n) => n.folder_id === null);
+  const rootNotesBase = sortedVisibleNotes.filter((n) => n.folder_id === null);
+  const rootNotes = sortMode === 'custom' ? applyNoteOrder(rootNotesBase, 'root', noteOrder) : rootNotesBase;
 
   const onWikiClick = (href: string) => {
     const [path, hash] = href.split('#');
@@ -772,14 +819,17 @@ export default function Notes() {
               </button>
               <button
                 onClick={() => {
-                  const next = sortMode === 'alpha' ? 'updated' : 'alpha';
+                  const next = sortMode === 'updated' ? 'alpha' : sortMode === 'alpha' ? 'custom' : 'updated';
                   setSortMode(next);
-                  localStorage.setItem('dnd-gm:noteSortMode', next);
                 }}
-                title={sortMode === 'alpha' ? 'A–Z order — click for recent first' : 'Recent first — click for A–Z'}
+                title={
+                  sortMode === 'updated' ? 'Recent first — click for A–Z'
+                  : sortMode === 'alpha' ? 'A–Z order — click for your custom order'
+                  : 'Custom order (drag notes to reorder) — click for recent first'
+                }
                 className="p-1 text-slate-400 hover:text-sky-300 hover:bg-slate-800 rounded"
               >
-                {sortMode === 'alpha' ? <ArrowUpAZ size={12} /> : <Clock size={12} />}
+                {sortMode === 'updated' ? <Clock size={12} /> : sortMode === 'alpha' ? <ArrowUpAZ size={12} /> : <GripVertical size={12} />}
               </button>
               <button
                 onClick={() => onCreateNote(null)}
@@ -899,6 +949,13 @@ export default function Notes() {
                 onDragStart={setDragData}
                 onDragOverItem={setDragOverId}
                 onDrop={onDrop}
+                noteOrder={noteOrder}
+                sortMode={sortMode}
+                reorderDragId={reorderDragId}
+                reorderOverId={reorderOverId}
+                onReorderDragStart={setReorderDragId}
+                onReorderOver={setReorderOverId}
+                onReorderDrop={handleReorderDrop}
               />
             ))}
             {rootNotes.map((n) => (
@@ -921,6 +978,11 @@ export default function Notes() {
                 }}
                 onCancelDelete={() => setConfirmingId(null)}
                 onDragStart={() => setDragData({ kind: 'note', id: n.id })}
+                reorderDragging={reorderDragId === n.id}
+                reorderOver={reorderOverId === n.id}
+                onReorderDragStart={() => setReorderDragId(n.id)}
+                onReorderOver={setReorderOverId}
+                onReorderDrop={() => handleReorderDrop('root', rootNotes, n.id)}
               />
             ))}
           </div>
@@ -1513,6 +1575,14 @@ type FolderNodeProps = {
   onDragStart: (d: DragItem) => void;
   onDragOverItem: (id: string | null) => void;
   onDrop: (target: string | null) => void;
+  /** Custom sort order (Part C) — separate from the folder-move drag above. */
+  noteOrder: Record<string, string[]>;
+  sortMode: 'updated' | 'alpha' | 'custom';
+  reorderDragId: string | null;
+  reorderOverId: string | null;
+  onReorderDragStart: (id: string) => void;
+  onReorderOver: (id: string | null) => void;
+  onReorderDrop: (folderKey: string, groupNotes: Note[], targetId: string) => void;
 };
 
 function FolderNode(props: FolderNodeProps) {
@@ -1528,7 +1598,8 @@ function FolderNode(props: FolderNodeProps) {
   const children = folders.filter(
     (f) => f.parent_id === folder.id && (isGM || !hiddenFolderIds.includes(f.id))
   );
-  const folderNotes = notes.filter((n) => n.folder_id === folder.id);
+  const folderNotesBase = notes.filter((n) => n.folder_id === folder.id);
+  const folderNotes = props.sortMode === 'custom' ? applyNoteOrder(folderNotesBase, folder.id, props.noteOrder) : folderNotesBase;
   const renaming = props.renamingFolderId === folder.id;
   const confirming = props.confirmingId === folder.id;
   const isDragOver = props.dragOverId === folder.id;
@@ -1703,6 +1774,11 @@ function FolderNode(props: FolderNodeProps) {
               onDelete={() => props.onDeleteNote(n.id)}
               onCancelDelete={() => props.onCancelDelete()}
               onDragStart={() => props.onDragStart({ kind: 'note', id: n.id })}
+              reorderDragging={props.reorderDragId === n.id}
+              reorderOver={props.reorderOverId === n.id}
+              onReorderDragStart={() => props.onReorderDragStart(n.id)}
+              onReorderOver={props.onReorderOver}
+              onReorderDrop={() => props.onReorderDrop(folder.id, folderNotes, n.id)}
             />
           ))}
         </div>
@@ -1725,6 +1801,15 @@ type NoteRowProps = {
   onDelete: () => void;
   onCancelDelete: () => void;
   onDragStart: () => void;
+  /** Custom sort order (Part C) — separate drag gesture from onDragStart
+   *  above, initiated only from the grip handle so it can't collide with
+   *  the GM-only drag-into-folder gesture on the row body. */
+  reorderDragging: boolean;
+  reorderOver: boolean;
+  onReorderDragStart: () => void;
+  /** Pass the note's id to highlight this row as a drop target, or null to clear. */
+  onReorderOver: (id: string | null) => void;
+  onReorderDrop: () => void;
 };
 
 function NoteRow({
@@ -1740,6 +1825,11 @@ function NoteRow({
   onDelete,
   onCancelDelete,
   onDragStart,
+  reorderDragging,
+  reorderOver,
+  onReorderDragStart,
+  onReorderOver,
+  onReorderDrop,
 }: NoteRowProps) {
   const perms = useNotes((s) => s.permissions[note.id] ?? EMPTY_PERMS);
   return (
@@ -1750,12 +1840,38 @@ function NoteRow({
         e.stopPropagation();
         onDragStart();
       }}
+      onDragOver={(e) => {
+        e.preventDefault();
+        onReorderOver(note.id);
+      }}
+      onDragLeave={() => onReorderOver(null)}
+      onDrop={(e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        onReorderDrop();
+      }}
       onClick={onSelect}
       className={`group flex items-center gap-1 px-1 py-0.5 cursor-pointer transition-colors duration-100 ${
         active ? 'bg-sky-900/40 text-sky-100' : 'hover:bg-slate-900 text-slate-300'
-      } ${dimmed ? 'opacity-30' : ''}`}
+      } ${dimmed ? 'opacity-30' : ''} ${reorderDragging ? 'opacity-40' : ''} ${
+        reorderOver ? 'ring-1 ring-sky-600' : ''
+      }`}
       style={{ paddingLeft: 16 + depth * 12 }}
     >
+      <span
+        draggable
+        onDragStart={(e) => {
+          e.stopPropagation();
+          e.dataTransfer.effectAllowed = 'move';
+          onReorderDragStart();
+        }}
+        onDragEnd={() => onReorderOver(null)}
+        onClick={(e) => e.stopPropagation()}
+        title="Drag to reorder"
+        className="cursor-grab active:cursor-grabbing text-slate-600 hover:text-slate-400 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity"
+      >
+        <GripVertical size={11} />
+      </span>
       <NoteIconDisplay iconId={note.icon} size={11} />
       <span className="flex-1 min-w-0 truncate">
         {note.title || 'Untitled'}

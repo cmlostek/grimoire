@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Pencil, Check, X, UserPlus, MessageCircle, Camera, Trash2, User as UserIcon, Dice6, Shield, UserMinus, LogOut, ScrollText, Users as UsersIcon, ChevronLeft, ChevronRight, Wand2 } from 'lucide-react';
+import { Pencil, Check, X, UserPlus, MessageCircle, Camera, Trash2, User as UserIcon, Dice6, Shield, UserMinus, LogOut, ScrollText, Users as UsersIcon, ChevronLeft, ChevronRight, Wand2, FileText, Clock } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { useSession } from '../session/sessionStore';
 import { useRoleColors, roleColor } from '../session/roleColorsStore';
@@ -9,12 +9,14 @@ import ChatPanel from '../chat/ChatPanel';
 import { useChat, type ChatMember } from '../chat/chatStore';
 import { useChatPanel } from '../chat/chatPanelStore';
 import { useProfiles, avatarPublicUrl } from '../profiles/profilesStore';
+import { useNotes, canViewNote, canEditNote, EMPTY_PERMS, type Note, type NotePermission } from '../notes/notesStore';
 import { supabase } from '../../lib/supabase';
 import DiceRoller from '../dice/DiceRoller';
 import CharacterSheet from './CharacterSheet';
 import CharacterBuilder from './CharacterBuilder';
 import MemberProfileModal from './MemberProfileModal';
 import CampaignSpectatorView from './CampaignSpectatorView';
+import NotePeekModal from './NotePeekModal';
 
 type DashboardTab = 'profile' | 'character' | 'chat' | 'dice' | 'manage';
 
@@ -67,6 +69,12 @@ export default function Dashboard() {
   const [spectatingCampaignId, setSpectatingCampaignId] = useState<string | null>(null);
   const setWhisperTarget = useChatPanel((s) => s.setWhisperTarget);
 
+  const notes = useNotes((s) => s.notes);
+  const notePermissions = useNotes((s) => s.permissions);
+  const loadNotes = useNotes((s) => s.loadForCampaign);
+  const subscribeNotes = useNotes((s) => s.subscribe);
+  const [peekNote, setPeekNote] = useState<Note | null>(null);
+
   // Dashboard is often the first page visited, so the Party feature may not
   // have loaded yet. Loading here is cheap (idempotent server fetch).
   useEffect(() => {
@@ -74,6 +82,14 @@ export default function Dashboard() {
     loadParty(campaignId);
     return subscribeParty(campaignId);
   }, [campaignId, loadParty, subscribeParty]);
+
+  // Same reasoning as Party above — "Recent notes" needs the notes store
+  // loaded even if the user never opens the Notes page this session.
+  useEffect(() => {
+    if (!campaignId) return;
+    loadNotes(campaignId);
+    return subscribeNotes(campaignId);
+  }, [campaignId, loadNotes, subscribeNotes]);
 
   // Chat used to be an always-mounted side column, which kept useChat.members
   // populated for the GM "all characters" view. Now that chat is a tab, the
@@ -180,6 +196,17 @@ export default function Dashboard() {
                 )}
               </Section>
 
+              <Section title="Recent notes">
+                <RecentNotesPanel
+                  notes={notes}
+                  permissions={notePermissions}
+                  userId={userId}
+                  role={role}
+                  isGM={isGM}
+                  onOpen={setPeekNote}
+                />
+              </Section>
+
               <Section title="Other campaigns">
                 <OtherCampaignsPanel />
               </Section>
@@ -246,6 +273,14 @@ export default function Dashboard() {
         <CharacterBuilder
           onClose={() => setShowBuilder(false)}
           onCreate={handleBuilderCreate}
+        />
+      )}
+
+      {peekNote && (
+        <NotePeekModal
+          note={peekNote}
+          canEdit={isGM || canEditNote(peekNote, userId, role, notePermissions[peekNote.id] ?? EMPTY_PERMS)}
+          onClose={() => setPeekNote(null)}
         />
       )}
 
@@ -901,6 +936,122 @@ function GmCharactersView({
           );
         })}
       </div>
+    </div>
+  );
+}
+
+type NoteTab = 'all' | 'owned' | 'editor' | 'view';
+
+function relativeTime(iso: string): string {
+  const ms = Date.now() - new Date(iso).getTime();
+  const min = Math.floor(ms / 60000);
+  if (min < 1) return 'just now';
+  if (min < 60) return `${min}m ago`;
+  const hr = Math.floor(min / 60);
+  if (hr < 24) return `${hr}h ago`;
+  const day = Math.floor(hr / 24);
+  if (day < 30) return `${day}d ago`;
+  return new Date(iso).toLocaleDateString();
+}
+
+/**
+ * Horizontally-scrolling "recent notes" carousel — filterable by the
+ * viewer's relationship to each note (owner / editor / view-only), sorted
+ * by most-recently-updated. Clicking a card opens NotePeekModal for a
+ * quick edit without leaving the Dashboard.
+ */
+function RecentNotesPanel({
+  notes,
+  permissions,
+  userId,
+  role,
+  isGM,
+  onOpen,
+}: {
+  notes: Note[];
+  permissions: Record<string, NotePermission[]>;
+  userId: string | null;
+  role: 'gm' | 'cogm' | 'player' | null;
+  isGM: boolean;
+  onOpen: (note: Note) => void;
+}) {
+  const [noteTab, setNoteTab] = useState<NoteTab>('all');
+
+  const visible = useMemo(
+    () => (isGM ? notes : notes.filter((n) => canViewNote(n, userId, role, permissions[n.id] ?? EMPTY_PERMS))),
+    [isGM, notes, userId, role, permissions]
+  );
+
+  const filtered = useMemo(() => {
+    if (noteTab === 'all') return visible;
+    return visible.filter((n) => {
+      const owned = n.owner_user_id === userId;
+      const edit = isGM || canEditNote(n, userId, role, permissions[n.id] ?? EMPTY_PERMS);
+      if (noteTab === 'owned') return owned;
+      if (noteTab === 'editor') return !owned && edit;
+      return !owned && !edit; // view — already know it's visible
+    });
+  }, [visible, noteTab, userId, role, permissions, isGM]);
+
+  const sorted = useMemo(
+    () => [...filtered].sort((a, b) => b.updated_at.localeCompare(a.updated_at)),
+    [filtered]
+  );
+
+  const tabs: { id: NoteTab; label: string }[] = [
+    { id: 'all', label: 'All' },
+    { id: 'owned', label: 'Owned' },
+    { id: 'editor', label: 'Editor' },
+    { id: 'view', label: 'View' },
+  ];
+
+  return (
+    <div>
+      <div className="flex gap-1 mb-2">
+        {tabs.map((t) => (
+          <button
+            key={t.id}
+            onClick={() => setNoteTab(t.id)}
+            className={`px-2 py-1 text-[11px] rounded transition-colors ${
+              noteTab === t.id
+                ? 'bg-sky-900/50 text-sky-100'
+                : 'bg-slate-800/60 text-slate-400 hover:bg-slate-800 hover:text-slate-200'
+            }`}
+          >
+            {t.label}
+          </button>
+        ))}
+      </div>
+
+      {sorted.length === 0 ? (
+        <div className="text-sm text-slate-500 italic">No notes here yet.</div>
+      ) : (
+        <div className="flex gap-2 overflow-x-auto scrollbar-none pb-1">
+          {sorted.map((n) => {
+            const owned = n.owner_user_id === userId;
+            const edit = isGM || owned || canEditNote(n, userId, role, permissions[n.id] ?? EMPTY_PERMS);
+            const label = owned ? 'Owner' : edit ? 'Editor' : 'View';
+            return (
+              <button
+                key={n.id}
+                onClick={() => onOpen(n)}
+                className="shrink-0 w-48 text-left px-3 py-2.5 rounded-lg bg-slate-900 hover:bg-slate-800 border border-slate-800 hover:border-slate-700 transition-colors"
+              >
+                <div className="flex items-center gap-1.5 text-slate-200">
+                  <FileText size={12} className="shrink-0 text-slate-500" />
+                  <span className="text-sm font-serif truncate">{n.title || 'Untitled'}</span>
+                </div>
+                <div className="mt-1.5 flex items-center justify-between text-[10px] text-slate-500">
+                  <span className="flex items-center gap-1"><Clock size={9} /> {relativeTime(n.updated_at)}</span>
+                  <span className={`uppercase tracking-wider ${owned ? 'text-emerald-400' : edit ? 'text-sky-400' : 'text-slate-500'}`}>
+                    {label}
+                  </span>
+                </div>
+              </button>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }

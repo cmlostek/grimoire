@@ -626,3 +626,10 @@ supabase.auth.onAuthStateChange((event) => {
 export function rememberedDisplayName(): string {
   return localStorage.getItem(NAME_KEY) ?? '';
 }
+
+/** Persist the default display name used to pre-fill create/join forms. */
+export function setRememberedDisplayName(name: string): void {
+  const trimmed = name.trim();
+  if (trimmed) localStorage.setItem(NAME_KEY, trimmed);
+  else localStorage.removeItem(NAME_KEY);
+}

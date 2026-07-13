@@ -221,6 +221,17 @@ create table if not exists note_permissions (
 );
 create index if not exists note_permissions_user_idx on note_permissions(user_id);
 
+-- Per-user drag-to-reorder in the notes sidebar. See
+-- migrations/20260713010000_note_sort_order.sql for the full writeup.
+create table if not exists note_sort_order (
+  user_id uuid not null,
+  campaign_id uuid not null references campaigns(id) on delete cascade,
+  folder_key text not null,        -- a folder's id, or 'root'
+  order_ids uuid[] not null default '{}',
+  updated_at timestamptz not null default now(),
+  primary key (user_id, campaign_id, folder_key)
+);
+
 
 -- =============================================
 -- SECTION 2 — Helper functions
@@ -274,6 +285,45 @@ as $func$
   select owner_user_id from notes where id = p_note;
 $func$;
 
+-- Notes: transfer ownership between players. Deliberately a dedicated RPC
+-- rather than a looser notes_update RLS policy — see
+-- migrations/20260713000000_transfer_note_ownership.sql for the full
+-- writeup on why the policy's `with check` can't safely allow this itself.
+create or replace function public.transfer_note_ownership(p_note_id uuid, p_new_owner uuid)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $func$
+declare
+  v_campaign_id uuid;
+  v_owner_user_id uuid;
+begin
+  select campaign_id, owner_user_id into v_campaign_id, v_owner_user_id
+  from notes where id = p_note_id;
+
+  if v_campaign_id is null then
+    raise exception 'note not found';
+  end if;
+
+  if not (public.is_gm(v_campaign_id) or v_owner_user_id = auth.uid()) then
+    raise exception 'not authorized to transfer this note';
+  end if;
+
+  if not exists (
+    select 1 from campaign_members
+    where campaign_id = v_campaign_id and user_id = p_new_owner
+  ) then
+    raise exception 'new owner is not a member of this campaign';
+  end if;
+
+  update notes set owner_user_id = p_new_owner, updated_at = now()
+  where id = p_note_id;
+end;
+$func$;
+
+grant execute on function public.transfer_note_ownership(uuid, uuid) to authenticated;
+
 -- Campaign spectator access — read-only cross-campaign browsing. A user can
 -- spectate a campaign they aren't a member of as long as they share at
 -- least one campaign with someone who IS a member of it. See
@@ -325,6 +375,7 @@ alter table transcripts        enable row level security;
 alter table initiative_entries enable row level security;
 alter table npcs               enable row level security;
 alter table note_permissions   enable row level security;
+alter table note_sort_order    enable row level security;
 
 
 -- =============================================
@@ -428,6 +479,11 @@ create policy note_permissions_write on note_permissions for all to authenticate
     is_gm(note_campaign(note_id))
     or note_author(note_id) = auth.uid()
   );
+
+drop policy if exists note_sort_order_all on note_sort_order;
+create policy note_sort_order_all on note_sort_order for all to authenticated
+  using (user_id = auth.uid())
+  with check (user_id = auth.uid());
 
 drop policy if exists party_select on party_members;
 create policy party_select on party_members for select to authenticated
