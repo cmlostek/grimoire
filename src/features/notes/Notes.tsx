@@ -55,6 +55,11 @@ import {
   Heading2,
   Heading3,
   ImagePlus,
+  AlignLeft,
+  AlignCenter,
+  AlignRight,
+  List,
+  ChevronDown,
 } from 'lucide-react';
 import { useVisibilityReload } from '../../hooks/useVisibilityReload';
 import { useCampaignSettings } from './campaignSettingsStore';
@@ -169,7 +174,7 @@ function getShareStatus(
 }
 
 import { buildWikiIndex } from './wikiIndex';
-import { remarkNoteDecorators, preprocessDecorators } from './decorators';
+import { remarkNoteDecorators, remarkFoldMarks, preprocessDecorators } from './decorators';
 import { Secret } from './Secret';
 import { PartyRefSpan } from './PartyTooltip';
 import { useParty } from '../party/partyStore';
@@ -497,6 +502,16 @@ export default function Notes() {
   const [showLegend, setShowLegend] = useState(false);
   const [showIconPicker, setShowIconPicker] = useState(false);
   const [showSharePopover, setShowSharePopover] = useState(false);
+  // Read-only view: which fold-marked headings/list items are collapsed.
+  // View-only state, not persisted — resets whenever the active note changes.
+  const [collapsedFolds, setCollapsedFolds] = useState<Set<string>>(new Set());
+  const toggleFold = useCallback((id: string) => {
+    setCollapsedFolds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  }, []);
   const [sortMode, setSortMode] = useState<'updated' | 'alpha'>(() => {
     const stored = localStorage.getItem('dnd-gm:noteSortMode');
     return stored === 'alpha' ? 'alpha' : 'updated';
@@ -526,6 +541,10 @@ export default function Notes() {
 
   const active = visibleNotes.find((n) => n.id === activeNoteId) ?? null;
 
+  useEffect(() => {
+    setCollapsedFolds(new Set());
+  }, [active?.id]);
+
   const wikiIndex = useMemo(
     () => buildWikiIndex(homebrewItems, homebrewSpells, notes),
     [homebrewItems, homebrewSpells, notes]
@@ -548,7 +567,7 @@ export default function Notes() {
     return out;
   }, [party, npcs, chatMembers]);
   const plugins = useMemo(
-    () => [remarkGfm, remarkNoteDecorators(wikiIndex, mentionColors)],
+    () => [remarkGfm, remarkNoteDecorators(wikiIndex, mentionColors), remarkFoldMarks()],
     [wikiIndex, mentionColors]
   );
 
@@ -603,6 +622,22 @@ export default function Notes() {
     }
     navigate(path + (hash ? `#${hash}` : ''));
   };
+
+  // Read-only view: h1-h6 renderer that prepends a collapse arrow when the
+  // heading carries a `data-fold-id` (assigned by remarkFoldMarks).
+  const renderFoldableHeading = (Tag: 'h1' | 'h2' | 'h3' | 'h4' | 'h5' | 'h6') =>
+    function FoldableHeading({ children, ...props }: React.HTMLAttributes<HTMLHeadingElement>) {
+      const p = props as Record<string, unknown>;
+      const foldId = p['data-fold-id'] as string | undefined;
+      if (!foldId) return <Tag {...props}>{children}</Tag>;
+      const collapsed = collapsedFolds.has(foldId);
+      return (
+        <Tag {...props}>
+          <FoldArrowBtn collapsed={collapsed} onToggle={() => toggleFold(foldId)} />
+          {children}
+        </Tag>
+      );
+    };
 
   return (
     <div className="h-full flex flex-col">
@@ -1076,6 +1111,19 @@ export default function Notes() {
                     <Heading3 size={13} />
                   </ToolbarBtn>
                   <div className="w-px h-4 bg-slate-700 mx-0.5" />
+                  <ToolbarBtn title="Bulleted list" onClick={() => editorRef.current?.format({ kind: 'toggle-bullet' })}>
+                    <List size={13} />
+                  </ToolbarBtn>
+                  <ToolbarBtn title="Align left" onClick={() => editorRef.current?.format({ kind: 'align', align: 'left' })}>
+                    <AlignLeft size={13} />
+                  </ToolbarBtn>
+                  <ToolbarBtn title="Align center" onClick={() => editorRef.current?.format({ kind: 'align', align: 'center' })}>
+                    <AlignCenter size={13} />
+                  </ToolbarBtn>
+                  <ToolbarBtn title="Align right" onClick={() => editorRef.current?.format({ kind: 'align', align: 'right' })}>
+                    <AlignRight size={13} />
+                  </ToolbarBtn>
+                  <div className="w-px h-4 bg-slate-700 mx-0.5" />
                   <ToolbarBtn title="Insert image" onClick={() => editorRef.current?.format({ kind: 'wrap', before: '[](', after: ')' })}>
                     <ImagePlus size={13} />
                   </ToolbarBtn>
@@ -1142,6 +1190,16 @@ export default function Notes() {
                               </Secret>
                             );
                           }
+                          if (className.includes('note-align')) {
+                            const content = (p['data-align-content'] as string) ?? '';
+                            return (
+                              <span {...props}>
+                                <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                                  {content}
+                                </ReactMarkdown>
+                              </span>
+                            );
+                          }
                           if (className.includes('note-loc')) {
                             const route = p['data-wiki-route'] as string | undefined;
                             if (route) {
@@ -1178,6 +1236,33 @@ export default function Notes() {
                             );
                           }
                           return <span {...props}>{children}</span>;
+                        },
+                        h1: renderFoldableHeading('h1'),
+                        h2: renderFoldableHeading('h2'),
+                        h3: renderFoldableHeading('h3'),
+                        h4: renderFoldableHeading('h4'),
+                        h5: renderFoldableHeading('h5'),
+                        h6: renderFoldableHeading('h6'),
+                        li: ({ node, children, ...props }) => {
+                          const p = props as Record<string, unknown>;
+                          const foldId = p['data-fold-id'] as string | undefined;
+                          if (!foldId) return <li {...props}>{children}</li>;
+                          const collapsed = collapsedFolds.has(foldId);
+                          return (
+                            <li {...props} className={collapsed ? 'note-li-collapsed' : undefined}>
+                              <FoldArrowBtn collapsed={collapsed} onToggle={() => toggleFold(foldId)} />
+                              {children}
+                            </li>
+                          );
+                        },
+                        div: ({ node, children, ...props }) => {
+                          const p = props as Record<string, unknown>;
+                          const className = (p.className as string) ?? '';
+                          if (className.includes('note-fold-section')) {
+                            const foldFor = p['data-fold-for'] as string | undefined;
+                            if (foldFor && collapsedFolds.has(foldFor)) return null;
+                          }
+                          return <div {...props}>{children}</div>;
                         },
                       }}
                     >
@@ -1228,6 +1313,20 @@ function ToolbarBtn({
       className="p-1.5 rounded text-slate-400 hover:bg-slate-800 hover:text-slate-200 transition-colors"
     >
       {children}
+    </button>
+  );
+}
+
+// ─── Read-only view: collapse arrow for fold-marked headings/list items ──────
+function FoldArrowBtn({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => void }) {
+  return (
+    <button
+      type="button"
+      className={`note-fold-arrow${collapsed ? ' note-fold-arrow-collapsed' : ''}`}
+      onClick={(e) => { e.stopPropagation(); onToggle(); }}
+      aria-label={collapsed ? 'Expand' : 'Collapse'}
+    >
+      <ChevronDown size={14} />
     </button>
   );
 }

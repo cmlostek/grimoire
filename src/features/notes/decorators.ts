@@ -16,10 +16,18 @@ const S_TILDE  = '\uE004'; // ~ inside {{secrets}}
 // token across AST nodes before our plugin can see it.  Escape the brackets.
 const S_WOPEN  = '\uE005'; // [[
 const S_WCLOSE = '\uE006'; // ]]
+// :::left / :::center / :::right ... ::: alignment blocks - collapsed to a
+// single-line sentinel run (like {{secrets}}) so remark keeps them as one
+// text node instead of splitting on internal markdown/newlines.
+const ALIGN_MARK     = '\uE007'; // open - followed by one align code char (L/C/R)
+const ALIGN_MARK_END = '\uE008'; // close
+const ALIGN_CODE: Record<string, string> = { left: 'L', center: 'C', right: 'R' };
+const ALIGN_NAME: Record<string, string> = { L: 'left', C: 'center', R: 'right' };
+const ALIGN_BLOCK_RE = /^:::(left|center|right)[ \t]*\n([\s\S]*?)\n:::[ \t]*$/gm;
 
 // Note: \$(?!\{) matches $ NOT followed by { so it doesn't swallow ${artifact}
 const TOKEN =
-  /(&\{[^}\n]+\}|@\{[^}\n]+\}|\?\{[^}\n]+\}|!\{[^}\n]+\}|\$\{[^}\n]+\}|\$(?!\{)[^$\n]+\$|%%[^%\n]+?%%|\{\{[^}\n]+\}\}|\uE005[^\uE006\n]+\uE006)/g;
+  /(&\{[^}\n]+\}|@\{[^}\n]+\}|\?\{[^}\n]+\}|!\{[^}\n]+\}|\$\{[^}\n]+\}|\$(?!\{)[^$\n]+\$|%%[^%\n]+?%%|\{\{[^}\n]+\}\}|\uE005[^\uE006\n]+\uE006|\uE007[LCR][\s\S]*?\uE008)/g;
 
 const MULTILINE_TRANSFORMS: Array<[RegExp, string, string]> = [
   [/&\{([\s\S]*?)\}/g,  '&{', '}'],
@@ -48,6 +56,19 @@ export function preprocessDecorators(src: string): string {
     .map((s) => {
       if (s.code) return s.text;
       let t = s.text;
+      // Alignment blocks: collapse to a single sentinel-wrapped run (newlines
+      // and inline-markdown characters escaped, same treatment as {{secrets}}
+      // below) so remark can't split the block across multiple AST nodes.
+      t = t.replace(ALIGN_BLOCK_RE, (_m, align: string, inner: string) =>
+        ALIGN_MARK + ALIGN_CODE[align] +
+        inner
+          .replace(/\n/g, NEWLINE_PLACEHOLDER)
+          .replace(/\*/g,  S_STAR)
+          .replace(/_/g,   S_UNDER)
+          .replace(/`/g,   S_TICK)
+          .replace(/~/g,   S_TILDE)
+        + ALIGN_MARK_END
+      );
       for (const [re, open, close] of MULTILINE_TRANSFORMS) {
         t = t.replace(re, (_, inner: string) =>
           open + inner.replace(/\n/g, NEWLINE_PLACEHOLDER) + close
@@ -143,6 +164,14 @@ function classify(
   secretCounter: () => number,
   mentionColors: MentionColors,
 ): PhrasingContent | null {
+  if (raw.startsWith(ALIGN_MARK) && raw.endsWith(ALIGN_MARK_END)) {
+    const align = ALIGN_NAME[raw[1]] ?? 'left';
+    const content = restore(raw.slice(2, -1));
+    return makeSpan('note-align', '', {
+      'data-align-content': content,
+      style: `display: block; text-align: ${align};`,
+    });
+  }
   if (raw.startsWith('&{') && raw.endsWith('}')) {
     const name = restore(raw.slice(2, -1));
     const hit = findWiki(wiki, name);
@@ -282,5 +311,74 @@ export function remarkNoteDecorators(wiki: WikiEntry[], mentionColors: MentionCo
   return () => (tree: Root) => {
     let idx = 0;
     walk(tree, wiki, () => idx++, mentionColors);
+  };
+}
+
+// ─── Collapsible headings & nested lists (read-only view) ────────────────────
+// Tags each heading and each nested-list-bearing list item with a stable
+// `data-fold-id`, and wraps the block(s) following a heading — up to the next
+// heading of the same or shallower level — in a synthetic container so the
+// read view can hide/show them. Only root-level headings are handled: notes
+// don't nest headings inside blockquotes/lists.
+type FoldableNode = { type: string; depth?: number; data?: Record<string, unknown>; children?: unknown[] };
+
+function tagFoldable(node: FoldableNode, foldId: string): void {
+  const existing = (node.data?.hProperties as Record<string, unknown>) ?? {};
+  node.data = { ...(node.data ?? {}), hProperties: { ...existing, 'data-fold-id': foldId } };
+}
+
+function wrapHeadingSections(tree: Root, next: () => number): void {
+  const children = tree.children as unknown as FoldableNode[];
+  const out: FoldableNode[] = [];
+  let i = 0;
+  while (i < children.length) {
+    const node = children[i];
+    if (node.type === 'heading' && typeof node.depth === 'number') {
+      const level = node.depth;
+      tagFoldable(node, `h-${next()}`);
+      const foldId = (node.data!.hProperties as Record<string, unknown>)['data-fold-id'] as string;
+      out.push(node);
+      i++;
+      const section: FoldableNode[] = [];
+      while (i < children.length) {
+        const peek = children[i];
+        if (peek.type === 'heading' && typeof peek.depth === 'number' && peek.depth <= level) break;
+        section.push(peek);
+        i++;
+      }
+      if (section.length) {
+        out.push({
+          type: 'noteFoldSection',
+          children: section as unknown[],
+          data: {
+            hName: 'div',
+            hProperties: { className: 'note-fold-section', 'data-fold-for': foldId },
+          },
+        });
+      }
+      continue;
+    }
+    out.push(node);
+    i++;
+  }
+  tree.children = out as unknown as Root['children'];
+}
+
+function markFoldableListItems(node: unknown, next: () => number): void {
+  if (!node || typeof node !== 'object') return;
+  const n = node as FoldableNode;
+  if (!Array.isArray(n.children)) return;
+  if (n.type === 'listItem' && n.children.some((c) => (c as { type?: string })?.type === 'list')) {
+    tagFoldable(n, `li-${next()}`);
+  }
+  for (const child of n.children) markFoldableListItems(child, next);
+}
+
+export function remarkFoldMarks() {
+  return () => (tree: Root) => {
+    let hIdx = 0;
+    let liIdx = 0;
+    wrapHeadingSections(tree, () => hIdx++);
+    markFoldableListItems(tree, () => liIdx++);
   };
 }

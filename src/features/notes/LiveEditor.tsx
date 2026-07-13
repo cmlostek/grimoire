@@ -25,6 +25,7 @@ import {
   defaultKeymap,
   indentWithTab,
 } from '@codemirror/commands';
+import { codeFolding, foldEffect, unfoldEffect, foldedRanges } from '@codemirror/language';
 import * as Y from 'yjs';
 import { yCollab, yUndoManagerKeymap } from 'y-codemirror.next';
 import {
@@ -111,6 +112,47 @@ const headingPlugin = ViewPlugin.fromClass(
     constructor(view: EditorView) { this.decorations = buildHeadingDecos(view); }
     update(u: ViewUpdate) {
       if (u.docChanged || u.viewportChanged) this.decorations = buildHeadingDecos(u.view);
+    }
+  },
+  { decorations: (v) => v.decorations },
+);
+
+// ─── Alignment blocks (:::left / :::center / :::right … :::) ────────────────
+// Block state spans lines, so — unlike the other line-decoration plugins —
+// this scans the whole document rather than just the visible range.
+const ALIGN_OPEN_RE  = /^:::(left|center|right)\s*$/;
+const ALIGN_CLOSE_RE = /^:::\s*$/;
+
+function buildAlignDecos(view: EditorView): DecorationSet {
+  const builder = new RangeSetBuilder<Decoration>();
+  const doc = view.state.doc;
+  let inBlock: string | null = null;
+  for (let i = 1; i <= doc.lines; i++) {
+    const line = doc.line(i);
+    if (inBlock) {
+      if (ALIGN_CLOSE_RE.test(line.text)) {
+        builder.add(line.from, line.from, Decoration.line({ class: 'cm-align-fence' }));
+        inBlock = null;
+      } else {
+        builder.add(line.from, line.from, Decoration.line({ class: `cm-align-${inBlock}` }));
+      }
+      continue;
+    }
+    const m = ALIGN_OPEN_RE.exec(line.text);
+    if (m) {
+      builder.add(line.from, line.from, Decoration.line({ class: 'cm-align-fence' }));
+      inBlock = m[1];
+    }
+  }
+  return builder.finish();
+}
+
+const alignPlugin = ViewPlugin.fromClass(
+  class {
+    decorations: DecorationSet;
+    constructor(view: EditorView) { this.decorations = buildAlignDecos(view); }
+    update(u: ViewUpdate) {
+      if (u.docChanged) this.decorations = buildAlignDecos(u.view);
     }
   },
   { decorations: (v) => v.decorations },
@@ -299,6 +341,226 @@ const listPlugin = ViewPlugin.fromClass(
   { decorations: (v) => v.decorations },
 );
 
+// ─── Bulleted lists ───────────────────────────────────────────────────────────
+// "- "/"* "/"+ " markers render as a bullet dot, like the heading/blockquote
+// treatment above — except (like SecretWidget/ImageWidget) the raw marker
+// stays visible for editing while the cursor is on that line.
+const BULLET_RE = /^(\s*)([-*+]) /;
+
+class BulletWidget extends WidgetType {
+  toDOM(): HTMLElement {
+    const span = document.createElement('span');
+    span.className = 'cm-bullet-dot';
+    span.textContent = '•';
+    return span;
+  }
+  eq() { return true; }
+  ignoreEvent() { return false; }
+}
+
+function buildBulletDecos(view: EditorView): DecorationSet {
+  const builder = new RangeSetBuilder<Decoration>();
+  const cursorLine = view.state.doc.lineAt(view.state.selection.main.head).number;
+  for (const { from, to } of view.visibleRanges) {
+    let pos = from;
+    while (pos <= to) {
+      const line = view.state.doc.lineAt(pos);
+      const m = BULLET_RE.exec(line.text);
+      if (m) {
+        builder.add(line.from, line.from, Decoration.line({ class: 'cm-list-line' }));
+        if (line.number !== cursorLine) {
+          const markerFrom = line.from + m[1].length;
+          const markerTo = markerFrom + m[2].length + 1; // marker char + one space
+          builder.add(markerFrom, markerTo, Decoration.replace({ widget: new BulletWidget(), inclusive: false }));
+        }
+      }
+      if (line.to >= to) break;
+      pos = line.to + 1;
+    }
+  }
+  return builder.finish();
+}
+
+const bulletPlugin = ViewPlugin.fromClass(
+  class {
+    decorations: DecorationSet;
+    constructor(view: EditorView) { this.decorations = buildBulletDecos(view); }
+    update(u: ViewUpdate) {
+      if (u.docChanged || u.viewportChanged || u.selectionSet) this.decorations = buildBulletDecos(u.view);
+    }
+  },
+  { decorations: (v) => v.decorations },
+);
+
+// Enter on a bullet line continues the list at the same indent; Enter on an
+// *empty* bullet line strips the marker instead, exiting the list.
+function bulletEnterKeymap(view: EditorView): boolean {
+  const { from, to } = view.state.selection.main;
+  if (from !== to) return false;
+  const line = view.state.doc.lineAt(from);
+  const m = BULLET_RE.exec(line.text);
+  if (!m) return false;
+  const markerEnd = line.from + m[0].length;
+  if (from < markerEnd) return false;
+
+  if (from === line.to && line.text.slice(m[0].length).trim() === '') {
+    view.dispatch({
+      changes: { from: line.from, to: line.to, insert: '' },
+      selection: { anchor: line.from },
+    });
+    return true;
+  }
+  const prefix = `\n${m[1]}${m[2]} `;
+  view.dispatch({
+    changes: { from, insert: prefix },
+    selection: { anchor: from + prefix.length },
+  });
+  return true;
+}
+
+// Tab/Shift-Tab on bullet lines nests/un-nests by one indent level (2
+// spaces); non-list lines fall through to the default indentWithTab.
+function bulletIndentKeymap(view: EditorView): boolean {
+  const { from, to } = view.state.selection.main;
+  const startLineNo = view.state.doc.lineAt(from).number;
+  const endLineNo = view.state.doc.lineAt(to).number;
+  let touchedBullet = false;
+  const changes: { from: number; insert: string }[] = [];
+  for (let n = startLineNo; n <= endLineNo; n++) {
+    const line = view.state.doc.line(n);
+    if (BULLET_RE.test(line.text)) {
+      touchedBullet = true;
+      changes.push({ from: line.from, insert: '  ' });
+    }
+  }
+  if (!touchedBullet) return false;
+  view.dispatch({ changes });
+  return true;
+}
+
+function bulletDedentKeymap(view: EditorView): boolean {
+  const { from, to } = view.state.selection.main;
+  const startLineNo = view.state.doc.lineAt(from).number;
+  const endLineNo = view.state.doc.lineAt(to).number;
+  let touchedBullet = false;
+  const changes: { from: number; to: number; insert: string }[] = [];
+  for (let n = startLineNo; n <= endLineNo; n++) {
+    const line = view.state.doc.line(n);
+    if (!BULLET_RE.test(line.text)) continue;
+    touchedBullet = true;
+    const indentMatch = /^ {1,2}/.exec(line.text);
+    if (indentMatch) changes.push({ from: line.from, to: line.from + indentMatch[0].length, insert: '' });
+  }
+  if (!touchedBullet) return false;
+  if (changes.length) view.dispatch({ changes });
+  return true;
+}
+
+// ─── Collapsible lists & headings (Obsidian-style fold arrows) ───────────────
+// No side gutter in this editor (.cm-gutters is hidden), so the fold arrow is
+// an inline widget placed just before the bullet/heading marker rather than
+// CodeMirror's built-in foldGutter.
+type FoldRange = { from: number; to: number };
+
+const HEADING_FOLD_RE = /^(#{1,6})\s/;
+
+/** A bullet line folds together every immediately-following line indented
+ *  deeper than it, stopping at the first blank line or same/shallower line. */
+function findListFoldRange(doc: EditorState['doc'], lineNo: number): FoldRange | null {
+  const line = doc.line(lineNo);
+  const m = BULLET_RE.exec(line.text);
+  if (!m) return null;
+  const indent = m[1].length;
+  let last = lineNo;
+  for (let n = lineNo + 1; n <= doc.lines; n++) {
+    const next = doc.line(n);
+    if (next.text.trim() === '') break;
+    const nextIndent = /^\s*/.exec(next.text)![0].length;
+    if (nextIndent <= indent) break;
+    last = n;
+  }
+  return last === lineNo ? null : { from: line.to, to: doc.line(last).to };
+}
+
+/** A heading folds every line up to (but not including) the next heading of
+ *  the same or shallower level, or the end of the document. */
+function findHeadingFoldRange(doc: EditorState['doc'], lineNo: number): FoldRange | null {
+  const line = doc.line(lineNo);
+  const m = HEADING_FOLD_RE.exec(line.text);
+  if (!m) return null;
+  const level = m[1].length;
+  let last = lineNo;
+  for (let n = lineNo + 1; n <= doc.lines; n++) {
+    const next = doc.line(n);
+    const nm = HEADING_FOLD_RE.exec(next.text);
+    if (nm && nm[1].length <= level) break;
+    last = n;
+  }
+  return last === lineNo ? null : { from: line.to, to: doc.line(last).to };
+}
+
+function findFoldRange(doc: EditorState['doc'], lineNo: number): FoldRange | null {
+  return findHeadingFoldRange(doc, lineNo) ?? findListFoldRange(doc, lineNo);
+}
+
+class FoldArrowWidget extends WidgetType {
+  constructor(readonly folded: boolean, readonly range: FoldRange) { super(); }
+  toDOM(view: EditorView): HTMLElement {
+    const btn = document.createElement('span');
+    btn.className = `cm-fold-arrow${this.folded ? ' cm-fold-arrow-folded' : ''}`;
+    btn.textContent = '▸';
+    btn.addEventListener('mousedown', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      view.dispatch({ effects: (this.folded ? unfoldEffect : foldEffect).of(this.range) });
+    });
+    return btn;
+  }
+  eq(o: FoldArrowWidget) {
+    return o.folded === this.folded && o.range.from === this.range.from && o.range.to === this.range.to;
+  }
+  ignoreEvent() { return false; }
+}
+
+function buildFoldArrowDecos(view: EditorView): DecorationSet {
+  const builder = new RangeSetBuilder<Decoration>();
+  const doc = view.state.doc;
+  const folded = foldedRanges(view.state);
+  for (const { from, to } of view.visibleRanges) {
+    let pos = from;
+    while (pos <= to) {
+      const line = doc.lineAt(pos);
+      const range = findFoldRange(doc, line.number);
+      if (range) {
+        let isFolded = false;
+        let activeRange = range;
+        folded.between(range.from, range.from, (fFrom, fTo) => {
+          isFolded = true;
+          activeRange = { from: fFrom, to: fTo };
+        });
+        const indentLen = /^\s*/.exec(line.text)![0].length;
+        const arrowPos = line.from + indentLen;
+        builder.add(arrowPos, arrowPos, Decoration.widget({ widget: new FoldArrowWidget(isFolded, activeRange), side: -1 }));
+      }
+      if (line.to >= to) break;
+      pos = line.to + 1;
+    }
+  }
+  return builder.finish();
+}
+
+const foldArrowPlugin = ViewPlugin.fromClass(
+  class {
+    decorations: DecorationSet;
+    constructor(view: EditorView) { this.decorations = buildFoldArrowDecos(view); }
+    update(u: ViewUpdate) {
+      if (u.docChanged || u.viewportChanged || u.transactions.some((tr) => tr.effects.length))
+        this.decorations = buildFoldArrowDecos(u.view);
+    }
+  },
+  { decorations: (v) => v.decorations },
+);
+
 // ─── Secret widget ────────────────────────────────────────────────────────────
 class SecretWidget extends WidgetType {
   constructor(
@@ -468,6 +730,41 @@ const noteTheme = EditorView.theme(
       fontStyle: 'italic',
     },
 
+    // ── Alignment blocks ──────────────────────────────────────────────────────
+    '.cm-align-fence':  { color: '#475569', fontSize: '0.85em', letterSpacing: '0.03em' },
+    '.cm-align-left':   { textAlign: 'left' },
+    '.cm-align-center': { textAlign: 'center' },
+    '.cm-align-right':  { textAlign: 'right' },
+
+    // ── Bulleted lists ────────────────────────────────────────────────────────
+    '.cm-bullet-dot': {
+      display: 'inline-block',
+      marginRight: '0.4em',
+      color: 'var(--editor-fg, #94a3b8)',
+    },
+
+    // ── Fold arrows (collapsible lists & headings) ────────────────────────────
+    '.cm-fold-arrow': {
+      display: 'inline-block',
+      width: '0.9em',
+      marginRight: '0.15em',
+      color: '#64748b',
+      cursor: 'pointer',
+      transform: 'rotate(90deg)',
+      transformOrigin: '45% 50%',
+      transition: 'transform 0.1s ease',
+      userSelect: 'none',
+    },
+    '.cm-fold-arrow:hover': { color: '#94a3b8' },
+    '.cm-fold-arrow-folded': { transform: 'rotate(0deg)' },
+    '.cm-foldPlaceholder': {
+      color: '#64748b',
+      background: 'rgba(100,116,139,.12)',
+      borderRadius: '0.25em',
+      padding: '0 0.3em',
+      cursor: 'pointer',
+    },
+
     // ── Strikethrough / highlight ─────────────────────────────────────────────
     '.cm-strikethrough': { textDecoration: 'line-through', color: '#94a3b8' },
     '.cm-highlight':     { background: 'rgba(250,204,21,.22)', borderRadius: '0.15em', padding: '0.05em 0.2em' },
@@ -613,7 +910,9 @@ type HoverTooltip =
 export type FormatCmd =
   | { kind: 'wrap'; before: string; after: string }   // wraps selection (or inserts markers)
   | { kind: 'line-prefix'; prefix: string }            // toggles a line prefix, e.g. "# "
-  | { kind: 'insert'; text: string };                  // inserts text at cursor
+  | { kind: 'insert'; text: string }                   // inserts text at cursor
+  | { kind: 'align'; align: 'left' | 'center' | 'right' } // wraps the current block in a :::align fence
+  | { kind: 'toggle-bullet' };                          // toggles "- " on every selected line
 
 export type LiveEditorHandle = {
   getYdocState: () => string | null;
@@ -690,6 +989,71 @@ export const LiveEditor = forwardRef<LiveEditorHandle, Props>(function LiveEdito
           const stripped = line.text.replace(/^#{1,3} /, '');
           view.dispatch({ changes: { from: line.from, to: line.to, insert: cmd.prefix + stripped } });
         }
+        view.focus();
+
+      } else if (cmd.kind === 'align') {
+        const { from, to } = view.state.selection.main;
+        const doc = view.state.doc;
+        const firstLine = doc.lineAt(from);
+        const lastLine = doc.lineAt(to);
+
+        const prevLine = firstLine.number > 1 ? doc.line(firstLine.number - 1) : null;
+        const nextLine = lastLine.number < doc.lines ? doc.line(lastLine.number + 1) : null;
+        const openMatch = prevLine ? /^:::(left|center|right)\s*$/.exec(prevLine.text) : null;
+        const closeMatch = nextLine ? /^:::\s*$/.test(nextLine.text) : false;
+
+        if (openMatch && closeMatch && prevLine && nextLine) {
+          const currentAlign = openMatch[1];
+          if (currentAlign === cmd.align || cmd.align === 'left') {
+            // Already fenced with this align (or explicitly left-aligning) — strip the fence.
+            view.dispatch({
+              changes: [
+                { from: prevLine.from, to: prevLine.to + 1, insert: '' },
+                { from: nextLine.from - 1, to: nextLine.to, insert: '' },
+              ],
+            });
+          } else {
+            // Re-tag the opening fence with the newly requested alignment.
+            view.dispatch({ changes: { from: prevLine.from, to: prevLine.to, insert: `:::${cmd.align}` } });
+          }
+        } else if (cmd.align !== 'left') {
+          // Not fenced yet — wrap the touched lines. Left is the implicit
+          // default, so there's nothing to insert for that case.
+          view.dispatch({
+            changes: [
+              { from: firstLine.from, insert: `:::${cmd.align}\n` },
+              { from: lastLine.to, insert: '\n:::' },
+            ],
+          });
+        }
+        view.focus();
+
+      } else if (cmd.kind === 'toggle-bullet') {
+        const { from, to } = view.state.selection.main;
+        const doc = view.state.doc;
+        const startLineNo = doc.lineAt(from).number;
+        const endLineNo = doc.lineAt(to).number;
+        const bulletRe = /^(\s*)[-*+] /;
+
+        // Toggle off only when every touched line already has a bullet;
+        // otherwise add bullets to every line missing one.
+        let allBulleted = true;
+        for (let n = startLineNo; n <= endLineNo; n++) {
+          if (!bulletRe.test(doc.line(n).text)) { allBulleted = false; break; }
+        }
+
+        const changes: { from: number; to?: number; insert: string }[] = [];
+        for (let n = startLineNo; n <= endLineNo; n++) {
+          const line = doc.line(n);
+          const m = bulletRe.exec(line.text);
+          if (allBulleted && m) {
+            changes.push({ from: line.from + m[1].length, to: line.from + m[0].length, insert: '' });
+          } else if (!allBulleted && !m) {
+            const indent = /^\s*/.exec(line.text)![0];
+            changes.push({ from: line.from + indent.length, insert: '- ' });
+          }
+        }
+        if (changes.length) view.dispatch({ changes });
         view.focus();
 
       } else if (cmd.kind === 'insert') {
@@ -894,6 +1258,10 @@ export const LiveEditor = forwardRef<LiveEditorHandle, Props>(function LiveEdito
           // Use Yjs-aware undo keymap (undoes only local changes, not remote).
           keymap.of([
             ...yUndoManagerKeymap,
+            // ── List editing (checked before the defaults below) ─────────────
+            { key: 'Enter', run: bulletEnterKeymap },
+            { key: 'Tab', run: bulletIndentKeymap },
+            { key: 'Shift-Tab', run: bulletDedentKeymap },
             ...defaultKeymap,
             indentWithTab,
             // ── Formatting shortcuts ─────────────────────────────────────────
@@ -925,10 +1293,14 @@ export const LiveEditor = forwardRef<LiveEditorHandle, Props>(function LiveEdito
             },
           ]),
           drawSelection(),
+          codeFolding({ placeholderText: ' ⋯ ' }),
           // Order matters: replace-decorations (secret/list) before mark-decorations.
           secretPlugin,
           listPlugin,
+          bulletPlugin,
+          foldArrowPlugin,
           headingPlugin,
+          alignPlugin,
           boldPlugin,
           italicPlugin,
           codeInlinePlugin,

@@ -182,6 +182,10 @@ html.light .note-secret-revealed .note-secret-row,
 html.light .cm-secret-widget.csw-revealed .csw-header { color: #047857 !important; } /* emerald-700 */
 html.light .note-secret-locked,
 html.light .cm-secret-widget.csw-locked .csw-header { color: #64748b !important; }   /* slate-500 */
+html.light .note-fold-arrow,
+html.light .cm-fold-arrow { color: #475569 !important; }        /* slate-600 */
+html.light .note-fold-arrow:hover,
+html.light .cm-fold-arrow:hover { color: #1e293b !important; }  /* slate-800 */
 
 /* CodeMirror text-selection highlight. The default is a near-opaque blue
    that washes out dark text on the white editor surface in light mode. */
@@ -231,6 +235,27 @@ input[type="number"] { -moz-appearance: textfield; appearance: textfield; }
 .markdown-body th { background: #1e293b; }
 .markdown-body hr { border: none; border-top: 1px solid #334155; margin: 1.5em 0; }
 .markdown-body input[type="checkbox"] { margin-right: 6px; }
+
+/* Collapsible headings & nested lists (read-only view) */
+.note-fold-arrow {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.1em;
+  height: 1.1em;
+  margin-right: 0.15em;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: #64748b;
+  cursor: pointer;
+  vertical-align: -0.15em;
+  transform: rotate(0deg);
+  transition: transform 0.12s ease, color 0.12s ease;
+}
+.note-fold-arrow:hover { color: #94a3b8; }
+.note-fold-arrow-collapsed { transform: rotate(-90deg); }
+.note-li-collapsed > ul, .note-li-collapsed > ol { display: none; }
 
 /* Inline dice roll chip */
 .note-dice {
