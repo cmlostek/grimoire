@@ -548,6 +548,23 @@ html.light .srd-popover-body th {
   font-weight: 600;
 }
 
+/* Condition reminder badges — pulse a coloured glow so the player keeps an
+ * active effect in view. The glow colour follows the element's text colour
+ * (currentColor), which each badge sets per-condition. */
+@keyframes condition-glow {
+  0%, 100% { box-shadow: 0 0 2px 0 currentColor; transform: scale(1); }
+  50%      { box-shadow: 0 0 9px 2px currentColor; transform: scale(1.08); }
+}
+.condition-badge {
+  animation: condition-glow 1.7s ease-in-out infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .condition-badge { animation: none; }
+}
+@media print {
+  .condition-badge { animation: none; }
+}
+
 /* Map ping pulse — animation runs ~2s, then JS removes the element. */
 @keyframes map-ping-dot {
   0%   { transform: scale(0.6); opacity: 1; }
