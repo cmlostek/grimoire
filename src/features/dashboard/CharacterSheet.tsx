@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Save, Printer, BedDouble, Coffee, Heart, Dices, HeartPulse, Skull, Eye, Search, Brain, Plus, X as XIcon, Swords, Shield as ShieldIcon, Sparkles, Backpack, Trash2, ChevronUp, AlertTriangle, Pencil } from 'lucide-react';
+import { Save, Printer, BedDouble, Coffee, Heart, Dices, HeartPulse, Skull, Eye, EyeOff, EarOff, Ghost, Grab, Zap, ZapOff, Mountain, Biohazard, ArrowDown, Link as LinkIcon, Moon, Search, Brain, Plus, X as XIcon, Swords, Shield as ShieldIcon, Sparkles, Backpack, Trash2, ChevronUp, AlertTriangle, Pencil, type LucideIcon } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import LevelUpModal, { type LevelUpResult } from './LevelUpModal';
@@ -510,6 +510,8 @@ function SheetHeader({
           )}
         </div>
       </div>
+
+      <ConditionBadges draft={draft} onApply={onApply} />
     </div>
   );
 }
@@ -2314,6 +2316,73 @@ function DetailsBlock({ draft, onApply }: { draft: PartyMember; onApply: (p: Par
 /** SRD 5.1 conditions list minus Exhaustion (which has its own counter). */
 const SHEET_CONDITIONS = CONDITIONS.filter((c) => c.index !== 'exhaustion');
 
+/** Per-condition presentation: a distinct icon + colour so each effect reads at
+ *  a glance both as a chip in the block below and as a pulsing badge in the
+ *  sheet header. Class strings are written out in full (not built dynamically)
+ *  so Tailwind's JIT compiler keeps them.
+ *   - `chip`  : classes for the active chip in ConditionsBlock
+ *   - `text`  : icon colour; also drives the header badge's glow via currentColor
+ *   - `ring`  : header badge border colour */
+type ConditionMeta = { icon: LucideIcon; label: string; chip: string; text: string; ring: string };
+const CONDITION_META: Record<string, ConditionMeta> = {
+  blinded:       { icon: EyeOff,    label: 'Blinded',       chip: 'border-zinc-500 bg-zinc-800/60 text-zinc-100',       text: 'text-zinc-300',    ring: 'border-zinc-600/60' },
+  charmed:       { icon: Heart,     label: 'Charmed',       chip: 'border-pink-500 bg-pink-900/40 text-pink-100',       text: 'text-pink-300',    ring: 'border-pink-700/60' },
+  deafened:      { icon: EarOff,    label: 'Deafened',      chip: 'border-indigo-500 bg-indigo-900/40 text-indigo-100', text: 'text-indigo-300',  ring: 'border-indigo-700/60' },
+  frightened:    { icon: Ghost,     label: 'Frightened',    chip: 'border-purple-500 bg-purple-900/40 text-purple-100', text: 'text-purple-300',  ring: 'border-purple-700/60' },
+  grappled:      { icon: Grab,      label: 'Grappled',      chip: 'border-orange-500 bg-orange-900/40 text-orange-100', text: 'text-orange-300',  ring: 'border-orange-700/60' },
+  incapacitated: { icon: ZapOff,    label: 'Incapacitated', chip: 'border-red-500 bg-red-900/40 text-red-100',          text: 'text-red-300',     ring: 'border-red-700/60' },
+  invisible:     { icon: Eye,       label: 'Invisible',     chip: 'border-cyan-500 bg-cyan-900/40 text-cyan-100',       text: 'text-cyan-300',    ring: 'border-cyan-700/60' },
+  paralyzed:     { icon: Zap,       label: 'Paralyzed',     chip: 'border-yellow-500 bg-yellow-900/40 text-yellow-100', text: 'text-yellow-300',  ring: 'border-yellow-700/60' },
+  petrified:     { icon: Mountain,  label: 'Petrified',     chip: 'border-stone-500 bg-stone-800/60 text-stone-100',    text: 'text-stone-300',   ring: 'border-stone-600/60' },
+  poisoned:      { icon: Biohazard, label: 'Poisoned',      chip: 'border-green-500 bg-green-900/40 text-green-100',    text: 'text-green-300',   ring: 'border-green-700/60' },
+  prone:         { icon: ArrowDown, label: 'Prone',         chip: 'border-lime-500 bg-lime-900/40 text-lime-100',       text: 'text-lime-300',    ring: 'border-lime-700/60' },
+  restrained:    { icon: LinkIcon,  label: 'Restrained',    chip: 'border-amber-500 bg-amber-900/40 text-amber-100',    text: 'text-amber-300',   ring: 'border-amber-700/60' },
+  stunned:       { icon: Sparkles,  label: 'Stunned',       chip: 'border-fuchsia-500 bg-fuchsia-900/40 text-fuchsia-100', text: 'text-fuchsia-300', ring: 'border-fuchsia-700/60' },
+  unconscious:   { icon: Moon,      label: 'Unconscious',   chip: 'border-sky-500 bg-sky-900/40 text-sky-100',          text: 'text-sky-300',     ring: 'border-sky-700/60' },
+};
+
+/** Pulsing reminder badges shown in the sheet header for every active condition
+ *  (plus an exhaustion pip if the level is above 0). Each badge is clickable to
+ *  clear that condition straight from the header. */
+function ConditionBadges({ draft, onApply }: { draft: PartyMember; onApply: (p: Partial<PartyMember>) => void }) {
+  const conditions = draft.conditions ?? [];
+  const active = conditions.filter((idx) => CONDITION_META[idx]);
+  const exh = draft.exhaustion ?? 0;
+  if (active.length === 0 && exh === 0) return null;
+
+  const clear = (idx: string) => onApply({ conditions: conditions.filter((c) => c !== idx) });
+
+  return (
+    <div className="flex flex-wrap items-center gap-2 mt-3 pt-3 border-t border-slate-800">
+      <span className="text-[10px] uppercase tracking-wider text-slate-500 mr-0.5">Active</span>
+      {active.map((idx) => {
+        const meta = CONDITION_META[idx];
+        const Icon = meta.icon;
+        return (
+          <button
+            key={idx}
+            onClick={() => clear(idx)}
+            title={`${meta.label} — click to clear`}
+            className={`condition-badge grid place-items-center h-7 w-7 rounded-full border bg-slate-950/70 ${meta.text} ${meta.ring}`}
+          >
+            <Icon size={14} />
+          </button>
+        );
+      })}
+      {exh > 0 && (
+        <div
+          title={`Exhaustion level ${exh}${exh >= 6 ? ' — dead' : ''}`}
+          className={`condition-badge grid place-items-center h-7 px-2 rounded-full border bg-slate-950/70 ${exh >= 6 ? 'text-rose-300 border-rose-600/60' : 'text-amber-300 border-amber-700/60'}`}
+        >
+          <span className="flex items-center gap-0.5 text-[11px] font-bold">
+            <AlertTriangle size={11} />{exh}
+          </span>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function ConditionsBlock({ draft, onApply }: { draft: PartyMember; onApply: (p: Partial<PartyMember>) => void }) {
   const active = new Set(draft.conditions ?? []);
   const exh = draft.exhaustion ?? 0;
@@ -2345,17 +2414,20 @@ function ConditionsBlock({ draft, onApply }: { draft: PartyMember; onApply: (p: 
         <div className="flex flex-wrap gap-1.5">
           {SHEET_CONDITIONS.map((c) => {
             const on = active.has(c.index);
+            const meta = CONDITION_META[c.index];
+            const Icon = meta?.icon;
             return (
               <button
                 key={c.index}
                 onClick={() => toggleCondition(c.index)}
                 title={c.desc.split('\n')[0]}
-                className={`px-2 py-1 text-[11px] rounded border transition-colors ${
+                className={`inline-flex items-center gap-1 px-2 py-1 text-[11px] rounded border transition-colors ${
                   on
-                    ? 'border-rose-600 bg-rose-900/40 text-rose-100'
+                    ? meta?.chip ?? 'border-rose-600 bg-rose-900/40 text-rose-100'
                     : 'border-slate-800 bg-slate-950 text-slate-400 hover:bg-slate-800 hover:text-slate-200'
                 }`}
               >
+                {Icon && <Icon size={11} />}
                 {c.name}
               </button>
             );
