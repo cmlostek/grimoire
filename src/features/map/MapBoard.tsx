@@ -1,4 +1,5 @@
 import { useRef, useState, useEffect, useCallback, useMemo } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { useMap, MAX_DAMAGE_LOG, type DamageLogEntry, type MapShape, type MapToken, type MapScene } from './mapStore';
 import { hpBarClass, hpPercent } from '../hpBar';
 import { CONDITIONS } from '../../data/conditions';
@@ -411,6 +412,7 @@ export default function MapBoard() {
   const state = useMap((s) => s.state);
   const scenes = useMap((s) => s.scenes);
   const tokens = useMap((s) => s.tokens);
+  const mapLoaded = useMap((s) => s.loaded);
   const mapError = useMap((s) => s.error);
   const loadForCampaign = useMap((s) => s.loadForCampaign);
   const subscribe = useMap((s) => s.subscribe);
@@ -707,6 +709,53 @@ export default function MapBoard() {
     });
     return () => cancelAnimationFrame(id);
   }, [fitToScreen, canvasW, canvasH]);
+
+  // ── Focus a token from a deep link (e.g. a ritual countdown's "Map" button
+  //    navigates to /map?focusOwner=…&focusName=…). Centre the camera on the
+  //    caster's token in the current scene and pulse it, then strip the params
+  //    so a refresh doesn't re-trigger. Runs once per navigation.
+  const [searchParams, setSearchParams] = useSearchParams();
+  const focusOwner = searchParams.get('focusOwner');
+  const focusName = searchParams.get('focusName');
+  const [focusTokenId, setFocusTokenId] = useState<string | null>(null);
+  const didFocusRef = useRef(false);
+  useEffect(() => {
+    if (didFocusRef.current) return;
+    if (!mapLoaded) return;
+    if (!focusOwner && !focusName) return;
+    didFocusRef.current = true;
+
+    const clearParams = () => {
+      const next = new URLSearchParams(searchParams);
+      next.delete('focusOwner');
+      next.delete('focusName');
+      setSearchParams(next, { replace: true });
+    };
+
+    // Only tokens on the visible scene can be centred on.
+    const pool = tokens.filter((t) =>
+      t.scene_id ? t.scene_id === currentSceneId : currentSceneId === state.active_scene_id,
+    );
+    const match =
+      (focusOwner ? pool.find((t) => t.owner_user_id === focusOwner) : undefined) ??
+      (focusName ? pool.find((t) => t.name.trim().toLowerCase() === focusName.trim().toLowerCase()) : undefined) ??
+      null;
+
+    if (!match) { clearParams(); return; }
+    setFocusTokenId(match.id);
+    // Defer the centre one frame so the initial fit-to-screen has settled.
+    requestAnimationFrame(() => {
+      const rect = svgRef.current?.getBoundingClientRect();
+      if (rect) {
+        const z = Math.max(zoomRef.current, 1);
+        setZoom(z);
+        setPan({ x: rect.width / 2 - match.x * z, y: rect.height / 2 - match.y * z });
+      }
+      clearParams();
+    });
+    const timer = setTimeout(() => setFocusTokenId(null), 3600);
+    return () => clearTimeout(timer);
+  }, [mapLoaded, focusOwner, focusName, tokens, currentSceneId, state.active_scene_id, searchParams, setSearchParams]);
 
   // ── Coordinate helpers ───────────────────────────────────────────────────
   // Convert a pointer event's CSS-pixel position to logical canvas coordinates.
@@ -2268,6 +2317,15 @@ export default function MapBoard() {
                     }}
                     onDoubleClick={isGM ? () => void removeToken(t.id) : undefined}
                   >
+                    {/* Deep-link focus pulse — a ritual's "Map" button centres
+                        here and flags this token; the ring pulses for a few
+                        seconds so players spot the caster. */}
+                    {focusTokenId === t.id && (
+                      <circle cx={t.x} cy={t.y} r={r + 6 / zoom} fill="none" stroke="#fbbf24" strokeWidth={4 / zoom}>
+                        <animate attributeName="r" values={`${r + 4 / zoom};${r + 16 / zoom};${r + 4 / zoom}`} dur="1.1s" repeatCount="indefinite" />
+                        <animate attributeName="opacity" values="1;0.2;1" dur="1.1s" repeatCount="indefinite" />
+                      </circle>
+                    )}
                     {/* Outer ring in owner's color */}
                     <circle
                       cx={t.x} cy={t.y} r={r + 2 / zoom}

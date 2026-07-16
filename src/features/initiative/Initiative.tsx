@@ -1,10 +1,15 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { ChevronRight, Shuffle, RotateCcw, Plus, Trash2, Heart, Shield, Swords, Activity, X, Lock, Users } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+import { ChevronRight, Shuffle, RotateCcw, Plus, Trash2, Heart, Shield, Swords, Activity, X, Lock, Users, Sparkles, Hourglass, MapPin, User } from 'lucide-react';
 import PageHeader from '../../components/PageHeader';
 import { QuickDiceButton } from '../dice/QuickDice';
 import { useSession } from '../session/sessionStore';
 import { useInitiativeStore, CONDITIONS, type Condition } from './initiativeStore';
-import { hpBarClass, hpPercent } from '../hpBar';
+import { useRitualStore, type RitualMode } from './ritualStore';
+import type { PartyMember } from '../party/partyStore';
+import { SPELLS, spellsFor } from '../../data/srd';
+import { useSharedHomebrew } from '../homebrew/sharedHomebrewStore';
+import { hpPercent } from '../hpBar';
 import { useCampaignSettings } from '../notes/campaignSettingsStore';
 import { useParty } from '../party/partyStore';
 import { useNpcStore } from '../npcs/npcStore';
@@ -15,11 +20,16 @@ const d20 = () => 1 + Math.floor(Math.random() * 20);
 
 export default function Initiative() {
   const campaignId = useSession((s) => s.campaignId);
+  const userId = useSession((s) => s.userId);
   const role = useSession((s) => s.role);
   const viewAsPlayer = useSession((s) => s.viewAsPlayer);
   const isGM = (role === 'gm' || role === 'cogm') && !viewAsPlayer;
-  const allowedGmPages = useCampaignSettings((s) => s.settings.allowedGmPages ?? []);
-  const playerCanView = isGM || allowedGmPages.includes('initiative');
+  // Initiative is a regular (non-GM-only) page, so player visibility follows
+  // the same hiddenPages toggle the sidebar and Settings use — visible unless
+  // the GM has explicitly hidden it. (It previously gated on allowedGmPages,
+  // which only ever holds gmOnly slugs, so players were always blocked.)
+  const hiddenPages = useCampaignSettings((s) => s.settings.hiddenPages ?? []);
+  const playerCanView = isGM || !hiddenPages.includes('initiative');
 
   const {
     combatants, round, turnIndex, loaded,
@@ -151,12 +161,14 @@ export default function Initiative() {
   }, [party, npcs, statBlocks, campaignId, add]);
 
   // Auto-sort every 30s — keeps the order in sync if someone edits an
-  // initiative score and forgets to hit Re-roll.
+  // initiative score and forgets to hit Re-roll. GM only: players are
+  // read-only, and a player's sort() would fail RLS while locally reordering
+  // their view out of step with everyone else.
   useEffect(() => {
-    if (combatants.length === 0) return;
+    if (!isGM || combatants.length === 0) return;
     const id = setInterval(() => sort(), 30_000);
     return () => clearInterval(id);
-  }, [combatants.length, sort]);
+  }, [isGM, combatants.length, sort]);
 
   const [rosterOpen, setRosterOpen] = useState(false);
 
@@ -221,7 +233,9 @@ export default function Initiative() {
             const dead     = c.hp <= 0 && c.maxHp > 0;
             const hpPct    = hpPercent(c.hp, c.maxHp);
 
-            // Players see a limited view: name + turn indicator only; NPC health/initiative hidden
+            // Players get a full read-only view — initiative, name, conditions,
+            // and AC — but never any health (no bar, no numbers, no Down tag,
+            // which would leak HP) and no editing controls.
             if (!isGM) {
               return (
                 <div
@@ -233,24 +247,53 @@ export default function Initiative() {
                   }`}
                   style={isActive ? { background: 'color-mix(in srgb, var(--ac-900) 30%, var(--surface-elev))' } : undefined}
                 >
-                  <div className="flex items-center gap-3">
-                    <div className={`w-2 h-2 rounded-full shrink-0 ${c.isPC ? 'bg-emerald-500' : 'bg-slate-600'}`} />
-                    <span className="font-serif text-base text-slate-100">{c.name}</span>
-                    {c.isPC && <span className="text-[10px] uppercase tracking-wider text-emerald-400/80">PC</span>}
-                    {isActive && (
-                      <span className="ml-auto text-[10px] uppercase tracking-wider" style={{ color: 'var(--ac-400)' }}>
-                        Acting
-                      </span>
-                    )}
-                  </div>
-                  {c.isPC && (
-                    <div className="mt-2 h-1.5 bg-slate-800 rounded-full overflow-hidden">
-                      <div
-                        className={`h-full ${hpBarClass(hpPct)}`}
-                        style={{ width: `${hpPct}%` }}
-                      />
+                  <div className="flex items-start gap-3">
+                    {/* Initiative badge */}
+                    <div className={`w-12 h-12 rounded shrink-0 flex flex-col items-center justify-center font-mono ${
+                      c.isPC ? 'bg-emerald-900/60 text-emerald-200' : 'bg-rose-900/60 text-rose-200'
+                    }`}>
+                      <div className="text-[9px] uppercase tracking-wider opacity-70">Init</div>
+                      <div className="text-lg leading-none">{c.initiative}</div>
                     </div>
-                  )}
+
+                    <div className="flex-1 min-w-0">
+                      {/* Name row */}
+                      <div className="flex items-center gap-2">
+                        <span className="font-serif text-lg text-slate-100 truncate">{c.name}</span>
+                        {c.isPC && <span className="text-[10px] uppercase tracking-wider text-emerald-400/80">PC</span>}
+                        {isActive && (
+                          <span className="ml-auto text-[10px] uppercase tracking-wider" style={{ color: 'var(--ac-400)' }}>
+                            Acting
+                          </span>
+                        )}
+                      </div>
+
+                      {/* Conditions row */}
+                      {c.conditions.length > 0 && (
+                        <div className="flex flex-wrap gap-1 mt-1.5">
+                          {c.conditions.map((cond) => {
+                            const color = CONDITIONS.find((x) => x.name === cond.name)?.color ?? '#64748b';
+                            return (
+                              <span
+                                key={cond.name}
+                                className="text-[10px] px-1.5 py-0.5 rounded-full font-medium"
+                                style={{ background: color + '22', color, border: `1px solid ${color}55` }}
+                                title={cond.rounds !== null ? `${cond.rounds} round(s) remaining` : 'Indefinite'}
+                              >
+                                {cond.name}
+                                {cond.rounds !== null && <span className="opacity-70"> ({cond.rounds})</span>}
+                              </span>
+                            );
+                          })}
+                        </div>
+                      )}
+
+                      {/* AC row — no health for players */}
+                      <div className="flex items-center gap-1 mt-1 text-xs text-slate-400">
+                        <Shield size={12} /> AC <span className="font-mono">{c.ac}</span>
+                      </div>
+                    </div>
+                  </div>
                 </div>
               );
             }
@@ -467,7 +510,8 @@ export default function Initiative() {
               </div>
               <div className="font-serif text-2xl" style={{ color: 'var(--ac-200)' }}>{active.name}</div>
               <div className="text-xs text-slate-400">
-                Initiative {active.initiative} · AC {active.ac} · HP {active.hp}/{active.maxHp}
+                Initiative {active.initiative} · AC {active.ac}
+                {isGM && <> · HP {active.hp}/{active.maxHp}</>}
               </div>
               {active.conditions.length > 0 && (
                 <div className="flex flex-wrap gap-1 pt-1">
@@ -487,6 +531,10 @@ export default function Initiative() {
               )}
             </div>
           )}
+
+          {/* Ritual countdowns — visible to players and GM. Links back to the
+              map (caster's token) and the character sheet. */}
+          <RitualsPanel isGM={isGM} userId={userId} party={party} />
 
           {/* Add-from-roster picker — sourced from party, NPCs, stat blocks */}
           {isGM && roster.length > 0 && (
@@ -550,6 +598,301 @@ export default function Initiative() {
           )}
         </div>
       </div>
+    </div>
+  );
+}
+
+// ── Ritual countdowns ────────────────────────────────────────────────────────
+// A caster starts a ritual that becomes castable after N combat rounds or a
+// wall-clock duration. The whole table sees it here; the countdown links back
+// to the map (focuses the caster's token) and to the character sheet. Players
+// can start rituals on characters they own; the GM can start one for anyone.
+
+function ritualStatus(
+  r: { mode: RitualMode; roundsRemaining: number | null; expiresAt: string | null },
+  now: number,
+): { ready: boolean; label: string } {
+  if (r.mode === 'rounds') {
+    const n = r.roundsRemaining ?? 0;
+    return n <= 0
+      ? { ready: true, label: 'Ready to cast' }
+      : { ready: false, label: `${n} round${n === 1 ? '' : 's'} left` };
+  }
+  const ms = r.expiresAt ? new Date(r.expiresAt).getTime() - now : 0;
+  if (ms <= 0) return { ready: true, label: 'Ready to cast' };
+  const totalSec = Math.ceil(ms / 1000);
+  const m = Math.floor(totalSec / 60);
+  const s = totalSec % 60;
+  return { ready: false, label: `${m}:${String(s).padStart(2, '0')} left` };
+}
+
+function RitualsPanel({
+  isGM,
+  userId,
+  party,
+}: {
+  isGM: boolean;
+  userId: string | null;
+  party: PartyMember[];
+}) {
+  const navigate = useNavigate();
+  const campaignId = useSession((s) => s.campaignId);
+  const { rituals, loaded, loadForCampaign, subscribe, clear, add, remove } = useRitualStore();
+
+  useEffect(() => {
+    if (!campaignId) return;
+    loadForCampaign(campaignId);
+    const unsub = subscribe(campaignId);
+    return () => { unsub(); clear(); };
+  }, [campaignId, loadForCampaign, subscribe, clear]);
+
+  // Shared homebrew spells carry their own ritual flag; load them so homebrew
+  // rituals also surface in the spell picker below.
+  const sharedSpells = useSharedHomebrew((s) => s.spells);
+  const loadShared = useSharedHomebrew((s) => s.loadForCampaign);
+  const subscribeShared = useSharedHomebrew((s) => s.subscribe);
+  useEffect(() => {
+    if (!campaignId) return;
+    loadShared(campaignId);
+    return subscribeShared(campaignId);
+  }, [campaignId, loadShared, subscribeShared]);
+
+  // 1s ticker so minutes-mode countdowns update live. Rounds-mode rituals move
+  // only when the GM hits Next, so they don't need the ticker.
+  const hasMinutes = rituals.some((r) => r.mode === 'minutes');
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!hasMinutes) return;
+    const id = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, [hasMinutes]);
+
+  // Characters this actor may start a ritual for: players are limited to the
+  // characters they own; the GM can pick anyone.
+  const castable = useMemo(
+    () => (isGM ? party : party.filter((m) => m.owner_user_id === userId && userId !== null)),
+    [party, isGM, userId],
+  );
+
+  const canManage = (r: { ownerUserId: string | null }) =>
+    isGM || (!!r.ownerUserId && r.ownerUserId === userId);
+
+  const goToMap = (r: { ownerUserId: string | null; casterName: string }) => {
+    const params = new URLSearchParams();
+    if (r.ownerUserId) params.set('focusOwner', r.ownerUserId);
+    if (r.casterName) params.set('focusName', r.casterName);
+    navigate(`/map?${params.toString()}`);
+  };
+  const goToSheet = (r: { partyMemberId: string | null }) =>
+    navigate(r.partyMemberId ? `/party#member-${r.partyMemberId}` : '/party');
+
+  // ── Start-ritual form state ───────────────────────────────────────────────
+  const [open, setOpen] = useState(false);
+  const [memberId, setMemberId] = useState('');
+  const [spell, setSpell] = useState('');
+  const [mode, setMode] = useState<RitualMode>('rounds');
+  const [amount, setAmount] = useState('10');
+
+  const selected = castable.find((m) => m.id === memberId) ?? null;
+
+  // Only ritual-flagged spells belong in a ritual countdown. Resolve each of
+  // the character's known spells against its source and keep the ones tagged as
+  // rituals: SRD spells against the edition-aware catalog, homebrew spells
+  // against the shared-homebrew store. Freeform 'custom' entries carry no
+  // resolvable flag, so they're left out.
+  const edition = useCampaignSettings((s) => s.settings.srdEdition);
+  const ritualByIndex = useMemo(() => {
+    const idx = new Map<string, boolean>();
+    for (const s of SPELLS) idx.set(s.index, s.ritual);
+    for (const s of spellsFor(edition)) idx.set(s.index, s.ritual);
+    return idx;
+  }, [edition]);
+  const homebrewRitualById = useMemo(() => {
+    const idx = new Map<string, boolean>();
+    for (const s of sharedSpells) idx.set(s.id, Boolean(s.data?.ritual));
+    return idx;
+  }, [sharedSpells]);
+  const spellOptions = useMemo(
+    () =>
+      (selected?.spells ?? [])
+        .filter((s) => {
+          if (!s.sourceId) return false;
+          if (s.sourceKind === 'srd-spell') return ritualByIndex.get(s.sourceId) === true;
+          if (s.sourceKind === 'spell') return homebrewRitualById.get(s.sourceId) === true;
+          return false;
+        })
+        .map((s) => s.name),
+    [selected, ritualByIndex, homebrewRitualById],
+  );
+
+  const start = async () => {
+    if (!selected || !spell.trim()) return;
+    const n = Math.max(1, parseInt(amount || '1', 10) || 1);
+    await add({
+      ownerUserId: selected.owner_user_id,
+      partyMemberId: selected.id,
+      casterName: selected.name,
+      spellName: spell.trim(),
+      mode,
+      rounds: mode === 'rounds' ? n : undefined,
+      minutes: mode === 'minutes' ? n : undefined,
+    });
+    setSpell('');
+    setAmount('10');
+    setOpen(false);
+  };
+
+  // Nothing to show and nothing to start — keep the sidebar tidy.
+  if (loaded && rituals.length === 0 && castable.length === 0) return null;
+
+  return (
+    <div className="bg-slate-900 border border-slate-800 rounded-lg p-4 space-y-3">
+      <div className="flex items-center gap-1.5 text-xs uppercase tracking-wider text-slate-400">
+        <Sparkles size={12} /> Rituals
+        {rituals.length > 0 && <span className="text-slate-700">({rituals.length})</span>}
+      </div>
+
+      {loaded && rituals.length === 0 && (
+        <div className="text-[11px] text-slate-600 italic">No rituals in progress.</div>
+      )}
+
+      <div className="space-y-2">
+        {rituals.map((r) => {
+          const { ready, label } = ritualStatus(r, now);
+          return (
+            <div
+              key={r.id}
+              className="rounded-lg border p-2.5"
+              style={
+                ready
+                  ? {
+                      background: 'color-mix(in srgb, var(--ac-900) 30%, var(--surface-elev))',
+                      borderColor: 'var(--ac-700)',
+                    }
+                  : { background: 'rgb(15 23 42)', borderColor: 'rgb(30 41 59)' }
+              }
+            >
+              <div className="flex items-start justify-between gap-2">
+                <div className="min-w-0">
+                  <div className="font-serif text-sm text-slate-100 truncate">{r.spellName || 'Ritual'}</div>
+                  <div className="text-[11px] text-slate-500 truncate">{r.casterName}</div>
+                </div>
+                <div className="flex items-center gap-1 shrink-0">
+                  <span
+                    className="text-[10px] px-1.5 py-0.5 rounded-full font-medium flex items-center gap-1 whitespace-nowrap"
+                    style={
+                      ready
+                        ? { background: 'var(--ac-900)', color: 'var(--ac-200)', border: '1px solid var(--ac-700)' }
+                        : { background: 'rgb(30 41 59)', color: 'rgb(148 163 184)' }
+                    }
+                  >
+                    {r.mode === 'rounds' ? <Swords size={9} /> : <Hourglass size={9} />}
+                    {label}
+                  </span>
+                  {canManage(r) && (
+                    <button
+                      onClick={() => remove(r.id)}
+                      className="text-slate-600 hover:text-rose-400 p-0.5"
+                      title="Dismiss ritual"
+                    >
+                      <X size={12} />
+                    </button>
+                  )}
+                </div>
+              </div>
+              <div className="flex items-center gap-1.5 mt-2">
+                <button
+                  onClick={() => goToMap(r)}
+                  className="flex-1 flex items-center justify-center gap-1 text-[10px] py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-300"
+                >
+                  <MapPin size={10} /> Map
+                </button>
+                <button
+                  onClick={() => goToSheet(r)}
+                  className="flex-1 flex items-center justify-center gap-1 text-[10px] py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-300"
+                >
+                  <User size={10} /> Sheet
+                </button>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Start a ritual — for characters the actor may control. */}
+      {castable.length > 0 && (
+        <div className="pt-1">
+          {!open ? (
+            <button
+              onClick={() => { setOpen(true); if (!memberId && castable[0]) setMemberId(castable[0].id); }}
+              className="w-full flex items-center justify-center gap-1 text-[11px] py-1.5 rounded border border-slate-800 text-slate-400 hover:text-slate-200 hover:border-slate-700"
+            >
+              <Plus size={12} /> Start ritual
+            </button>
+          ) : (
+            <div className="space-y-2 border-t border-slate-800 pt-3">
+              <select
+                value={memberId}
+                onChange={(e) => { setMemberId(e.target.value); setSpell(''); }}
+                className="w-full bg-slate-800 border border-slate-700 rounded px-2 py-1.5 text-xs"
+              >
+                <option value="" disabled>Choose caster…</option>
+                {castable.map((m) => (
+                  <option key={m.id} value={m.id}>{m.name}</option>
+                ))}
+              </select>
+              <input
+                value={spell}
+                onChange={(e) => setSpell(e.target.value)}
+                list="ritual-spell-options"
+                placeholder="Spell name"
+                className="w-full bg-slate-800 border border-slate-700 rounded px-2 py-1.5 text-xs"
+              />
+              <datalist id="ritual-spell-options">
+                {spellOptions.map((s) => <option key={s} value={s} />)}
+              </datalist>
+              <div className="flex items-center gap-2">
+                <div className="flex rounded overflow-hidden border border-slate-700 text-[11px]">
+                  <button
+                    onClick={() => setMode('rounds')}
+                    className={`px-2 py-1 ${mode === 'rounds' ? 'bg-slate-700 text-slate-100' : 'bg-slate-800 text-slate-400'}`}
+                  >
+                    Rounds
+                  </button>
+                  <button
+                    onClick={() => setMode('minutes')}
+                    className={`px-2 py-1 ${mode === 'minutes' ? 'bg-slate-700 text-slate-100' : 'bg-slate-800 text-slate-400'}`}
+                  >
+                    Minutes
+                  </button>
+                </div>
+                <input
+                  type="number"
+                  min={1}
+                  value={amount}
+                  onChange={(e) => setAmount(e.target.value)}
+                  className="w-16 bg-slate-800 border border-slate-700 rounded px-2 py-1 text-xs font-mono"
+                />
+              </div>
+              <div className="flex gap-2">
+                <button
+                  onClick={start}
+                  disabled={!memberId || !spell.trim()}
+                  className="ac-btn flex-1 px-2 py-1.5 text-xs font-semibold rounded disabled:opacity-40"
+                >
+                  Start
+                </button>
+                <button
+                  onClick={() => setOpen(false)}
+                  className="px-2 py-1.5 text-xs rounded bg-slate-800 hover:bg-slate-700 text-slate-400"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
