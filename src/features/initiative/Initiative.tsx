@@ -22,8 +22,12 @@ export default function Initiative() {
   const role = useSession((s) => s.role);
   const viewAsPlayer = useSession((s) => s.viewAsPlayer);
   const isGM = (role === 'gm' || role === 'cogm') && !viewAsPlayer;
-  const allowedGmPages = useCampaignSettings((s) => s.settings.allowedGmPages ?? []);
-  const playerCanView = isGM || allowedGmPages.includes('initiative');
+  // Initiative is a regular (non-GM-only) page, so player visibility follows
+  // the same hiddenPages toggle the sidebar and Settings use — visible unless
+  // the GM has explicitly hidden it. (It previously gated on allowedGmPages,
+  // which only ever holds gmOnly slugs, so players were always blocked.)
+  const hiddenPages = useCampaignSettings((s) => s.settings.hiddenPages ?? []);
+  const playerCanView = isGM || !hiddenPages.includes('initiative');
 
   const {
     combatants, round, turnIndex, loaded,
