@@ -7,6 +7,7 @@ import { useSession } from '../session/sessionStore';
 import { useInitiativeStore, CONDITIONS, type Condition } from './initiativeStore';
 import { useRitualStore, type RitualMode } from './ritualStore';
 import type { PartyMember } from '../party/partyStore';
+import { SPELLS, spellsFor } from '../../data/srd';
 import { hpPercent } from '../hpBar';
 import { useCampaignSettings } from '../notes/campaignSettingsStore';
 import { useParty } from '../party/partyStore';
@@ -681,7 +682,26 @@ function RitualsPanel({
   const [amount, setAmount] = useState('10');
 
   const selected = castable.find((m) => m.id === memberId) ?? null;
-  const spellOptions = selected?.spells?.map((s) => s.name) ?? [];
+
+  // Only ritual-flagged spells belong in a ritual countdown. Resolve each of
+  // the character's known SRD spells against the spell catalog and keep the
+  // ones tagged as rituals (edition-aware, matching the character sheet's own
+  // ritual list). Homebrew/custom entries carry no resolvable flag, so they're
+  // left out.
+  const edition = useCampaignSettings((s) => s.settings.srdEdition);
+  const ritualByIndex = useMemo(() => {
+    const idx = new Map<string, boolean>();
+    for (const s of SPELLS) idx.set(s.index, s.ritual);
+    for (const s of spellsFor(edition)) idx.set(s.index, s.ritual);
+    return idx;
+  }, [edition]);
+  const spellOptions = useMemo(
+    () =>
+      (selected?.spells ?? [])
+        .filter((s) => s.sourceKind === 'srd-spell' && !!s.sourceId && ritualByIndex.get(s.sourceId) === true)
+        .map((s) => s.name),
+    [selected, ritualByIndex],
+  );
 
   const start = async () => {
     if (!selected || !spell.trim()) return;
