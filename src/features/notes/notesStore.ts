@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import { supabase } from '../../lib/supabase';
+import { useSession } from '../session/sessionStore';
 
 export type Note = {
   id: string;
@@ -12,6 +13,10 @@ export type Note = {
   /** Legacy: kept in sync with note_permissions for older clients. */
   player_editable: boolean | null;
   owner_user_id: string | null;
+  /** Immutable author — who first created the note. GM-authored notes have
+   *  owner_user_id = null but created_by = the GM, so this is how a GM's
+   *  "own" notes are identified (see ownsNote in Dashboard). */
+  created_by: string | null;
   icon: string | null;
   created_at: string;
   updated_at: string;
@@ -117,6 +122,8 @@ type NotesState = {
   drafts: Record<string, { title?: string; body?: string }>;
   /** Per-note permission matrix loaded from note_permissions. */
   permissions: Record<string, NotePermission[]>;
+  /** Current user's custom drag order, keyed by folder id (or 'root'). */
+  noteOrder: Record<string, string[]>;
   activeNoteId: string | null;
   loaded: boolean;
   error: string | null;
@@ -128,7 +135,11 @@ type NotesState = {
   setActiveNote: (id: string | null) => void;
 
   createNote: (campaignId: string, folderId: string | null, ownerId?: string | null) => Promise<string | null>;
-  updateNote: (id: string, patch: Partial<Pick<Note, 'title' | 'body' | 'folder_id' | 'visible_to_players' | 'icon' | 'player_editable'>>) => Promise<void>;
+  updateNote: (id: string, patch: Partial<Pick<Note, 'title' | 'body' | 'folder_id' | 'visible_to_players' | 'icon' | 'player_editable' | 'ydoc_state'>>) => Promise<void>;
+  /** Hands a note off to another campaign member. Only the note's current
+   *  owner or a GM/co-GM may call this — enforced server-side by the
+   *  transfer_note_ownership RPC, not just the UI gate. */
+  transferNoteOwnership: (noteId: string, newOwnerId: string) => Promise<void>;
   /** Buffer title/body locally without hitting the DB. Call saveNote to flush. */
   updateDraft: (id: string, patch: { title?: string; body?: string }) => void;
   /** Flush draft buffer to Supabase; broadcasts via realtime. Accepts the
@@ -137,6 +148,9 @@ type NotesState = {
   isDirty: (id: string) => boolean;
   deleteNote: (id: string) => Promise<void>;
   moveNote: (id: string, folderId: string | null) => Promise<void>;
+  /** Persists the current user's manual drag order for one folder (or
+   *  'root'). Purely personal view state — doesn't affect other users. */
+  reorderNotes: (folderKey: string, orderedIds: string[]) => Promise<void>;
 
   /** Replace the full permission matrix for a note. */
   setNotePermissions: (noteId: string, rows: NotePermission[]) => Promise<void>;
@@ -157,6 +171,7 @@ export const useNotes = create<NotesState>((set, get) => ({
   folders: [],
   drafts: {},
   permissions: {},
+  noteOrder: {},
   activeNoteId: localStorage.getItem(ACTIVE_NOTE_KEY),
   loaded: false,
   error: null,
@@ -164,7 +179,8 @@ export const useNotes = create<NotesState>((set, get) => ({
   loadForCampaign: async (campaignId) => {
     set({ loaded: false, error: null });
     try {
-      const [notesRes, foldersRes] = await Promise.all([
+      const userId = useSession.getState().userId;
+      const [notesRes, foldersRes, orderRes] = await Promise.all([
         supabase
           .from('notes')
           .select('*')
@@ -175,10 +191,24 @@ export const useNotes = create<NotesState>((set, get) => ({
           .select('*')
           .eq('campaign_id', campaignId)
           .order('sort_order'),
+        userId
+          ? supabase
+              .from('note_sort_order')
+              .select('folder_key, order_ids')
+              .eq('campaign_id', campaignId)
+              .eq('user_id', userId)
+          : Promise.resolve({ data: [], error: null }),
       ]);
       if (notesRes.error) throw notesRes.error;
       if (foldersRes.error) throw foldersRes.error;
       const loadedNotes = ((notesRes.data ?? []) as Note[]).map(mergeAll);
+
+      const noteOrder: Record<string, string[]> = {};
+      if (!orderRes.error) {
+        for (const row of (orderRes.data ?? []) as { folder_key: string; order_ids: string[] }[]) {
+          noteOrder[row.folder_key] = row.order_ids;
+        }
+      }
 
       // Try to load note_permissions for these notes. Falls back to
       // localStorage if the table doesn't exist yet (pre-migration).
@@ -203,6 +233,7 @@ export const useNotes = create<NotesState>((set, get) => ({
         notes: loadedNotes,
         folders: (foldersRes.data ?? []) as Folder[],
         permissions: permsByNote,
+        noteOrder,
         loaded: true,
       });
     } catch (e) {
@@ -274,7 +305,7 @@ export const useNotes = create<NotesState>((set, get) => ({
     };
   },
 
-  clear: () => set({ notes: [], folders: [], drafts: {}, permissions: {}, activeNoteId: null, loaded: false, error: null }),
+  clear: () => set({ notes: [], folders: [], drafts: {}, permissions: {}, noteOrder: {}, activeNoteId: null, loaded: false, error: null }),
 
   setActiveNote: (id) => {
     if (id) localStorage.setItem(ACTIVE_NOTE_KEY, id);
@@ -315,7 +346,21 @@ export const useNotes = create<NotesState>((set, get) => ({
     const optimistic = { ...prev, ...patch };
     set((s) => ({ notes: s.notes.map((n) => (n.id === id ? optimistic : n)) }));
 
-    const { error } = await supabase.from('notes').update(patch).eq('id', id);
+    let { error } = await supabase.from('notes').update(patch).eq('id', id);
+
+    // Graceful degradation: if the error mentions ydoc_state the column
+    // probably hasn't been migrated yet on this database. Retry without it
+    // so the rest of the patch (title/body/etc.) is always saved regardless
+    // of migration status — same fallback saveNote already relies on.
+    if (error && 'ydoc_state' in patch && /ydoc_state/.test(error.message)) {
+      const { ydoc_state: _dropped, ...corePatch } = patch as Record<string, unknown>;
+      if (Object.keys(corePatch).length > 0) {
+        ({ error } = await supabase.from('notes').update(corePatch).eq('id', id));
+      } else {
+        error = null;
+      }
+    }
+
     if (error) {
       if ('icon' in patch || 'player_editable' in patch) {
         // Already saved to localStorage — don't revert visual state.
@@ -327,6 +372,22 @@ export const useNotes = create<NotesState>((set, get) => ({
           error: error.message,
         }));
       }
+    }
+  },
+
+  transferNoteOwnership: async (noteId, newOwnerId) => {
+    const prev = get().notes.find((n) => n.id === noteId);
+    if (!prev) return;
+    set((s) => ({
+      notes: s.notes.map((n) => (n.id === noteId ? { ...n, owner_user_id: newOwnerId } : n)),
+    }));
+    const { error } = await supabase.rpc('transfer_note_ownership', {
+      p_note_id: noteId,
+      p_new_owner: newOwnerId,
+    });
+    if (error) {
+      set((s) => ({ notes: s.notes.map((n) => (n.id === noteId ? prev : n)) }));
+      throw error;
     }
   },
 
@@ -477,6 +538,31 @@ export const useNotes = create<NotesState>((set, get) => ({
 
   moveNote: async (id, folderId) => {
     await get().updateNote(id, { folder_id: folderId });
+  },
+
+  reorderNotes: async (folderKey, orderedIds) => {
+    const campaignId = get().notes.find((n) => (n.folder_id ?? 'root') === folderKey)?.campaign_id
+      ?? get().notes[0]?.campaign_id;
+    const userId = useSession.getState().userId;
+    if (!campaignId || !userId) return;
+
+    const prev = get().noteOrder[folderKey];
+    set((s) => ({ noteOrder: { ...s.noteOrder, [folderKey]: orderedIds } }));
+
+    const { error } = await supabase
+      .from('note_sort_order')
+      .upsert(
+        { user_id: userId, campaign_id: campaignId, folder_key: folderKey, order_ids: orderedIds, updated_at: new Date().toISOString() },
+        { onConflict: 'user_id,campaign_id,folder_key' }
+      );
+    if (error) {
+      set((s) => ({
+        noteOrder: prev === undefined
+          ? Object.fromEntries(Object.entries(s.noteOrder).filter(([k]) => k !== folderKey))
+          : { ...s.noteOrder, [folderKey]: prev },
+        error: error.message,
+      }));
+    }
   },
 
   createFolder: async (campaignId, name, parentId) => {

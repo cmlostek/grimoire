@@ -43,6 +43,16 @@ type SessionState = {
   signIn: (email: string, password: string) => Promise<void>;
   signUp: (email: string, password: string) => Promise<void>;
   signOut: () => Promise<void>;
+  /** Emails a password-reset link to the given address. */
+  resetPassword: (email: string) => Promise<{ ok: true } | { ok: false; error: string }>;
+  /** Sets a new password for the current (recovery) session. */
+  updatePassword: (password: string) => Promise<{ ok: true } | { ok: false; error: string }>;
+  /**
+   * True after the user returns via a password-reset email link. While set,
+   * the UI shows a "set a new password" screen instead of the app.
+   */
+  recovery: boolean;
+  clearRecovery: () => void;
   refreshMyCampaigns: () => Promise<void>;
   createCampaign: (
     name: string,
@@ -103,6 +113,7 @@ export const useSession = create<SessionState>((set, get) => ({
   loading: true,
   error: null,
   myCampaigns: [],
+  recovery: false,
 
   bootstrap: async () => {
     set({ loading: true, error: null });
@@ -179,6 +190,27 @@ export const useSession = create<SessionState>((set, get) => ({
     set({ userId: data.user.id, email: data.user.email ?? null, loading: false });
     get().refreshMyCampaigns();
   },
+
+  resetPassword: async (email) => {
+    const trimmed = email.trim();
+    if (!trimmed) return { ok: false, error: 'Enter your email first.' };
+    const { error } = await supabase.auth.resetPasswordForEmail(trimmed, {
+      redirectTo: window.location.origin,
+    });
+    if (error) return { ok: false, error: error.message };
+    return { ok: true };
+  },
+
+  updatePassword: async (password) => {
+    const { data, error } = await supabase.auth.updateUser({ password });
+    if (error || !data.user) {
+      return { ok: false, error: error?.message ?? 'Could not update password' };
+    }
+    set({ recovery: false });
+    return { ok: true };
+  },
+
+  clearRecovery: () => set({ recovery: false }),
 
   signOut: async () => {
     await supabase.auth.signOut();
@@ -582,6 +614,22 @@ export const useSession = create<SessionState>((set, get) => ({
   },
 }));
 
+// When the user clicks the reset link in their email, Supabase establishes a
+// temporary recovery session and fires this event — flip into recovery mode so
+// the UI shows a "set a new password" screen instead of the app.
+supabase.auth.onAuthStateChange((event) => {
+  if (event === 'PASSWORD_RECOVERY') {
+    useSession.setState({ recovery: true, loading: false });
+  }
+});
+
 export function rememberedDisplayName(): string {
   return localStorage.getItem(NAME_KEY) ?? '';
+}
+
+/** Persist the default display name used to pre-fill create/join forms. */
+export function setRememberedDisplayName(name: string): void {
+  const trimmed = name.trim();
+  if (trimmed) localStorage.setItem(NAME_KEY, trimmed);
+  else localStorage.removeItem(NAME_KEY);
 }

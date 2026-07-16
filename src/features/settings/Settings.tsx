@@ -39,7 +39,7 @@ import {
 import PageHeader from '../../components/PageHeader';
 import { useSession } from '../session/sessionStore';
 import { useCampaignSettings } from '../notes/campaignSettingsStore';
-import { useTheme } from '../session/themeStore';
+import { useTheme, THEMES } from '../session/themeStore';
 import { useSidebar } from '../session/sidebarStore';
 import { useNavCustomization } from '../../hooks/useNavCustomization';
 import { supabase } from '../../lib/supabase';
@@ -143,6 +143,7 @@ export default function Settings() {
             label={mode === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
             onClick={toggleMode}
           />
+          <ThemeColorRow />
           <SwitchRow
             label="Auto-expand sidebar"
             hint={
@@ -323,6 +324,41 @@ export default function Settings() {
  *  preference — these never leave the browser, so each user can pick a
  *  palette that helps them parse the roster at a glance without imposing
  *  it on anyone else. */
+function ThemeColorRow() {
+  const theme = useTheme((s) => s.theme);
+  const mode = useTheme((s) => s.mode);
+  const setTheme = useTheme((s) => s.setTheme);
+  return (
+    <div className="px-4 py-3 border-b border-slate-800 last:border-b-0 space-y-2">
+      <div>
+        <div className="text-sm text-slate-200">Colour theme</div>
+        <div className="text-[11px] text-slate-500">
+          Tints backgrounds and accents across the app. Dark mode only
+          {mode === 'light' && ' — picking a colour switches you to dark mode'}.
+        </div>
+      </div>
+      <div className="flex flex-wrap items-center gap-2">
+        {THEMES.map((t) => {
+          const active = theme === t.id && mode === 'dark';
+          return (
+            <button
+              key={t.id}
+              onClick={() => setTheme(t.id)}
+              title={t.label}
+              aria-label={t.label}
+              aria-pressed={active}
+              className={`w-7 h-7 rounded-full border-2 transition-transform hover:scale-110 ${
+                active ? 'border-white' : 'border-transparent'
+              }`}
+              style={{ backgroundColor: t.swatch }}
+            />
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 function RoleColorRows() {
   const gm = useRoleColors((s) => s.gm);
   const cogm = useRoleColors((s) => s.cogm);

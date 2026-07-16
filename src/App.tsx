@@ -52,6 +52,7 @@ export default function App() {
   const loading = useSession((s) => s.loading);
   const userId = useSession((s) => s.userId);
   const campaignId = useSession((s) => s.campaignId);
+  const recovery = useSession((s) => s.recovery);
 
   useEffect(() => {
     bootstrap();
@@ -65,6 +66,9 @@ export default function App() {
     );
   }
 
+  // Returning from a password-reset email link — show the reset screen even if
+  // the recovery session makes the user look signed in.
+  if (recovery) return <CampaignPicker />;
   if (!userId) return <CampaignPicker />;
   if (!campaignId) return <CampaignPicker />;
 
@@ -233,8 +237,9 @@ function AppShell() {
         ) : (
           <div className="px-4 py-3 border-b border-slate-800 flex items-start justify-between gap-2">
             <div className="min-w-0">
-              <div className="font-serif text-lg tracking-wide truncate" title={campaignName ?? ''}>
-                {campaignName ?? 'Grimoire'}
+              <div className="font-serif text-lg tracking-wide flex items-center gap-2" title={campaignName ?? ''}>
+                <Swords size={18} className="shrink-0" style={{ color: 'var(--ac-400)' }} />
+                <span className="truncate">{campaignName ?? 'Grimoire'}</span>
               </div>
               <div className="text-[11px] text-slate-500 flex items-center gap-1 truncate">
                 <span className={isGM ? 'text-emerald-400' : 'text-sky-400'}>

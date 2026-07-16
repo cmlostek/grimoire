@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Eye, EyeOff, Pencil, Share2, Users, UserCheck, Lock } from 'lucide-react';
+import { Eye, EyeOff, Pencil, Share2, Users, UserCheck, Lock, ArrowRightLeft } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { useSession } from '../session/sessionStore';
 import { useNotes, EMPTY_PERMS, type Note, type NotePermission } from './notesStore';
@@ -7,7 +7,7 @@ import { useNotes, EMPTY_PERMS, type Note, type NotePermission } from './notesSt
 type Member = {
   user_id: string;
   display_name: string;
-  role: 'gm' | 'player';
+  role: 'gm' | 'cogm' | 'player';
 };
 
 type Props = {
@@ -30,6 +30,11 @@ export function SharePopover({ note, onClose }: Props) {
 
   const [members, setMembers] = useState<Member[]>([]);
   const [loading, setLoading] = useState(true);
+  const transferNoteOwnership = useNotes((s) => s.transferNoteOwnership);
+  const [transferTarget, setTransferTarget] = useState('');
+  const [confirmingTransfer, setConfirmingTransfer] = useState(false);
+  const [transferring, setTransferring] = useState(false);
+  const [transferError, setTransferError] = useState<string | null>(null);
 
   // Local working copy — only flushed to the store/DB on change.
   const [draft, setDraft] = useState<Record<string, { can_view: boolean; can_edit: boolean }>>(() => {
@@ -138,6 +143,21 @@ export function SharePopover({ note, onClose }: Props) {
   // button itself, but defensive guard here too in case of stale UI.
   const canManage = myRole === 'gm' || note.owner_user_id === myUserId;
 
+  const handleTransfer = async () => {
+    if (!transferTarget) return;
+    setTransferring(true);
+    setTransferError(null);
+    try {
+      await transferNoteOwnership(note.id, transferTarget);
+      setConfirmingTransfer(false);
+      setTransferTarget('');
+    } catch {
+      setTransferError('Transfer failed — try again.');
+    } finally {
+      setTransferring(false);
+    }
+  };
+
   return (
     <div
       ref={ref}
@@ -171,6 +191,61 @@ export function SharePopover({ note, onClose }: Props) {
           disabled={!canManage || matrixMembers.length === 0}
         />
       </div>
+
+      {/* Transfer ownership */}
+      {canManage && matrixMembers.length > 0 && (
+        <div className="border border-slate-800 rounded mb-2 p-2">
+          <div className="text-[10px] uppercase tracking-wider text-slate-500 mb-1.5 flex items-center gap-1">
+            <ArrowRightLeft size={11} /> Transfer ownership
+          </div>
+          {!confirmingTransfer ? (
+            <div className="flex items-center gap-1.5">
+              <select
+                value={transferTarget}
+                onChange={(e) => { setTransferTarget(e.target.value); setTransferError(null); }}
+                className="flex-1 min-w-0 bg-slate-800 border border-slate-700 rounded px-1.5 py-1 text-slate-200 text-xs"
+              >
+                <option value="">Transfer to…</option>
+                {matrixMembers.map((m) => (
+                  <option key={m.user_id} value={m.user_id}>{m.display_name}</option>
+                ))}
+              </select>
+              <button
+                onClick={() => setConfirmingTransfer(true)}
+                disabled={!transferTarget}
+                className="px-2 py-1 text-[11px] rounded bg-slate-800 border border-slate-700 text-slate-300 hover:bg-slate-700 disabled:opacity-40 disabled:cursor-not-allowed shrink-0"
+              >
+                Transfer
+              </button>
+            </div>
+          ) : (
+            <div className="flex items-center gap-1.5 flex-wrap">
+              <span className="text-slate-300">
+                Transfer to <span className="text-slate-100 font-medium">
+                  {matrixMembers.find((m) => m.user_id === transferTarget)?.display_name}
+                </span>?
+              </span>
+              <button
+                onClick={handleTransfer}
+                disabled={transferring}
+                className="px-2 py-0.5 text-[11px] rounded bg-amber-800/60 hover:bg-amber-700/60 text-amber-100 disabled:opacity-50"
+              >
+                {transferring ? 'Transferring…' : 'Confirm'}
+              </button>
+              <button
+                onClick={() => { setConfirmingTransfer(false); setTransferError(null); }}
+                disabled={transferring}
+                className="px-2 py-0.5 text-[11px] rounded bg-slate-800 hover:bg-slate-700 text-slate-300 disabled:opacity-50"
+              >
+                Cancel
+              </button>
+            </div>
+          )}
+          {transferError && (
+            <div className="mt-1 text-rose-400">{transferError}</div>
+          )}
+        </div>
+      )}
 
       {/* Always-on access (GM + author) */}
       <div className="border border-slate-800 rounded mb-2 divide-y divide-slate-800">
