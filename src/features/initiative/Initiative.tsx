@@ -8,6 +8,7 @@ import { useInitiativeStore, CONDITIONS, type Condition } from './initiativeStor
 import { useRitualStore, type RitualMode } from './ritualStore';
 import type { PartyMember } from '../party/partyStore';
 import { SPELLS, spellsFor } from '../../data/srd';
+import { useSharedHomebrew } from '../homebrew/sharedHomebrewStore';
 import { hpPercent } from '../hpBar';
 import { useCampaignSettings } from '../notes/campaignSettingsStore';
 import { useParty } from '../party/partyStore';
@@ -645,6 +646,17 @@ function RitualsPanel({
     return () => { unsub(); clear(); };
   }, [campaignId, loadForCampaign, subscribe, clear]);
 
+  // Shared homebrew spells carry their own ritual flag; load them so homebrew
+  // rituals also surface in the spell picker below.
+  const sharedSpells = useSharedHomebrew((s) => s.spells);
+  const loadShared = useSharedHomebrew((s) => s.loadForCampaign);
+  const subscribeShared = useSharedHomebrew((s) => s.subscribe);
+  useEffect(() => {
+    if (!campaignId) return;
+    loadShared(campaignId);
+    return subscribeShared(campaignId);
+  }, [campaignId, loadShared, subscribeShared]);
+
   // 1s ticker so minutes-mode countdowns update live. Rounds-mode rituals move
   // only when the GM hits Next, so they don't need the ticker.
   const hasMinutes = rituals.some((r) => r.mode === 'minutes');
@@ -684,10 +696,10 @@ function RitualsPanel({
   const selected = castable.find((m) => m.id === memberId) ?? null;
 
   // Only ritual-flagged spells belong in a ritual countdown. Resolve each of
-  // the character's known SRD spells against the spell catalog and keep the
-  // ones tagged as rituals (edition-aware, matching the character sheet's own
-  // ritual list). Homebrew/custom entries carry no resolvable flag, so they're
-  // left out.
+  // the character's known spells against its source and keep the ones tagged as
+  // rituals: SRD spells against the edition-aware catalog, homebrew spells
+  // against the shared-homebrew store. Freeform 'custom' entries carry no
+  // resolvable flag, so they're left out.
   const edition = useCampaignSettings((s) => s.settings.srdEdition);
   const ritualByIndex = useMemo(() => {
     const idx = new Map<string, boolean>();
@@ -695,12 +707,22 @@ function RitualsPanel({
     for (const s of spellsFor(edition)) idx.set(s.index, s.ritual);
     return idx;
   }, [edition]);
+  const homebrewRitualById = useMemo(() => {
+    const idx = new Map<string, boolean>();
+    for (const s of sharedSpells) idx.set(s.id, Boolean(s.data?.ritual));
+    return idx;
+  }, [sharedSpells]);
   const spellOptions = useMemo(
     () =>
       (selected?.spells ?? [])
-        .filter((s) => s.sourceKind === 'srd-spell' && !!s.sourceId && ritualByIndex.get(s.sourceId) === true)
+        .filter((s) => {
+          if (!s.sourceId) return false;
+          if (s.sourceKind === 'srd-spell') return ritualByIndex.get(s.sourceId) === true;
+          if (s.sourceKind === 'spell') return homebrewRitualById.get(s.sourceId) === true;
+          return false;
+        })
         .map((s) => s.name),
-    [selected, ritualByIndex],
+    [selected, ritualByIndex, homebrewRitualById],
   );
 
   const start = async () => {
