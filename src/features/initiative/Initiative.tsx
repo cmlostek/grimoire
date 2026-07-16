@@ -1,9 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { ChevronRight, Shuffle, RotateCcw, Plus, Trash2, Heart, Shield, Swords, Activity, X, Lock, Users } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+import { ChevronRight, Shuffle, RotateCcw, Plus, Trash2, Heart, Shield, Swords, Activity, X, Lock, Users, Sparkles, Hourglass, MapPin, User } from 'lucide-react';
 import PageHeader from '../../components/PageHeader';
 import { QuickDiceButton } from '../dice/QuickDice';
 import { useSession } from '../session/sessionStore';
 import { useInitiativeStore, CONDITIONS, type Condition } from './initiativeStore';
+import { useRitualStore, type RitualMode } from './ritualStore';
+import type { PartyMember } from '../party/partyStore';
 import { hpBarClass, hpPercent } from '../hpBar';
 import { useCampaignSettings } from '../notes/campaignSettingsStore';
 import { useParty } from '../party/partyStore';
@@ -15,6 +18,7 @@ const d20 = () => 1 + Math.floor(Math.random() * 20);
 
 export default function Initiative() {
   const campaignId = useSession((s) => s.campaignId);
+  const userId = useSession((s) => s.userId);
   const role = useSession((s) => s.role);
   const viewAsPlayer = useSession((s) => s.viewAsPlayer);
   const isGM = (role === 'gm' || role === 'cogm') && !viewAsPlayer;
@@ -488,6 +492,10 @@ export default function Initiative() {
             </div>
           )}
 
+          {/* Ritual countdowns — visible to players and GM. Links back to the
+              map (caster's token) and the character sheet. */}
+          <RitualsPanel isGM={isGM} userId={userId} party={party} />
+
           {/* Add-from-roster picker — sourced from party, NPCs, stat blocks */}
           {isGM && roster.length > 0 && (
             <div className="bg-slate-900 border border-slate-800 rounded-lg p-4 space-y-2">
@@ -550,6 +558,261 @@ export default function Initiative() {
           )}
         </div>
       </div>
+    </div>
+  );
+}
+
+// ── Ritual countdowns ────────────────────────────────────────────────────────
+// A caster starts a ritual that becomes castable after N combat rounds or a
+// wall-clock duration. The whole table sees it here; the countdown links back
+// to the map (focuses the caster's token) and to the character sheet. Players
+// can start rituals on characters they own; the GM can start one for anyone.
+
+function ritualStatus(
+  r: { mode: RitualMode; roundsRemaining: number | null; expiresAt: string | null },
+  now: number,
+): { ready: boolean; label: string } {
+  if (r.mode === 'rounds') {
+    const n = r.roundsRemaining ?? 0;
+    return n <= 0
+      ? { ready: true, label: 'Ready to cast' }
+      : { ready: false, label: `${n} round${n === 1 ? '' : 's'} left` };
+  }
+  const ms = r.expiresAt ? new Date(r.expiresAt).getTime() - now : 0;
+  if (ms <= 0) return { ready: true, label: 'Ready to cast' };
+  const totalSec = Math.ceil(ms / 1000);
+  const m = Math.floor(totalSec / 60);
+  const s = totalSec % 60;
+  return { ready: false, label: `${m}:${String(s).padStart(2, '0')} left` };
+}
+
+function RitualsPanel({
+  isGM,
+  userId,
+  party,
+}: {
+  isGM: boolean;
+  userId: string | null;
+  party: PartyMember[];
+}) {
+  const navigate = useNavigate();
+  const campaignId = useSession((s) => s.campaignId);
+  const { rituals, loaded, loadForCampaign, subscribe, clear, add, remove } = useRitualStore();
+
+  useEffect(() => {
+    if (!campaignId) return;
+    loadForCampaign(campaignId);
+    const unsub = subscribe(campaignId);
+    return () => { unsub(); clear(); };
+  }, [campaignId, loadForCampaign, subscribe, clear]);
+
+  // 1s ticker so minutes-mode countdowns update live. Rounds-mode rituals move
+  // only when the GM hits Next, so they don't need the ticker.
+  const hasMinutes = rituals.some((r) => r.mode === 'minutes');
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!hasMinutes) return;
+    const id = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, [hasMinutes]);
+
+  // Characters this actor may start a ritual for: players are limited to the
+  // characters they own; the GM can pick anyone.
+  const castable = useMemo(
+    () => (isGM ? party : party.filter((m) => m.owner_user_id === userId && userId !== null)),
+    [party, isGM, userId],
+  );
+
+  const canManage = (r: { ownerUserId: string | null }) =>
+    isGM || (!!r.ownerUserId && r.ownerUserId === userId);
+
+  const goToMap = (r: { ownerUserId: string | null; casterName: string }) => {
+    const params = new URLSearchParams();
+    if (r.ownerUserId) params.set('focusOwner', r.ownerUserId);
+    if (r.casterName) params.set('focusName', r.casterName);
+    navigate(`/map?${params.toString()}`);
+  };
+  const goToSheet = (r: { partyMemberId: string | null }) =>
+    navigate(r.partyMemberId ? `/party#member-${r.partyMemberId}` : '/party');
+
+  // ── Start-ritual form state ───────────────────────────────────────────────
+  const [open, setOpen] = useState(false);
+  const [memberId, setMemberId] = useState('');
+  const [spell, setSpell] = useState('');
+  const [mode, setMode] = useState<RitualMode>('rounds');
+  const [amount, setAmount] = useState('10');
+
+  const selected = castable.find((m) => m.id === memberId) ?? null;
+  const spellOptions = selected?.spells?.map((s) => s.name) ?? [];
+
+  const start = async () => {
+    if (!selected || !spell.trim()) return;
+    const n = Math.max(1, parseInt(amount || '1', 10) || 1);
+    await add({
+      ownerUserId: selected.owner_user_id,
+      partyMemberId: selected.id,
+      casterName: selected.name,
+      spellName: spell.trim(),
+      mode,
+      rounds: mode === 'rounds' ? n : undefined,
+      minutes: mode === 'minutes' ? n : undefined,
+    });
+    setSpell('');
+    setAmount('10');
+    setOpen(false);
+  };
+
+  // Nothing to show and nothing to start — keep the sidebar tidy.
+  if (loaded && rituals.length === 0 && castable.length === 0) return null;
+
+  return (
+    <div className="bg-slate-900 border border-slate-800 rounded-lg p-4 space-y-3">
+      <div className="flex items-center gap-1.5 text-xs uppercase tracking-wider text-slate-400">
+        <Sparkles size={12} /> Rituals
+        {rituals.length > 0 && <span className="text-slate-700">({rituals.length})</span>}
+      </div>
+
+      {loaded && rituals.length === 0 && (
+        <div className="text-[11px] text-slate-600 italic">No rituals in progress.</div>
+      )}
+
+      <div className="space-y-2">
+        {rituals.map((r) => {
+          const { ready, label } = ritualStatus(r, now);
+          return (
+            <div
+              key={r.id}
+              className="rounded-lg border p-2.5"
+              style={
+                ready
+                  ? {
+                      background: 'color-mix(in srgb, var(--ac-900) 30%, var(--surface-elev))',
+                      borderColor: 'var(--ac-700)',
+                    }
+                  : { background: 'rgb(15 23 42)', borderColor: 'rgb(30 41 59)' }
+              }
+            >
+              <div className="flex items-start justify-between gap-2">
+                <div className="min-w-0">
+                  <div className="font-serif text-sm text-slate-100 truncate">{r.spellName || 'Ritual'}</div>
+                  <div className="text-[11px] text-slate-500 truncate">{r.casterName}</div>
+                </div>
+                <div className="flex items-center gap-1 shrink-0">
+                  <span
+                    className="text-[10px] px-1.5 py-0.5 rounded-full font-medium flex items-center gap-1 whitespace-nowrap"
+                    style={
+                      ready
+                        ? { background: 'var(--ac-900)', color: 'var(--ac-200)', border: '1px solid var(--ac-700)' }
+                        : { background: 'rgb(30 41 59)', color: 'rgb(148 163 184)' }
+                    }
+                  >
+                    {r.mode === 'rounds' ? <Swords size={9} /> : <Hourglass size={9} />}
+                    {label}
+                  </span>
+                  {canManage(r) && (
+                    <button
+                      onClick={() => remove(r.id)}
+                      className="text-slate-600 hover:text-rose-400 p-0.5"
+                      title="Dismiss ritual"
+                    >
+                      <X size={12} />
+                    </button>
+                  )}
+                </div>
+              </div>
+              <div className="flex items-center gap-1.5 mt-2">
+                <button
+                  onClick={() => goToMap(r)}
+                  className="flex-1 flex items-center justify-center gap-1 text-[10px] py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-300"
+                >
+                  <MapPin size={10} /> Map
+                </button>
+                <button
+                  onClick={() => goToSheet(r)}
+                  className="flex-1 flex items-center justify-center gap-1 text-[10px] py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-300"
+                >
+                  <User size={10} /> Sheet
+                </button>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Start a ritual — for characters the actor may control. */}
+      {castable.length > 0 && (
+        <div className="pt-1">
+          {!open ? (
+            <button
+              onClick={() => { setOpen(true); if (!memberId && castable[0]) setMemberId(castable[0].id); }}
+              className="w-full flex items-center justify-center gap-1 text-[11px] py-1.5 rounded border border-slate-800 text-slate-400 hover:text-slate-200 hover:border-slate-700"
+            >
+              <Plus size={12} /> Start ritual
+            </button>
+          ) : (
+            <div className="space-y-2 border-t border-slate-800 pt-3">
+              <select
+                value={memberId}
+                onChange={(e) => { setMemberId(e.target.value); setSpell(''); }}
+                className="w-full bg-slate-800 border border-slate-700 rounded px-2 py-1.5 text-xs"
+              >
+                <option value="" disabled>Choose caster…</option>
+                {castable.map((m) => (
+                  <option key={m.id} value={m.id}>{m.name}</option>
+                ))}
+              </select>
+              <input
+                value={spell}
+                onChange={(e) => setSpell(e.target.value)}
+                list="ritual-spell-options"
+                placeholder="Spell name"
+                className="w-full bg-slate-800 border border-slate-700 rounded px-2 py-1.5 text-xs"
+              />
+              <datalist id="ritual-spell-options">
+                {spellOptions.map((s) => <option key={s} value={s} />)}
+              </datalist>
+              <div className="flex items-center gap-2">
+                <div className="flex rounded overflow-hidden border border-slate-700 text-[11px]">
+                  <button
+                    onClick={() => setMode('rounds')}
+                    className={`px-2 py-1 ${mode === 'rounds' ? 'bg-slate-700 text-slate-100' : 'bg-slate-800 text-slate-400'}`}
+                  >
+                    Rounds
+                  </button>
+                  <button
+                    onClick={() => setMode('minutes')}
+                    className={`px-2 py-1 ${mode === 'minutes' ? 'bg-slate-700 text-slate-100' : 'bg-slate-800 text-slate-400'}`}
+                  >
+                    Minutes
+                  </button>
+                </div>
+                <input
+                  type="number"
+                  min={1}
+                  value={amount}
+                  onChange={(e) => setAmount(e.target.value)}
+                  className="w-16 bg-slate-800 border border-slate-700 rounded px-2 py-1 text-xs font-mono"
+                />
+              </div>
+              <div className="flex gap-2">
+                <button
+                  onClick={start}
+                  disabled={!memberId || !spell.trim()}
+                  className="ac-btn flex-1 px-2 py-1.5 text-xs font-semibold rounded disabled:opacity-40"
+                >
+                  Start
+                </button>
+                <button
+                  onClick={() => setOpen(false)}
+                  className="px-2 py-1.5 text-xs rounded bg-slate-800 hover:bg-slate-700 text-slate-400"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }

@@ -203,6 +203,12 @@ export const useInitiativeStore = create<InitiativeState>((set, get) => ({
           next.some((cd, i) => cd.rounds !== c.conditions[i].rounds);
         if (changed) update(c.id, { conditions: next });
       }
+      // Tick shared ritual countdowns down a round. Only the GM drives Next,
+      // so this single write per ritual fans out to every client via realtime.
+      const campaignId = get().campaignId;
+      if (campaignId) {
+        import('./ritualStore').then((m) => m.useRitualStore.getState().tickRound(campaignId));
+      }
       const newRound = round + 1;
       localStorage.setItem(ROUND_KEY, String(newRound));
       localStorage.setItem(TURN_KEY, '0');
