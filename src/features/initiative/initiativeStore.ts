@@ -52,6 +52,15 @@ function rowTo(r: Row): InitiativeCombatant {
 const ROUND_KEY = 'grimoire:init:round';
 const TURN_KEY  = 'grimoire:init:turn';
 
+// Persist the shared turn pointer so every client (players included) sees the
+// round advance and the "Acting" highlight move. GM-only per RLS; a non-GM
+// call is silently rejected server-side, which is fine — players never drive it.
+function persistState(campaignId: string, round: number, turnIndex: number) {
+  void supabase
+    .from('initiative_state')
+    .upsert({ campaign_id: campaignId, round, turn_index: turnIndex }, { onConflict: 'campaign_id' });
+}
+
 type CombatantPatch = Partial<Pick<InitiativeCombatant, 'name' | 'initiative' | 'hp' | 'maxHp' | 'ac' | 'conditions'>>;
 
 interface InitiativeState {
@@ -83,12 +92,20 @@ export const useInitiativeStore = create<InitiativeState>((set, get) => ({
   loaded: false,
 
   loadForCampaign: async (id) => {
-    const { data } = await supabase
-      .from('initiative_entries')
-      .select('*')
-      .eq('campaign_id', id)
-      .order('turn_order');
-    set({ combatants: (data ?? []).map(rowTo), campaignId: id, loaded: true });
+    const [entriesRes, stateRes] = await Promise.all([
+      supabase.from('initiative_entries').select('*').eq('campaign_id', id).order('turn_order'),
+      supabase.from('initiative_state').select('round, turn_index').eq('campaign_id', id).maybeSingle(),
+    ]);
+    const st = stateRes.data as { round?: number; turn_index?: number } | null;
+    set({
+      combatants: (entriesRes.data ?? []).map(rowTo),
+      // The shared pointer is authoritative when present; fall back to the
+      // local cache only for a campaign that has never advanced a turn.
+      round: st?.round ?? get().round,
+      turnIndex: st?.turn_index ?? get().turnIndex,
+      campaignId: id,
+      loaded: true,
+    });
   },
 
   subscribe: (id) => {
@@ -110,6 +127,14 @@ export const useInitiativeStore = create<InitiativeState>((set, get) => ({
             set((s) => ({ combatants: s.combatants.map((c) => c.id === (r as Row).id ? rowTo(r as Row) : c) }));
           else if (eventType === 'DELETE')
             set((s) => ({ combatants: s.combatants.filter((c) => c.id !== (old as Row).id) }));
+        })
+      // Shared turn pointer — keeps every client's round + "Acting" highlight
+      // in lock-step with the GM.
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'initiative_state', filter: `campaign_id=eq.${id}` },
+        ({ eventType, new: r }) => {
+          if (eventType === 'DELETE') { set({ round: 1, turnIndex: 0 }); return; }
+          const row = r as Row;
+          set({ round: (row.round as number) ?? 1, turnIndex: (row.turn_index as number) ?? 0 });
         })
       .subscribe();
     return () => { supabase.removeChannel(ch); };
@@ -213,26 +238,33 @@ export const useInitiativeStore = create<InitiativeState>((set, get) => ({
       localStorage.setItem(ROUND_KEY, String(newRound));
       localStorage.setItem(TURN_KEY, '0');
       set({ round: newRound, turnIndex: 0 });
+      if (campaignId) persistState(campaignId, newRound, 0);
     } else {
       localStorage.setItem(TURN_KEY, String(ni));
       set({ turnIndex: ni });
+      const cid = get().campaignId;
+      if (cid) persistState(cid, round, ni);
     }
   },
 
   reset: async () => {
     const { campaignId } = get();
-    if (campaignId) await supabase.from('initiative_entries').delete().eq('campaign_id', campaignId);
+    if (campaignId) {
+      await supabase.from('initiative_entries').delete().eq('campaign_id', campaignId);
+      persistState(campaignId, 1, 0);
+    }
     localStorage.setItem(ROUND_KEY, '1');
     localStorage.setItem(TURN_KEY, '0');
     set({ combatants: [], round: 1, turnIndex: 0 });
   },
 
   sort: () => {
-    const { combatants } = get();
+    const { combatants, campaignId } = get();
     const sorted = [...combatants].sort((a, b) => b.initiative - a.initiative);
     sorted.forEach((c, i) => supabase.from('initiative_entries').update({ turn_order: i }).eq('id', c.id));
     localStorage.setItem(TURN_KEY, '0');
     set({ combatants: sorted.map((c, i) => ({ ...c, turnOrder: i })), turnIndex: 0 });
+    if (campaignId) persistState(campaignId, get().round, 0);
   },
 
   addCondition: async (combatantId, cond) => {

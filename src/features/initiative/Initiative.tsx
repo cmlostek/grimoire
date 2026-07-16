@@ -7,7 +7,7 @@ import { useSession } from '../session/sessionStore';
 import { useInitiativeStore, CONDITIONS, type Condition } from './initiativeStore';
 import { useRitualStore, type RitualMode } from './ritualStore';
 import type { PartyMember } from '../party/partyStore';
-import { hpBarClass, hpPercent } from '../hpBar';
+import { hpPercent } from '../hpBar';
 import { useCampaignSettings } from '../notes/campaignSettingsStore';
 import { useParty } from '../party/partyStore';
 import { useNpcStore } from '../npcs/npcStore';
@@ -155,12 +155,14 @@ export default function Initiative() {
   }, [party, npcs, statBlocks, campaignId, add]);
 
   // Auto-sort every 30s — keeps the order in sync if someone edits an
-  // initiative score and forgets to hit Re-roll.
+  // initiative score and forgets to hit Re-roll. GM only: players are
+  // read-only, and a player's sort() would fail RLS while locally reordering
+  // their view out of step with everyone else.
   useEffect(() => {
-    if (combatants.length === 0) return;
+    if (!isGM || combatants.length === 0) return;
     const id = setInterval(() => sort(), 30_000);
     return () => clearInterval(id);
-  }, [combatants.length, sort]);
+  }, [isGM, combatants.length, sort]);
 
   const [rosterOpen, setRosterOpen] = useState(false);
 
@@ -225,7 +227,9 @@ export default function Initiative() {
             const dead     = c.hp <= 0 && c.maxHp > 0;
             const hpPct    = hpPercent(c.hp, c.maxHp);
 
-            // Players see a limited view: name + turn indicator only; NPC health/initiative hidden
+            // Players get a full read-only view — initiative, name, conditions,
+            // and AC — but never any health (no bar, no numbers, no Down tag,
+            // which would leak HP) and no editing controls.
             if (!isGM) {
               return (
                 <div
@@ -237,24 +241,53 @@ export default function Initiative() {
                   }`}
                   style={isActive ? { background: 'color-mix(in srgb, var(--ac-900) 30%, var(--surface-elev))' } : undefined}
                 >
-                  <div className="flex items-center gap-3">
-                    <div className={`w-2 h-2 rounded-full shrink-0 ${c.isPC ? 'bg-emerald-500' : 'bg-slate-600'}`} />
-                    <span className="font-serif text-base text-slate-100">{c.name}</span>
-                    {c.isPC && <span className="text-[10px] uppercase tracking-wider text-emerald-400/80">PC</span>}
-                    {isActive && (
-                      <span className="ml-auto text-[10px] uppercase tracking-wider" style={{ color: 'var(--ac-400)' }}>
-                        Acting
-                      </span>
-                    )}
-                  </div>
-                  {c.isPC && (
-                    <div className="mt-2 h-1.5 bg-slate-800 rounded-full overflow-hidden">
-                      <div
-                        className={`h-full ${hpBarClass(hpPct)}`}
-                        style={{ width: `${hpPct}%` }}
-                      />
+                  <div className="flex items-start gap-3">
+                    {/* Initiative badge */}
+                    <div className={`w-12 h-12 rounded shrink-0 flex flex-col items-center justify-center font-mono ${
+                      c.isPC ? 'bg-emerald-900/60 text-emerald-200' : 'bg-rose-900/60 text-rose-200'
+                    }`}>
+                      <div className="text-[9px] uppercase tracking-wider opacity-70">Init</div>
+                      <div className="text-lg leading-none">{c.initiative}</div>
                     </div>
-                  )}
+
+                    <div className="flex-1 min-w-0">
+                      {/* Name row */}
+                      <div className="flex items-center gap-2">
+                        <span className="font-serif text-lg text-slate-100 truncate">{c.name}</span>
+                        {c.isPC && <span className="text-[10px] uppercase tracking-wider text-emerald-400/80">PC</span>}
+                        {isActive && (
+                          <span className="ml-auto text-[10px] uppercase tracking-wider" style={{ color: 'var(--ac-400)' }}>
+                            Acting
+                          </span>
+                        )}
+                      </div>
+
+                      {/* Conditions row */}
+                      {c.conditions.length > 0 && (
+                        <div className="flex flex-wrap gap-1 mt-1.5">
+                          {c.conditions.map((cond) => {
+                            const color = CONDITIONS.find((x) => x.name === cond.name)?.color ?? '#64748b';
+                            return (
+                              <span
+                                key={cond.name}
+                                className="text-[10px] px-1.5 py-0.5 rounded-full font-medium"
+                                style={{ background: color + '22', color, border: `1px solid ${color}55` }}
+                                title={cond.rounds !== null ? `${cond.rounds} round(s) remaining` : 'Indefinite'}
+                              >
+                                {cond.name}
+                                {cond.rounds !== null && <span className="opacity-70"> ({cond.rounds})</span>}
+                              </span>
+                            );
+                          })}
+                        </div>
+                      )}
+
+                      {/* AC row — no health for players */}
+                      <div className="flex items-center gap-1 mt-1 text-xs text-slate-400">
+                        <Shield size={12} /> AC <span className="font-mono">{c.ac}</span>
+                      </div>
+                    </div>
+                  </div>
                 </div>
               );
             }
@@ -471,7 +504,8 @@ export default function Initiative() {
               </div>
               <div className="font-serif text-2xl" style={{ color: 'var(--ac-200)' }}>{active.name}</div>
               <div className="text-xs text-slate-400">
-                Initiative {active.initiative} · AC {active.ac} · HP {active.hp}/{active.maxHp}
+                Initiative {active.initiative} · AC {active.ac}
+                {isGM && <> · HP {active.hp}/{active.maxHp}</>}
               </div>
               {active.conditions.length > 0 && (
                 <div className="flex flex-wrap gap-1 pt-1">
