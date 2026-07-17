@@ -125,6 +125,8 @@ export default function Settings() {
   const coinRates = useCampaignSettings((s) => s.settings.coinRates ?? DEFAULT_COIN_RATES);
   const setCoinRate = useCampaignSettings((s) => s.setCoinRate);
   const resetCoinRates = useCampaignSettings((s) => s.resetCoinRates);
+  const encumbrance = useCampaignSettings((s) => s.settings.encumbrance ?? false);
+  const setEncumbrance = useCampaignSettings((s) => s.setEncumbrance);
 
   const trueIsGM = role === 'gm' || role === 'cogm';
   const isGM = trueIsGM && !viewAsPlayer;
@@ -205,6 +207,16 @@ export default function Settings() {
 
         {isGM && (
           <Section title="House rules">
+            <SwitchRow
+              label="Track encumbrance"
+              hint={
+                encumbrance
+                  ? 'Character sheets show carried weight against a STR-based capacity.'
+                  : 'Carry weight is unlimited; the encumbrance panel shows ∞.'
+              }
+              checked={encumbrance}
+              onChange={setEncumbrance}
+            />
             <div className="px-4 py-3 border-b border-slate-800 last:border-b-0">
               <div className="text-sm text-slate-200">HP on level-up</div>
               <div className="text-[11px] text-slate-500 font-normal mb-2">

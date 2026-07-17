@@ -63,6 +63,9 @@ export type CampaignSettings = {
   hpRollingMethod: HpRollingMethod;
   /** Per-coin value (in copper) used by the currency converter. GM-set. */
   coinRates: CoinRates;
+  /** When on, the character sheet tracks carried weight against a STR-based
+   *  carrying capacity. Off = unlimited (no encumbrance). */
+  encumbrance: boolean;
 };
 
 export const DEFAULTS: CampaignSettings = {
@@ -73,6 +76,7 @@ export const DEFAULTS: CampaignSettings = {
   srdEdition: 'both',
   hpRollingMethod: 'avg',
   coinRates: { ...DEFAULT_COIN_RATES },
+  encumbrance: false,
 };
 
 const lsKey = (cid: string) => `dnd-gm:campaignSettings:${cid}`;
@@ -118,6 +122,7 @@ type SettingsState = {
   setHpRollingMethod: (method: HpRollingMethod) => void;
   setCoinRate: (coin: CoinKey, value: number) => void;
   resetCoinRates: () => void;
+  setEncumbrance: (on: boolean) => void;
 };
 
 export const useCampaignSettings = create<SettingsState>((set, get) => ({
@@ -283,6 +288,16 @@ export const useCampaignSettings = create<SettingsState>((set, get) => ({
   resetCoinRates: () => {
     const { settings, campaignId } = get();
     const next = { ...settings, coinRates: { ...DEFAULT_COIN_RATES } };
+    set({ settings: next });
+    if (campaignId) {
+      lsSave(campaignId, next);
+      sbUpsert(campaignId, next);
+    }
+  },
+
+  setEncumbrance: (on) => {
+    const { settings, campaignId } = get();
+    const next = { ...settings, encumbrance: on };
     set({ settings: next });
     if (campaignId) {
       lsSave(campaignId, next);

@@ -252,6 +252,14 @@ html.theme-purple .bg-slate-800, html.theme-teal   .bg-slate-800 {
 html, body, #root { height: 100%; }
 body { margin: 0; }
 
+/* Pulsing red outline used to flag equipped items that break a rule (e.g. more
+   weapons in hand than the character has hands). Draws attention until fixed. */
+@keyframes flashRed {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(244, 63, 94, 0); border-color: rgba(244, 63, 94, 0.9); }
+  50%      { box-shadow: 0 0 0 2px rgba(244, 63, 94, 0.85); border-color: rgba(244, 63, 94, 1); }
+}
+.flash-red { animation: flashRed 0.9s ease-in-out infinite; }
+
 .ac-btn {
   background-color: var(--ac-700);
   color: white;

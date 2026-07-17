@@ -86,6 +86,7 @@ export default function CharacterSheet({
   // sheet opened. Subsequent edits do trigger the prompt.
   const xpEffectMounted = useRef(false);
   const edition = useCampaignSettings((s) => s.settings.srdEdition);
+  const encumbranceEnabled = useCampaignSettings((s) => s.settings.encumbrance ?? false);
 
   // Sync from server when not locally edited (matches CharCard's pattern).
   useEffect(() => {
@@ -313,6 +314,12 @@ export default function CharacterSheet({
         <Card title="Coin purse">
           <GoldBlock draft={draft} onApply={apply} />
         </Card>
+
+        {encumbranceEnabled && (
+          <Card title="Encumbrance" subtitle="Carried weight vs capacity · read-only">
+            <EncumbranceBlock draft={draft} />
+          </Card>
+        )}
 
         <Card title="Skills" subtitle="Click pip to toggle proficiency · click modifier to roll" className="lg:col-span-2">
           <SkillsBlock draft={draft} onApply={apply} />
@@ -575,6 +582,11 @@ function VitalsBlock({
   equippedWeapons: { item: InventoryItem; srd: EquipmentItem | null }[];
 }) {
   const rollFormula = useQuickDice((s) => s.rollFormula);
+  const edition = useCampaignSettings((s) => s.settings.srdEdition);
+  const inventory = draft.inventory ?? [];
+  const handsAvailable = draft.hands ?? 2;
+  const handsUsed = inventory.filter((i) => i.equipped).reduce((s, i) => s + handsForItem(i, edition), 0);
+  const overHands = handsUsed > handsAvailable;
   const hpPct = hpPercent(draft.hp, draft.maxHp);
   // SRD instant-death rule + 3 failed death saves + exhaustion 6 all kill.
   // The DeathSavesBlock auto-flags failures>=3 too; Vitals just surfaces the
@@ -703,16 +715,40 @@ function VitalsBlock({
 
       {equippedWeapons.length > 0 && (
         <div className="border-t border-slate-800 pt-2">
-          <div className="text-[10px] uppercase tracking-wider text-slate-500 mb-1.5">In hand</div>
+          <div className="flex items-center justify-between mb-1.5">
+            <div className="text-[10px] uppercase tracking-wider text-slate-500">In hand</div>
+            <span className={`text-[10px] ${overHands ? 'text-rose-400 font-semibold' : 'text-slate-600'}`}>
+              {handsUsed}/{handsAvailable} hands
+            </span>
+          </div>
+          {overHands && (
+            <div className="mb-1.5 flex items-center gap-1.5 text-[11px] text-rose-300 bg-rose-950/40 border border-rose-800/60 rounded px-2 py-1">
+              <AlertTriangle size={12} className="shrink-0" />
+              Too many things in hand ({handsUsed}/{handsAvailable}). Unequip one to fix.
+            </div>
+          )}
           <div className="space-y-1">
             {equippedWeapons.map(({ item, srd }) => {
               if (!srd?.damage) return null;
               const stats = weaponStats(draft, srd);
               const damageFormula = `${stats.damageDice}${stats.abilityMod !== 0 ? ` ${fmt(stats.abilityMod)}` : ''}`;
+              const { dep, missing } = depStatus(item, inventory);
               return (
-                <div key={item.id} className="flex items-center gap-2 text-xs bg-slate-950 border border-slate-800 rounded px-2 py-1">
+                <div
+                  key={item.id}
+                  className={`flex items-center gap-2 text-xs bg-slate-950 border rounded px-2 py-1 ${overHands ? 'flash-red' : 'border-slate-800'}`}
+                >
                   <Swords size={11} className="text-rose-400 shrink-0" />
                   <span className="text-slate-200 flex-1 truncate">{item.name}</span>
+                  {missing && (
+                    <span
+                      className="flex items-center gap-0.5 text-[10px] text-amber-400 shrink-0"
+                      title={dep ? `${dep.name} is out (quantity 0)` : 'Required item is no longer in the inventory'}
+                    >
+                      <AlertTriangle size={10} />
+                      {dep ? 'out' : 'missing'}
+                    </span>
+                  )}
                   <button
                     onClick={() => rollFormula(`1d20 ${fmt(stats.attackBonus)}`, `${item.name} attack`)}
                     className="px-1.5 py-0.5 rounded hover:bg-slate-800 text-slate-300 font-mono"
@@ -1250,6 +1286,57 @@ function GoldBlock({
   );
 }
 
+// ── Encumbrance ─────────────────────────────────────────────────────────
+
+/** Total carried weight from resolvable SRD item weights × quantity. Custom
+ *  items and spells carry no weight data and count as 0. */
+function carriedWeight(inventory: InventoryItem[], edition: SrdEdition): number {
+  return inventory.reduce((sum, it) => {
+    const w = srdItemFor(it, edition)?.weight ?? 0;
+    return sum + w * (it.qty || 0);
+  }, 0);
+}
+
+/** Read-only carry-weight panel. Only rendered when the campaign has
+ *  encumbrance enabled (otherwise capacity is unlimited and there's nothing to
+ *  track). Capacity is the 5e STR × 15 lb carrying capacity. */
+function EncumbranceBlock({ draft }: { draft: PartyMember }) {
+  const edition = useCampaignSettings((s) => s.settings.srdEdition);
+  const weight = carriedWeight(draft.inventory ?? [], edition);
+  const capacity = (draft.str ?? 10) * 15;
+  const over = weight > capacity;
+  const pct = capacity > 0 ? Math.min(100, (weight / capacity) * 100) : 0;
+  const fmtW = (n: number) => (Number.isInteger(n) ? String(n) : n.toFixed(1));
+  return (
+    <div className="space-y-2">
+      <div className="flex items-end justify-between">
+        <div>
+          <div className="text-2xl font-mono text-slate-100">
+            {fmtW(weight)}<span className="text-sm text-slate-500"> lb</span>
+          </div>
+          <div className="text-[11px] text-slate-500">Carried</div>
+        </div>
+        <div className="text-right">
+          <div className={`text-lg font-mono ${over ? 'text-rose-400' : 'text-slate-300'}`}>/ {capacity} lb</div>
+          <div className="text-[11px] text-slate-500">Capacity · STR × 15</div>
+        </div>
+      </div>
+      <div className="h-2 bg-slate-800 rounded-full overflow-hidden">
+        <div
+          className={`h-full transition-all ${over ? 'bg-rose-600' : pct > 75 ? 'bg-amber-500' : 'bg-emerald-600'}`}
+          style={{ width: `${pct}%` }}
+        />
+      </div>
+      {over && (
+        <div className="text-[11px] text-rose-400 flex items-center gap-1">
+          <AlertTriangle size={11} /> Over capacity — encumbered.
+        </div>
+      )}
+      <div className="text-[10px] text-slate-600">Computed from item weights; not editable.</div>
+    </div>
+  );
+}
+
 // ── Layout primitives ───────────────────────────────────────────────────
 
 function Card({
@@ -1437,6 +1524,14 @@ function handsForItem(item: InventoryItem, edition: SrdEdition): number {
   const props = (srd.properties ?? []).map((p) => p.name.toLowerCase());
   return props.includes('two-handed') ? 2 : 1;
 }
+
+/** Resolve an item's declared dependency against the current inventory and flag
+ *  when it's gone (removed) or out (quantity 0). */
+function depStatus(item: InventoryItem, inventory: InventoryItem[]): { dep?: InventoryItem; missing: boolean } {
+  const dep = item.dependsOn ? inventory.find((i) => i.id === item.dependsOn) : undefined;
+  const missing = !!item.dependsOn && (!dep || dep.qty <= 0);
+  return { dep, missing };
+}
 function srdSpellFor(item: InventoryItem, edition: SrdEdition): Spell | null {
   if (item.sourceKind === 'srd-spell' && item.sourceId) {
     return getSpellsIdx(edition)[item.sourceId] ?? null;
@@ -1482,12 +1577,12 @@ function InventoryBlock({
   const inventory = draft.inventory ?? [];
   const rollFormula = useQuickDice((s) => s.rollFormula);
   const edition = useCampaignSettings((s) => s.settings.srdEdition);
-  const [handWarn, setHandWarn] = useState<string | null>(null);
 
   const handsAvailable = draft.hands ?? 2;
   const handsUsed = inventory
     .filter((i) => i.equipped)
     .reduce((s, i) => s + handsForItem(i, edition), 0);
+  const overHands = handsUsed > handsAvailable;
 
   const add = (entry: { sourceKind: InventoryItem['sourceKind']; sourceId?: string; name: string }) => {
     const next: InventoryItem = {
@@ -1502,24 +1597,6 @@ function InventoryBlock({
   };
 
   const update = (id: string, patch: Partial<InventoryItem>) => {
-    // Guard against wielding more weapons/shields than the character has hands.
-    if (patch.equipped === true) {
-      const target = inventory.find((it) => it.id === id);
-      const need = target ? handsForItem(target, edition) : 0;
-      if (target && need > 0) {
-        const usedByOthers = inventory
-          .filter((it) => it.equipped && it.id !== id)
-          .reduce((s, it) => s + handsForItem(it, edition), 0);
-        const free = handsAvailable - usedByOthers;
-        if (need > free) {
-          setHandWarn(
-            `Can't equip ${target.name}: needs ${need} hand${need > 1 ? 's' : ''}, only ${Math.max(0, free)} free. Unequip something or raise the hand count.`,
-          );
-          return;
-        }
-      }
-    }
-    setHandWarn(null);
     onApply({
       inventory: inventory.map((it) => (it.id === id ? { ...it, ...patch } : it)),
     });
@@ -1533,7 +1610,7 @@ function InventoryBlock({
     <div className="space-y-2">
       <InventoryPicker onAdd={add} />
 
-      <div className="flex items-center justify-between text-[11px] text-slate-500">
+      <div className={`flex items-center justify-between text-[11px] ${overHands ? 'text-rose-300' : 'text-slate-500'}`}>
         <label className="flex items-center gap-1.5" title="Weapons/shields you can wield at once">
           <span>Hands</span>
           <input
@@ -1544,13 +1621,14 @@ function InventoryBlock({
             className="w-11 bg-slate-950 border border-slate-700 rounded px-1 py-0.5 text-center font-mono text-slate-200"
           />
         </label>
-        <span className={handsUsed > handsAvailable ? 'text-rose-400 font-medium' : ''}>
+        <span className={overHands ? 'text-rose-400 font-semibold' : ''}>
           {handsUsed}/{handsAvailable} in use
         </span>
       </div>
-      {handWarn && (
-        <div className="text-[11px] text-rose-400 bg-rose-950/30 border border-rose-900/40 rounded px-2 py-1">
-          {handWarn}
+      {overHands && (
+        <div className="flex items-center gap-1.5 text-[11px] text-rose-300 bg-rose-950/40 border border-rose-800/60 rounded px-2 py-1">
+          <AlertTriangle size={12} className="shrink-0" />
+          Too many weapons/shields equipped for {handsAvailable} hand{handsAvailable === 1 ? '' : 's'} ({handsUsed} in use). Unequip a highlighted item or raise the hand count.
         </div>
       )}
 
@@ -1568,6 +1646,7 @@ function InventoryBlock({
               <InventoryRow
                 item={item}
                 member={draft}
+                flash={overHands && item.equipped && handsForItem(item, edition) > 0}
                 onChange={(patch) => update(item.id, patch)}
                 onRemove={() => remove(item.id)}
                 onRollAttack={(label, bonus) => rollFormula(`1d20 ${fmt(bonus)}`, label)}
@@ -1584,6 +1663,7 @@ function InventoryBlock({
 function InventoryRow({
   item,
   member,
+  flash,
   onChange,
   onRemove,
   onRollAttack,
@@ -1591,6 +1671,7 @@ function InventoryRow({
 }: {
   item: InventoryItem;
   member: PartyMember;
+  flash?: boolean;
   onChange: (patch: Partial<InventoryItem>) => void;
   onRemove: () => void;
   onRollAttack: (label: string, bonus: number) => void;
@@ -1628,11 +1709,10 @@ function InventoryRow({
   // Item dependency (e.g. a bow needs arrows): resolve the linked item and flag
   // when it's gone from the inventory or down to 0.
   const otherItems = (member.inventory ?? []).filter((i) => i.id !== item.id);
-  const dep = item.dependsOn ? (member.inventory ?? []).find((i) => i.id === item.dependsOn) : undefined;
-  const depMissing = !!item.dependsOn && (!dep || dep.qty <= 0);
+  const { dep, missing: depMissing } = depStatus(item, member.inventory ?? []);
 
   return (
-    <div className="bg-slate-950 border border-slate-800 rounded">
+    <div className={`bg-slate-950 border rounded ${flash ? 'flash-red' : 'border-slate-800'}`}>
     <div className="flex items-center gap-2 px-2 py-1.5">
       <KindIcon size={14} style={{ color: kindColor }} className="shrink-0" />
 
