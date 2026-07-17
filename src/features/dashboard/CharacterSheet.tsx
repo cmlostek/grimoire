@@ -1423,6 +1423,20 @@ function srdItemFor(item: InventoryItem, edition: SrdEdition): EquipmentItem | n
   }
   return null;
 }
+
+/** How many hands wielding this item occupies: a two-handed weapon takes 2, a
+ *  shield or any other weapon takes 1, and everything else (armor, gear,
+ *  spells, or items we can't resolve to an SRD weapon) takes 0. Drives the
+ *  inventory over-equip guard. */
+function handsForItem(item: InventoryItem, edition: SrdEdition): number {
+  const srd = srdItemFor(item, edition);
+  if (!srd) return 0;
+  if (srd.armor_category === 'Shield') return 1;
+  const isWeapon = !!srd.weapon_category || !!srd.damage;
+  if (!isWeapon) return 0;
+  const props = (srd.properties ?? []).map((p) => p.name.toLowerCase());
+  return props.includes('two-handed') ? 2 : 1;
+}
 function srdSpellFor(item: InventoryItem, edition: SrdEdition): Spell | null {
   if (item.sourceKind === 'srd-spell' && item.sourceId) {
     return getSpellsIdx(edition)[item.sourceId] ?? null;
@@ -1467,6 +1481,13 @@ function InventoryBlock({
 }) {
   const inventory = draft.inventory ?? [];
   const rollFormula = useQuickDice((s) => s.rollFormula);
+  const edition = useCampaignSettings((s) => s.settings.srdEdition);
+  const [handWarn, setHandWarn] = useState<string | null>(null);
+
+  const handsAvailable = draft.hands ?? 2;
+  const handsUsed = inventory
+    .filter((i) => i.equipped)
+    .reduce((s, i) => s + handsForItem(i, edition), 0);
 
   const add = (entry: { sourceKind: InventoryItem['sourceKind']; sourceId?: string; name: string }) => {
     const next: InventoryItem = {
@@ -1481,6 +1502,24 @@ function InventoryBlock({
   };
 
   const update = (id: string, patch: Partial<InventoryItem>) => {
+    // Guard against wielding more weapons/shields than the character has hands.
+    if (patch.equipped === true) {
+      const target = inventory.find((it) => it.id === id);
+      const need = target ? handsForItem(target, edition) : 0;
+      if (target && need > 0) {
+        const usedByOthers = inventory
+          .filter((it) => it.equipped && it.id !== id)
+          .reduce((s, it) => s + handsForItem(it, edition), 0);
+        const free = handsAvailable - usedByOthers;
+        if (need > free) {
+          setHandWarn(
+            `Can't equip ${target.name}: needs ${need} hand${need > 1 ? 's' : ''}, only ${Math.max(0, free)} free. Unequip something or raise the hand count.`,
+          );
+          return;
+        }
+      }
+    }
+    setHandWarn(null);
     onApply({
       inventory: inventory.map((it) => (it.id === id ? { ...it, ...patch } : it)),
     });
@@ -1493,6 +1532,27 @@ function InventoryBlock({
   return (
     <div className="space-y-2">
       <InventoryPicker onAdd={add} />
+
+      <div className="flex items-center justify-between text-[11px] text-slate-500">
+        <label className="flex items-center gap-1.5" title="Weapons/shields you can wield at once">
+          <span>Hands</span>
+          <input
+            type="number"
+            min={0}
+            value={handsAvailable}
+            onChange={(e) => onApply({ hands: Math.max(0, parseInt(e.target.value || '0', 10) || 0) })}
+            className="w-11 bg-slate-950 border border-slate-700 rounded px-1 py-0.5 text-center font-mono text-slate-200"
+          />
+        </label>
+        <span className={handsUsed > handsAvailable ? 'text-rose-400 font-medium' : ''}>
+          {handsUsed}/{handsAvailable} in use
+        </span>
+      </div>
+      {handWarn && (
+        <div className="text-[11px] text-rose-400 bg-rose-950/30 border border-rose-900/40 rounded px-2 py-1">
+          {handWarn}
+        </div>
+      )}
 
       {inventory.length === 0 ? (
         <div className="text-sm text-slate-500 italic py-2">

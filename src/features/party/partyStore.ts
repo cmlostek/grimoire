@@ -143,6 +143,9 @@ export type PartyMember = {
   subclassId?: string;
   /** Free-form appearance/personality fields collected during creation. */
   details?: CharacterDetails;
+  /** Number of hands available for wielding weapons/shields. Defaults to 2;
+   *  raise it for many-armed creatures. Drives the inventory's over-equip guard. */
+  hands?: number;
 };
 
 export const DEFAULT_GOLD: Gold = { pp: 0, gp: 0, ep: 0, sp: 0, cp: 0 };
@@ -214,6 +217,7 @@ export function rowToMember(r: Row): PartyMember {
     hitDiceCurrent: d.hitDiceCurrent,
     conditions: d.conditions ?? [],
     exhaustion: d.exhaustion ?? 0,
+    hands: d.hands ?? 2,
   };
 }
 
@@ -258,7 +262,7 @@ function patchToUpdate(
     'xp', 'gold', 'deathSaves', 'skillProfs', 'saveProfs', 'inventory',
     'spellAbility', 'spellSlots', 'spells', 'customActions', 'features',
     'classId', 'subclassId', 'details', 'hitDieSize', 'hitDiceCurrent',
-    'conditions', 'exhaustion',
+    'conditions', 'exhaustion', 'hands',
   ];
   const needsDataUpdate = dataKeys.some((k) => k in patch);
   if (needsDataUpdate) {
