@@ -736,7 +736,7 @@ function VitalsBlock({
               return (
                 <div
                   key={item.id}
-                  className={`flex items-center gap-2 text-xs bg-slate-950 border rounded px-2 py-1 ${overHands ? 'flash-red' : 'border-slate-800'}`}
+                  className={`flex items-center gap-2 text-xs bg-slate-950 border rounded px-2 py-1 ${overHands ? 'flash-red' : missing ? 'hl-gold' : 'border-slate-800'}`}
                 >
                   <Swords size={11} className="text-rose-400 shrink-0" />
                   <span className="text-slate-200 flex-1 truncate">{item.name}</span>
@@ -1712,7 +1712,7 @@ function InventoryRow({
   const { dep, missing: depMissing } = depStatus(item, member.inventory ?? []);
 
   return (
-    <div className={`bg-slate-950 border rounded ${flash ? 'flash-red' : 'border-slate-800'}`}>
+    <div className={`bg-slate-950 border rounded ${flash ? 'flash-red' : depMissing ? 'hl-gold' : 'border-slate-800'}`}>
     <div className="flex items-center gap-2 px-2 py-1.5">
       <KindIcon size={14} style={{ color: kindColor }} className="shrink-0" />
 

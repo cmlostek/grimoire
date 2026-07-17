@@ -260,6 +260,13 @@ body { margin: 0; }
 }
 .flash-red { animation: flashRed 0.9s ease-in-out infinite; }
 
+/* Steady gold highlight for a row with an unmet dependency (e.g. ammo out).
+   Less urgent than flash-red, which overrides it when both apply. */
+.hl-gold {
+  border-color: rgba(251, 191, 36, 0.9) !important;
+  box-shadow: 0 0 0 1px rgba(251, 191, 36, 0.5);
+}
+
 .ac-btn {
   background-color: var(--ac-700);
   color: white;
