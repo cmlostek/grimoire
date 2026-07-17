@@ -42,6 +42,7 @@ import { useCampaignSettings, COIN_KEYS, DEFAULT_COIN_RATES } from '../notes/cam
 import { useTheme, THEMES } from '../session/themeStore';
 import { useSidebar } from '../session/sidebarStore';
 import { useDashboardPref, DASHBOARD_TAB_LABELS, type DashboardDefaultTab } from '../dashboard/dashboardPrefStore';
+import { CampaignManagementPanel, LeaveCampaignRow } from '../dashboard/Dashboard';
 import { useNavCustomization } from '../../hooks/useNavCustomization';
 import { supabase } from '../../lib/supabase';
 
@@ -72,6 +73,7 @@ export default function Settings() {
   const email = useSession((s) => s.email);
   const campaignId = useSession((s) => s.campaignId);
   const campaignName = useSession((s) => s.campaignName);
+  const userId = useSession((s) => s.userId);
   const [exporting, setExporting] = useState(false);
   const importInputRef = useRef<HTMLInputElement>(null);
   const [importing, setImporting] = useState(false);
@@ -298,6 +300,10 @@ export default function Settings() {
           </Section>
         )}
 
+        {isGM && campaignId && (
+          <CampaignManagementPanel selfId={userId} campaignId={campaignId} />
+        )}
+
         <Section title="Backup & restore">
           <Row
             icon={<Upload size={14} />}
@@ -363,6 +369,11 @@ export default function Settings() {
             </div>
           )}
         </Section>
+
+        <section>
+          <h2 className="text-[11px] uppercase tracking-wider text-slate-500 mb-2">Membership</h2>
+          <LeaveCampaignRow />
+        </section>
 
         <Section title="Account">
           <AccountEmailRow email={email} />
