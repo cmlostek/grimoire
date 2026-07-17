@@ -33,6 +33,10 @@ export type InventoryItem = {
   name: string;
   qty: number;
   equipped: boolean;
+  /** Optional id of another inventory item this one requires (e.g. a bow
+   *  depends on arrows). The sheet warns when the dependency is missing or at
+   *  0 quantity. */
+  dependsOn?: string;
 };
 
 /** Action-economy bucket. Drives the Actions tab grouping. */

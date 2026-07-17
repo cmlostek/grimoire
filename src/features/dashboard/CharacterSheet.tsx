@@ -1625,6 +1625,12 @@ function InventoryRow({
     ? `${stats.damageDice}${stats.abilityMod !== 0 ? ` ${fmt(stats.abilityMod)}` : ''}`
     : '';
 
+  // Item dependency (e.g. a bow needs arrows): resolve the linked item and flag
+  // when it's gone from the inventory or down to 0.
+  const otherItems = (member.inventory ?? []).filter((i) => i.id !== item.id);
+  const dep = item.dependsOn ? (member.inventory ?? []).find((i) => i.id === item.dependsOn) : undefined;
+  const depMissing = !!item.dependsOn && (!dep || dep.qty <= 0);
+
   return (
     <div className="bg-slate-950 border border-slate-800 rounded">
     <div className="flex items-center gap-2 px-2 py-1.5">
@@ -1674,9 +1680,36 @@ function InventoryRow({
             {srdSpell.level === 0 ? 'Cantrip' : `Lv ${srdSpell.level}`} · {srdSpell.school.name}
           </div>
         )}
+        {/* Dependency picker — shown once a link is set or the row is expanded,
+            so rows without dependencies stay uncluttered. */}
+        {(showDesc || item.dependsOn) && otherItems.length > 0 && (
+          <div className="flex items-center gap-1 text-[10px] mt-0.5 text-slate-600 print:hidden">
+            <LinkIcon size={9} className="shrink-0" />
+            <select
+              value={item.dependsOn ?? ''}
+              onChange={(e) => onChange({ dependsOn: e.target.value || undefined })}
+              className="bg-transparent text-slate-500 outline-none max-w-[10rem] truncate hover:text-slate-300"
+              title="Require another item (e.g. ammunition)"
+            >
+              <option value="">no dependency</option>
+              {otherItems.map((o) => (
+                <option key={o.id} value={o.id}>needs {o.name}</option>
+              ))}
+            </select>
+          </div>
+        )}
       </div>
 
       <div className="flex items-center gap-1 shrink-0">
+        {depMissing && (
+          <span
+            className="flex items-center gap-0.5 text-[10px] text-amber-400"
+            title={dep ? `${dep.name} is out (quantity 0)` : 'Required item is no longer in the inventory'}
+          >
+            <AlertTriangle size={11} />
+            {dep ? 'out' : 'missing'}
+          </span>
+        )}
         <input
           type="number"
           value={item.qty}
