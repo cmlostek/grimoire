@@ -38,7 +38,7 @@ import {
 } from '../session/roleColorsStore';
 import PageHeader from '../../components/PageHeader';
 import { useSession } from '../session/sessionStore';
-import { useCampaignSettings } from '../notes/campaignSettingsStore';
+import { useCampaignSettings, COIN_KEYS, DEFAULT_COIN_RATES } from '../notes/campaignSettingsStore';
 import { useTheme, THEMES } from '../session/themeStore';
 import { useSidebar } from '../session/sidebarStore';
 import { useDashboardPref, DASHBOARD_TAB_LABELS, type DashboardDefaultTab } from '../dashboard/dashboardPrefStore';
@@ -122,6 +122,9 @@ export default function Settings() {
   const allowedGmPages = useCampaignSettings((s) => s.settings.allowedGmPages ?? []);
   const hpRollingMethod = useCampaignSettings((s) => s.settings.hpRollingMethod);
   const setHpRollingMethod = useCampaignSettings((s) => s.setHpRollingMethod);
+  const coinRates = useCampaignSettings((s) => s.settings.coinRates ?? DEFAULT_COIN_RATES);
+  const setCoinRate = useCampaignSettings((s) => s.setCoinRate);
+  const resetCoinRates = useCampaignSettings((s) => s.resetCoinRates);
 
   const trueIsGM = role === 'gm' || role === 'cogm';
   const isGM = trueIsGM && !viewAsPlayer;
@@ -220,6 +223,34 @@ export default function Settings() {
                   >
                     {m === 'avg' ? 'Take average' : m === 'roll' ? 'Roll the die' : 'Manual entry'}
                   </button>
+                ))}
+              </div>
+            </div>
+            <div className="px-4 py-3 border-b border-slate-800 last:border-b-0">
+              <div className="flex items-center justify-between">
+                <div className="text-sm text-slate-200">Currency conversion rates</div>
+                <button
+                  onClick={resetCoinRates}
+                  className="text-[11px] text-slate-400 hover:text-slate-200 underline"
+                >
+                  Reset to 5e
+                </button>
+              </div>
+              <div className="text-[11px] text-slate-500 font-normal mb-2">
+                Each coin's value in copper. Drives the converter on the character sheet. Change these for a house economy.
+              </div>
+              <div className="grid grid-cols-5 gap-2">
+                {COIN_KEYS.map((coin) => (
+                  <label key={coin} className="flex flex-col items-center gap-1">
+                    <span className="text-[10px] uppercase tracking-wider text-slate-400">{coin}</span>
+                    <input
+                      type="number"
+                      min={0}
+                      value={coinRates[coin]}
+                      onChange={(e) => setCoinRate(coin, parseInt(e.target.value || '0', 10) || 0)}
+                      className="w-full text-center bg-slate-950 border border-slate-700 rounded px-1 py-1 text-xs font-mono text-slate-200"
+                    />
+                  </label>
                 ))}
               </div>
             </div>

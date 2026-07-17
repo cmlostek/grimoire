@@ -8,6 +8,7 @@ import {
   DEFAULT_DEATH_SAVES,
   DEFAULT_GOLD,
   DEFAULT_SPELL_SLOTS,
+  type Gold,
   type ActionCategory,
   type CharacterDetails,
   type CharacterFeature,
@@ -21,8 +22,8 @@ import { useQuickDice } from '../dice/quickDiceStore';
 import { hpBarClass, hpPercent } from '../hpBar';
 import { useCatalog, searchCatalog, type CatalogEntry } from '../chat/catalog';
 import { EQUIPMENT, MAGIC_ITEMS, SPELLS, SPECIES_2024, equipmentFor, spellsFor } from '../../data/srd';
-import type { SrdEdition } from '../notes/campaignSettingsStore';
-import { useCampaignSettings } from '../notes/campaignSettingsStore';
+import type { SrdEdition, CoinRates } from '../notes/campaignSettingsStore';
+import { useCampaignSettings, COIN_KEYS, DEFAULT_COIN_RATES } from '../notes/campaignSettingsStore';
 import type { EquipmentItem, Spell } from '../../data/types';
 
 // ── Skill / save definitions ──────────────────────────────────────────────
@@ -1185,6 +1186,24 @@ const COIN_LABELS: { key: keyof import('../party/partyStore').Gold; label: strin
   { key: 'cp', label: 'CP', color: '#fb923c' },
 ];
 
+/** Re-express a purse into the fewest coins that preserve its total value,
+ *  using the campaign's (possibly house-ruled) per-coin copper values. Coins
+ *  are filled high→low; any sub-unit remainder lands in the lowest-value coin
+ *  (a no-op in the standard config where cp = 1cp). */
+function consolidateGold(gold: Gold, rates: CoinRates): Gold {
+  const totalCp = COIN_KEYS.reduce((sum, k) => sum + (gold[k] || 0) * (rates[k] || 0), 0);
+  const out: Gold = { pp: 0, gp: 0, ep: 0, sp: 0, cp: 0 };
+  const ordered = COIN_KEYS.filter((k) => (rates[k] || 0) > 0).sort((a, b) => rates[b] - rates[a]);
+  let remaining = totalCp;
+  for (const k of ordered) {
+    const n = Math.floor(remaining / rates[k]);
+    out[k] = n;
+    remaining -= n * rates[k];
+  }
+  if (remaining > 0 && ordered.length) out[ordered[ordered.length - 1]] += remaining;
+  return out;
+}
+
 function GoldBlock({
   draft,
   onApply,
@@ -1193,20 +1212,40 @@ function GoldBlock({
   onApply: (p: Partial<PartyMember>) => void;
 }) {
   const gold = draft.gold ?? DEFAULT_GOLD;
+  const rates = useCampaignSettings((s) => s.settings.coinRates ?? DEFAULT_COIN_RATES);
+  const totalCp = COIN_KEYS.reduce((sum, k) => sum + (gold[k] || 0) * (rates[k] || 0), 0);
+  const totalGp = (rates.gp ?? 0) > 0 ? totalCp / rates.gp : 0;
+  const consolidated = consolidateGold(gold, rates);
+  const canConsolidate = COIN_KEYS.some((k) => consolidated[k] !== gold[k]);
   return (
-    <div className="grid grid-cols-5 gap-2">
-      {COIN_LABELS.map(({ key, label, color }) => (
-        <div key={key} className="bg-slate-950 border border-slate-800 rounded p-2 text-center">
-          <div className="text-[10px] uppercase tracking-wider font-semibold" style={{ color }}>
-            {label}
+    <div className="space-y-2">
+      <div className="grid grid-cols-5 gap-2">
+        {COIN_LABELS.map(({ key, label, color }) => (
+          <div key={key} className="bg-slate-950 border border-slate-800 rounded p-2 text-center">
+            <div className="text-[10px] uppercase tracking-wider font-semibold" style={{ color }}>
+              {label}
+            </div>
+            <NumInput
+              value={gold[key]}
+              onChange={(v) => onApply({ gold: { ...gold, [key]: v } })}
+              className="w-full text-center !border-transparent !bg-transparent !p-0 text-sm"
+            />
           </div>
-          <NumInput
-            value={gold[key]}
-            onChange={(v) => onApply({ gold: { ...gold, [key]: v } })}
-            className="w-full text-center !border-transparent !bg-transparent !p-0 text-sm"
-          />
-        </div>
-      ))}
+        ))}
+      </div>
+      <div className="flex items-center justify-between text-[11px] text-slate-500">
+        <span>
+          Total ≈ <span className="text-amber-300 font-mono">{totalGp.toFixed(2)}</span> gp
+        </span>
+        <button
+          onClick={() => onApply({ gold: consolidated })}
+          disabled={!canConsolidate}
+          title="Convert coins into the fewest denominations at the campaign's rates"
+          className="px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 disabled:opacity-40 disabled:hover:bg-slate-800"
+        >
+          Consolidate
+        </button>
+      </div>
     </div>
   );
 }
