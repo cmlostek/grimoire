@@ -13,6 +13,7 @@ import { useNotes, canViewNote, canEditNote, EMPTY_PERMS, type Note, type NotePe
 import { supabase } from '../../lib/supabase';
 import DiceRoller from '../dice/DiceRoller';
 import CharacterSheet from './CharacterSheet';
+import { useDashboardPref } from './dashboardPrefStore';
 import CharacterBuilder from './CharacterBuilder';
 import MemberProfileModal from './MemberProfileModal';
 import CampaignSpectatorView from './CampaignSpectatorView';
@@ -108,7 +109,9 @@ export default function Dashboard() {
 
   const viewAsPlayer = useSession((s) => s.viewAsPlayer);
   const isGM = (role === 'gm' || role === 'cogm') && !viewAsPlayer;
-  const [tab, setTab] = useState<DashboardTab>('profile');
+  // Land on the user's preferred default tab (Settings → Display). Read once at
+  // mount so navigating between tabs afterwards isn't overridden.
+  const [tab, setTab] = useState<DashboardTab>(() => useDashboardPref.getState().defaultTab);
   // If the user was on Manage when their role changed, snap them back.
   useEffect(() => {
     if (tab === 'manage' && !isGM) setTab('profile');

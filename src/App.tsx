@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { NavLink, Route, Routes, Navigate, useLocation } from 'react-router-dom';
-import { Swords, NotebookPen, Map as MapIcon, BookOpen, Sparkles, Package, ScrollText, Users, FlaskConical, Dices, Copy, Mic, Eye, Settings as SettingsIcon, BookMarked, Radio, LayoutDashboard, Menu, X as XIcon } from 'lucide-react';
+import { Swords, NotebookPen, Map as MapIcon, BookOpen, Sparkles, Package, ScrollText, Users, FlaskConical, Dices, Copy, Mic, Eye, Settings as SettingsIcon, BookMarked, Radio, LayoutDashboard, Menu, X as XIcon, ChevronsLeft, ChevronsRight } from 'lucide-react';
 import { QuickDice } from './features/dice/QuickDice';
 import { useQuickDice } from './features/dice/quickDiceStore';
 import ChatPanel from './features/chat/ChatPanel';
@@ -83,10 +83,15 @@ function AppShell() {
   const campaignName = useSession((s) => s.campaignName);
   const joinCode = useSession((s) => s.joinCode);
   const displayName = useSession((s) => s.displayName);
-  // Sidebar collapse is transient — start collapsed, expand on hover when the
-  // user has the auto-expand preference enabled (default on; toggle lives in
-  // /settings → Display). When disabled the sidebar stays as a narrow rail.
-  const hoverExpand = useSidebar((s) => s.hoverExpand);
+  // Sidebar behaviour has two modes (toggle in /settings → Display):
+  //   - 'manual' (default) — pinned open/closed via the header collapse button;
+  //     the pin state lives in the store's `collapsed`.
+  //   - 'auto' — a narrow rail that expands on hover; `expanded` tracks that
+  //     transient hover state.
+  const sidebarMode = useSidebar((s) => s.mode);
+  const pinnedCollapsed = useSidebar((s) => s.collapsed);
+  const toggleCollapsed = useSidebar((s) => s.toggleCollapsed);
+  const autoMode = sidebarMode === 'auto';
   const [expanded, setExpanded] = useState(false);
   // Mobile-only: hamburger-driven drawer state. Below md, the sidebar isn't
   // visible at all by default — clicking the hamburger slides it in over the
@@ -101,8 +106,9 @@ function AppShell() {
   // preview what the players see.
   const isGM = trueIsGM && !viewAsPlayer;
   // Mobile drawer always renders the expanded layout (full nav labels,
-  // campaign name in the header). Desktop honours the hover-expand state.
-  const collapsed = !expanded && !mobileOpen;
+  // campaign name in the header). On desktop, auto mode follows the hover
+  // state; manual mode follows the pinned collapse state.
+  const collapsed = mobileOpen ? false : autoMode ? !expanded : pinnedCollapsed;
 
   // ── Page title ────────────────────────────────────────────────────────────
   const location = useLocation();
@@ -186,11 +192,11 @@ function AppShell() {
         />
       )}
       <aside
-        onMouseEnter={hoverExpand ? () => setExpanded(true) : undefined}
-        onMouseLeave={hoverExpand ? () => setExpanded(false) : undefined}
-        onFocus={hoverExpand ? () => setExpanded(true) : undefined}
+        onMouseEnter={autoMode ? () => setExpanded(true) : undefined}
+        onMouseLeave={autoMode ? () => setExpanded(false) : undefined}
+        onFocus={autoMode ? () => setExpanded(true) : undefined}
         onBlur={
-          hoverExpand
+          autoMode
             ? (e) => {
                 // Collapse only when focus leaves the sidebar entirely
                 if (!e.currentTarget.contains(e.relatedTarget as Node)) setExpanded(false);
@@ -208,6 +214,17 @@ function AppShell() {
         {/* ── Header ───────────────────────────────────────────────────────── */}
         {collapsed ? (
           <div className="px-2 py-3 border-b border-slate-800 flex flex-col items-center gap-2">
+            {/* Manual mode: expand the rail. (Auto mode expands on hover, so it
+                doesn't need the button.) */}
+            {!autoMode && (
+              <button
+                onClick={toggleCollapsed}
+                title="Expand sidebar"
+                className="hidden md:flex p-1.5 rounded border bg-slate-800 border-slate-700 hover:bg-slate-700 text-slate-300"
+              >
+                <ChevronsRight size={14} />
+              </button>
+            )}
             <button
               onClick={toggleQuickDice}
               title="Quick dice roller"
@@ -260,6 +277,16 @@ function AppShell() {
               >
                 <XIcon size={16} />
               </button>
+              {/* Manual mode: collapse the sidebar to the icon rail. */}
+              {!autoMode && (
+                <button
+                  onClick={toggleCollapsed}
+                  title="Collapse sidebar"
+                  className="hidden md:flex p-1.5 rounded text-slate-400 hover:bg-slate-800"
+                >
+                  <ChevronsLeft size={16} />
+                </button>
+              )}
               {isGM && recordingSupported && (
                 <button
                   onClick={isRecording ? stopRecording : startRecording}

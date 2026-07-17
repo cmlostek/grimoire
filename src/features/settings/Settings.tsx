@@ -41,6 +41,7 @@ import { useSession } from '../session/sessionStore';
 import { useCampaignSettings } from '../notes/campaignSettingsStore';
 import { useTheme, THEMES } from '../session/themeStore';
 import { useSidebar } from '../session/sidebarStore';
+import { useDashboardPref, DASHBOARD_TAB_LABELS, type DashboardDefaultTab } from '../dashboard/dashboardPrefStore';
 import { useNavCustomization } from '../../hooks/useNavCustomization';
 import { supabase } from '../../lib/supabase';
 
@@ -108,8 +109,10 @@ export default function Settings() {
   };
 
   const { mode, toggle: toggleMode } = useTheme();
-  const hoverExpand = useSidebar((s) => s.hoverExpand);
-  const setHoverExpand = useSidebar((s) => s.setHoverExpand);
+  const sidebarMode = useSidebar((s) => s.mode);
+  const setSidebarMode = useSidebar((s) => s.setMode);
+  const dashboardDefaultTab = useDashboardPref((s) => s.defaultTab);
+  const setDashboardDefaultTab = useDashboardPref((s) => s.setDefaultTab);
 
   const togglePage = useCampaignSettings((s) => s.togglePage);
   const toggleGmPage = useCampaignSettings((s) => s.toggleGmPage);
@@ -145,14 +148,24 @@ export default function Settings() {
           />
           <ThemeColorRow />
           <SwitchRow
-            label="Auto-expand sidebar"
+            label="Auto-collapse sidebar"
             hint={
-              hoverExpand
-                ? 'Sidebar grows to full width when you hover or focus it.'
-                : 'Sidebar stays as a narrow icon rail; hover over icons for labels.'
+              sidebarMode === 'auto'
+                ? 'Sidebar sits as a narrow icon rail and expands on hover, collapsing when you move away.'
+                : 'Sidebar stays where you put it; use the collapse button in its header to toggle.'
             }
-            checked={hoverExpand}
-            onChange={setHoverExpand}
+            checked={sidebarMode === 'auto'}
+            onChange={(v) => setSidebarMode(v ? 'auto' : 'manual')}
+          />
+          <SelectRow<DashboardDefaultTab>
+            label="Default dashboard page"
+            hint="Which tab the Dashboard opens on."
+            value={dashboardDefaultTab}
+            options={(Object.keys(DASHBOARD_TAB_LABELS) as DashboardDefaultTab[]).map((v) => ({
+              value: v,
+              label: DASHBOARD_TAB_LABELS[v],
+            }))}
+            onChange={setDashboardDefaultTab}
           />
           <RoleColorRows />
         </Section>
@@ -504,6 +517,38 @@ function SwitchRow({
         />
       </span>
     </button>
+  );
+}
+
+function SelectRow<T extends string>({
+  label,
+  hint,
+  value,
+  options,
+  onChange,
+}: {
+  label: string;
+  hint?: string;
+  value: T;
+  options: { value: T; label: string }[];
+  onChange: (next: T) => void;
+}) {
+  return (
+    <div className="w-full flex items-center gap-3 px-4 py-3 text-sm text-slate-200 border-b border-slate-800 last:border-b-0">
+      <span className="flex-1 text-left">
+        {label}
+        {hint && <span className="block text-[11px] text-slate-500 font-normal">{hint}</span>}
+      </span>
+      <select
+        value={value}
+        onChange={(e) => onChange(e.target.value as T)}
+        className="shrink-0 bg-slate-950 border border-slate-700 rounded px-2 py-1 text-xs text-slate-200"
+      >
+        {options.map((o) => (
+          <option key={o.value} value={o.value}>{o.label}</option>
+        ))}
+      </select>
+    </div>
   );
 }
 
