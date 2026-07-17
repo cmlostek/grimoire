@@ -224,6 +224,30 @@ html.theme-red    .bg-slate-800, html.theme-green  .bg-slate-800,
 html.theme-purple .bg-slate-800, html.theme-teal   .bg-slate-800 {
   background-color: color-mix(in srgb, #1e293b 87%, var(--theme-hue)) !important;
 }
+/* PageHeader (and other panels) ride on the bg-slate-900/50 and /40 opacity
+   variants, which Tailwind compiles as their own classes — the tint rules
+   above (keyed on plain .bg-slate-900) don't catch them, so the heading strip
+   stayed neutral slate in a themed palette. Tint them like the panel bg. */
+:is(html.theme-red, html.theme-green, html.theme-purple, html.theme-teal) .bg-slate-900\/50,
+:is(html.theme-red, html.theme-green, html.theme-purple, html.theme-teal) .bg-slate-900\/40 {
+  background-color: color-mix(in srgb, #0f172a 89%, var(--theme-hue)) !important;
+}
+/* Header/accent text is hard-coded to the sky ramp (text-sky-*), so page and
+   section headers stayed blue under a themed palette. Flip the pale-sky accent
+   text onto the theme's own accent ramp (var(--ac-*), swapped per theme by
+   themeStore) so the whole app — headers included — follows the colour. */
+:is(html.theme-red, html.theme-green, html.theme-purple, html.theme-teal) .text-sky-50,
+:is(html.theme-red, html.theme-green, html.theme-purple, html.theme-teal) .text-sky-100,
+:is(html.theme-red, html.theme-green, html.theme-purple, html.theme-teal) .text-sky-200,
+:is(html.theme-red, html.theme-green, html.theme-purple, html.theme-teal) .text-sky-300,
+:is(html.theme-red, html.theme-green, html.theme-purple, html.theme-teal) .hover\:text-sky-200:hover,
+:is(html.theme-red, html.theme-green, html.theme-purple, html.theme-teal) .hover\:text-sky-300:hover {
+  color: var(--ac-200) !important;
+}
+:is(html.theme-red, html.theme-green, html.theme-purple, html.theme-teal) .text-sky-400,
+:is(html.theme-red, html.theme-green, html.theme-purple, html.theme-teal) .hover\:text-sky-400:hover {
+  color: var(--ac-400) !important;
+}
 
 html, body, #root { height: 100%; }
 body { margin: 0; }

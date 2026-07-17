@@ -1679,7 +1679,9 @@ function InventoryRow({
           </div>
         )}
         <div className="srd-popover-body markdown-body" style={{ overflowY: 'visible' }}>
-          {srdSpell?.desc?.map((p, i) => <p key={`s${i}`}>{p}</p>)}
+          {srdSpell?.desc && (
+            <ReactMarkdown remarkPlugins={[remarkGfm]}>{srdSpell.desc.join('\n\n')}</ReactMarkdown>
+          )}
           {srdMagic?.desc?.map((p, i) => (
             <ReactMarkdown key={`m${i}`} remarkPlugins={[remarkGfm]}>{p}</ReactMarkdown>
           ))}
@@ -2166,15 +2168,15 @@ function SpellRow({
             <span>Components: {srd.components.join(', ')}</span>
             <span>Duration: {srd.duration}</span>
           </div>
-          {srd.desc.map((line, i) => (
-            <p key={i} className="whitespace-pre-wrap leading-snug">{line}</p>
-          ))}
+          <div className="markdown-body text-[12px]">
+            <ReactMarkdown remarkPlugins={[remarkGfm]}>{srd.desc.join('\n\n')}</ReactMarkdown>
+          </div>
           {srd.higher_level && srd.higher_level.length > 0 && (
             <div className="mt-1">
               <div className="text-[10px] uppercase tracking-wider text-slate-500">At higher levels</div>
-              {srd.higher_level.map((line, i) => (
-                <p key={i} className="whitespace-pre-wrap leading-snug">{line}</p>
-              ))}
+              <div className="markdown-body text-[12px]">
+                <ReactMarkdown remarkPlugins={[remarkGfm]}>{srd.higher_level.join('\n\n')}</ReactMarkdown>
+              </div>
             </div>
           )}
         </div>

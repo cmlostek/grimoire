@@ -702,13 +702,20 @@ export default function MapBoard() {
   }, [canvasW, canvasH, sceneLayers, isGM]);
 
   // Auto-fit when the canvas grows/shrinks (campaign load, first image upload).
+  // Keyed on the canvas dimensions only — NOT on fitToScreen's identity, which
+  // changes on every scene edit (adding a shape rebuilds sceneLayers). Without
+  // this guard, drawing on the map re-ran the fit and snapped zoom/pan back.
+  const fitRef = useRef(fitToScreen);
+  fitRef.current = fitToScreen;
+  const lastFitDims = useRef('');
   useEffect(() => {
     if (!canvasW || !canvasH) return;
-    const id = requestAnimationFrame(() => {
-      fitToScreen();
-    });
+    const key = `${canvasW}x${canvasH}`;
+    if (lastFitDims.current === key) return;
+    lastFitDims.current = key;
+    const id = requestAnimationFrame(() => fitRef.current());
     return () => cancelAnimationFrame(id);
-  }, [fitToScreen, canvasW, canvasH]);
+  }, [canvasW, canvasH]);
 
   // ── Focus a token from a deep link (e.g. a ritual countdown's "Map" button
   //    navigates to /map?focusOwner=…&focusName=…). Centre the camera on the
