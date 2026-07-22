@@ -300,6 +300,30 @@ export default function Notes() {
    *  note hasn't mounted yet at click time. */
   const pendingHeadingRef = useRef<string | null>(null);
 
+  // ── Image upload (toolbar button + editor paste) ─────────────────────────
+  // Uploads to the note-images bucket and returns a permanent public URL, so
+  // embedded images never expire (unlike pasted external/CDN links). Path is
+  // `{campaignId}/{uuid}.{ext}` — the campaign prefix is enforced by RLS.
+  const imgInputRef = useRef<HTMLInputElement>(null);
+  const [imageUploading, setImageUploading] = useState(false);
+  const uploadImageFile = useCallback(async (file: File): Promise<string | null> => {
+    if (!campaignId) return null;
+    if (!file.type.startsWith('image/')) return null;
+    if (file.size > 10 * 1024 * 1024) return null; // 10 MB cap
+    setImageUploading(true);
+    try {
+      const ext = (file.name.split('.').pop() ?? 'png').toLowerCase().replace(/[^a-z0-9]/g, '') || 'png';
+      const path = `${campaignId}/${crypto.randomUUID()}.${ext}`;
+      const { error } = await supabase.storage
+        .from('note-images')
+        .upload(path, file, { contentType: file.type, upsert: false });
+      if (error) { console.error('[notes] image upload failed', error); return null; }
+      return supabase.storage.from('note-images').getPublicUrl(path).data.publicUrl;
+    } finally {
+      setImageUploading(false);
+    }
+  }, [campaignId]);
+
   // ── Sidebar collapse / resize (persisted) ────────────────────────────────
   const SIDEBAR_W_KEY = 'dnd-gm:notesSidebarWidth';
   const SIDEBAR_COLLAPSED_KEY = 'dnd-gm:notesSidebarCollapsed';
@@ -1235,9 +1259,25 @@ export default function Notes() {
                     <AlignRight size={13} />
                   </ToolbarBtn>
                   <div className="w-px h-4 bg-slate-700 mx-0.5" />
-                  <ToolbarBtn title="Insert image" onClick={() => editorRef.current?.format({ kind: 'wrap', before: '[](', after: ')' })}>
-                    <ImagePlus size={13} />
+                  <ToolbarBtn
+                    title={imageUploading ? 'Uploading image…' : 'Upload image'}
+                    onClick={() => { if (!imageUploading) imgInputRef.current?.click(); }}
+                  >
+                    {imageUploading ? <Loader2 size={13} className="animate-spin" /> : <ImagePlus size={13} />}
                   </ToolbarBtn>
+                  <input
+                    ref={imgInputRef}
+                    type="file"
+                    accept="image/*"
+                    className="hidden"
+                    onChange={async (e) => {
+                      const file = e.target.files?.[0];
+                      e.target.value = '';
+                      if (!file) return;
+                      const url = await uploadImageFile(file);
+                      if (url) editorRef.current?.format({ kind: 'insert', text: `![](${url})` });
+                    }}
+                  />
                 </div>
               )}
 
@@ -1262,6 +1302,7 @@ export default function Notes() {
                     ydocState={active.ydoc_state ?? null}
                     userId={userId ?? ''}
                     userName={displayName ?? userId ?? 'Traveller'}
+                    uploadImage={uploadImageFile}
                     onCollaboratorsChange={setActiveCollaborators}
                   />
                 ) : (
