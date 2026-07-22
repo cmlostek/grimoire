@@ -3,7 +3,6 @@
 # ⚔️ Grimoire — Version 1.1.0
 - Built with [Claude](https://www.anthropic.com/) Sonnet 4.6 and Opus 4.7.
 - Release notes: [CHANGELOG.md](./CHANGELOG.md)
-- New features are published to [Preview](https://www.grimoire-preview.vercel.app/). Use your normal login credentials to view them.
 
 A real-time, multiplayer Game Master companion for running **Dungeons & Dragons 5e** campaigns in the browser. One fast screen that handles every table-side concern — notes, party tracking, combat, maps, character sheets, level-ups, spells, items, shops, NPCs, chat, dice — with live sync across every player in the campaign.
 
